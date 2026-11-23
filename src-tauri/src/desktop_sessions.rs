@@ -191,10 +191,16 @@ fn scan(home: &Path, sessions_root: &Path) -> Vec<DesktopSession> {
             }
         }
     }
-    // most recent activity first; fall back to creation time, then to the id so
-    // the order is stable
+    // most recent activity first. The metadata's lastActivityAt lags a session
+    // that is mid-turn, so the transcript's mtime counts too (whichever is
+    // newer); then creation time, then the id so the order is stable
     out.sort_by(|a, b| {
-        let key = |s: &DesktopSession| s.last_activity_at.or(s.created_at).unwrap_or(0);
+        let key = |s: &DesktopSession| {
+            s.last_activity_at
+                .max(s.transcript_mtime)
+                .or(s.created_at)
+                .unwrap_or(0)
+        };
         key(b)
             .cmp(&key(a))
             .then_with(|| a.session_id.cmp(&b.session_id))
@@ -358,14 +364,15 @@ mod tests {
         fs::write(root.join("stray-file"), "x").unwrap();
         fs::create_dir_all(root.join("org").join("deleted_1")).unwrap();
 
-        // give the newest session a real transcript so its mtime resolves
-        let tdir = s.0.join(".claude").join("projects").join("-p-two");
+        // the session with the OLDEST lastActivityAt has a transcript written
+        // just now, so it is the most recently active and sorts first
+        let tdir = s.0.join(".claude").join("projects").join("-p-one");
         fs::create_dir_all(&tdir).unwrap();
-        fs::write(tdir.join("c2.jsonl"), "{}\n").unwrap();
+        fs::write(tdir.join("c1.jsonl"), "{}\n").unwrap();
 
         let got = scan(&s.0, &root);
         let ids: Vec<_> = got.iter().map(|d| d.session_id.as_str()).collect();
-        assert_eq!(ids, ["local_new", "local_old", "local_nodate"]);
+        assert_eq!(ids, ["local_old", "local_new", "local_nodate"]);
         assert!(got[0].transcript_mtime.is_some());
         assert!(got[1].transcript_mtime.is_none());
     }
