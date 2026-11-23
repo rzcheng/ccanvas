@@ -8,7 +8,7 @@
 
 :root {
   /* text size multiplier from Settings (lib/settings.ts); fonts are calc(Npx * var(--ts)) */
-  --ts: 1;
+  --ts: 1.1;
   /* surfaces — chassis → faceplate */
   --bg: #1f1e1d;
   --bg-grad-a: #232220;
