@@ -221,17 +221,73 @@ export function extractToolFiles(
 
 // ---------- full conversation (transcript widget) ----------
 
-export type TranscriptTool = { name: string; target?: string }
-export type TranscriptTurn = {
-  /** `event` is harness traffic shown as a muted one-liner: a task
-   *  notification, a message from another session, a compaction, an
-   *  interrupt, a slash command's output */
-  role: 'user' | 'assistant' | 'event'
-  text: string
-  tools: TranscriptTool[]
-}
+// The widget shows a conversation the way the desktop app does: your prompts,
+// Claude's prose, and between them an "activity" block of tool calls (each
+// paired with its result) and thinking. Transcripts reach ~100 MB, so nothing
+// here keeps a tool's full input or output: just what a row shows, truncated.
 
-type UserEvent = Event & { isMeta?: boolean; isCompactSummary?: boolean; origin?: unknown }
+export type ToolState = 'running' | 'done' | 'error' | 'stopped'
+export type PlanItem = { text: string; status: string }
+export type DiffPreview = {
+  /** first lines of the change, each prefixed with '+' or '-' */
+  lines: string[]
+  add: number
+  del: number
+}
+export type ToolCall = {
+  kind: 'tool'
+  id: string
+  /** raw tool name, e.g. "Bash" or "mcp__ccd_turn__update_plan" */
+  name: string
+  /** short display name ("update_plan" for an MCP tool) */
+  label: string
+  /** one line: the file, command, pattern, description … */
+  target?: string
+  state: ToolState
+  ts?: string
+  /** Bash: the command (truncated) */
+  command?: string
+  /** Edit / Write / MultiEdit: a few lines of the change */
+  diff?: DiffPreview
+  /** TodoWrite / update_plan: the checklist after this call */
+  plan?: PlanItem[]
+  /** Agent / Task: the start of the subagent's brief */
+  prompt?: string
+  /** the result, truncated (a tail for Bash and subagents, else a head) */
+  output?: string
+  /** lines in the full result */
+  outputLines?: number
+  /** images in the result (screenshots) */
+  images?: number
+}
+export type ThinkingStep = { kind: 'thinking'; text: string; ts?: string }
+export type ActivityStep = ToolCall | ThinkingStep
+
+export type TranscriptItem =
+  /** something you typed (images attached to it are counted) */
+  | { kind: 'user'; text: string; images: number; ts?: string }
+  /** Claude's prose */
+  | { kind: 'text'; text: string; ts?: string }
+  /** consecutive tool calls and thinking between two pieces of prose */
+  | { kind: 'activity'; steps: ActivityStep[]; ts?: string }
+  /** harness traffic shown as a muted one-liner: a task notification, a
+   *  message from another session, a compaction, an interrupt, a slash
+   *  command's output, an API error */
+  | { kind: 'event'; text: string; tone?: 'warn' | 'error'; ts?: string }
+
+type UserEvent = Event & {
+  isMeta?: boolean
+  isCompactSummary?: boolean
+  origin?: unknown
+  timestamp?: string
+  isApiErrorMessage?: boolean
+}
+type ToolResultBlock = {
+  type: 'tool_result'
+  tool_use_id?: string
+  content?: unknown
+  is_error?: boolean
+}
 
 const tagBody = (text: string, tag: string): string | null => {
   const m = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`).exec(text)
@@ -245,12 +301,18 @@ const oneLine = (s: string, max = 160): string => {
   const line = s.replace(/\s+/g, ' ').trim()
   return line.length > max ? line.slice(0, max - 1) + '…' : line
 }
+const clip = (s: string, max: number): string => (s.length > max ? s.slice(0, max) + '…' : s)
 
 /** Claude Code wraps what you type (and what it injects) in harness markup.
  *  Turn one user event's text into what to show: your prompt with the markup
  *  removed, a muted event line, or nothing. */
-function readUserText(raw: string, ev: UserEvent): TranscriptTurn | null {
-  const event = (text: string): TranscriptTurn => ({ role: 'event', text: oneLine(text), tools: [] })
+function readUserText(raw: string, ev: UserEvent): TranscriptItem | null {
+  const event = (text: string, tone?: 'warn' | 'error'): TranscriptItem => ({
+    kind: 'event',
+    text: oneLine(text),
+    tone,
+  })
+  const prompt = (text: string): TranscriptItem => ({ kind: 'user', text, images: 0 })
   if (ev.isCompactSummary) return event('conversation compacted — earlier turns summarized')
   // context the harness adds to your turn: never something you typed
   let text = raw.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim()
@@ -271,16 +333,16 @@ function readUserText(raw: string, ev: UserEvent): TranscriptTurn | null {
   const cmd = tagBody(text, 'command-name')
   if (cmd) {
     const args = tagBody(text, 'command-args')
-    return { role: 'user', text: '`' + [cmd, args].filter(Boolean).join(' ') + '`', tools: [] }
+    return prompt('`' + [cmd, args].filter(Boolean).join(' ') + '`')
   }
   const stdout = tagBody(text, 'local-command-stdout')
   if (stdout != null) return stdout ? event(stdout) : null
   const bash = tagBody(text, 'bash-input')
-  if (bash != null) return { role: 'user', text: '```\n! ' + bash + '\n```', tools: [] }
+  if (bash != null) return prompt('```\n! ' + bash + '\n```')
   const bashOut = tagBody(text, 'bash-stdout') ?? tagBody(text, 'bash-stderr')
   if (bashOut != null) return bashOut ? event(bashOut) : null
-  if (/^\[Request interrupted/.test(text)) return event('interrupted')
-  if (/^\[(Usage limit|Earlier usage)/.test(text)) return event(text.replace(/^\[|\]$/g, ''))
+  if (/^\[Request interrupted/.test(text)) return event('interrupted', 'warn')
+  if (/^\[(Usage limit|Earlier usage)/.test(text)) return event(text.replace(/^\[|\]$/g, ''), 'warn')
   // the harness's note when Claude reads an image file, not a prompt
   if (/^\[Image: original \d+x\d+/.test(text)) return null
 
@@ -295,60 +357,355 @@ function readUserText(raw: string, ev: UserEvent): TranscriptTurn | null {
     return `\n\n*pasted:*\n${head}${more}\n\n`
   })
   text = text.trim()
-  return text ? { role: 'user', text, tools: [] } : null
+  return text ? prompt(text) : null
 }
 
-/** Parse a transcript into an ordered list of readable turns. */
-export function parseTranscript(jsonl: string): TranscriptTurn[] {
-  const out: TranscriptTurn[] = []
-  for (const raw of jsonl.split('\n')) {
-    const ln = raw.trim()
-    if (!ln) continue
-    let ev: Event
-    try {
-      ev = JSON.parse(ln)
-    } catch {
-      continue
-    }
-    const content = ev.message?.content
-    if (ev.type === 'assistant') {
-      let text = ''
-      const tools: TranscriptTool[] = []
-      if (typeof content === 'string') text = content
-      else if (Array.isArray(content))
-        for (const c of content as Block[]) {
-          if (!c) continue
-          if (c.type === 'text' && c.text) text += (text ? '\n' : '') + c.text
-          else if (c.type === 'tool_use')
-            tools.push({ name: c.name ?? 'tool', target: toolTarget(c.name, c.input) })
-        }
-      // harness-made replies (API errors, usage limits) aren't the model talking
-      const synthetic = (ev.message as { model?: string } | undefined)?.model === '<synthetic>'
-      if (synthetic && text.trim()) out.push({ role: 'event', text: oneLine(text), tools: [] })
-      else if (text.trim() || tools.length) out.push({ role: 'assistant', text: text.trim(), tools })
-    } else if (ev.type === 'user') {
-      // pure tool-result turns carry no user text — skip them; an attached
-      // image shows as a chip on the prompt
-      let text = ''
-      let images = 0
-      if (typeof content === 'string') text = content
-      else if (Array.isArray(content))
-        for (const c of content as Block[]) {
-          if (c?.type === 'text' && c.text) text += (text ? '\n' : '') + c.text
-          else if (c?.type === 'image') images++
-        }
-      const meta = (ev as UserEvent).isMeta
-      const turn = text.trim()
-        ? readUserText(text, ev as UserEvent)
-        : images && !meta
-          ? { role: 'user' as const, text: '', tools: [] }
-          : null
-      if (turn?.role === 'user' && images)
-        turn.tools.push({ name: images > 1 ? `${images} images` : 'image' })
-      if (turn) out.push(turn)
-    }
+// ----- tool calls -----
+
+const CMD_MAX = 1200
+const OUT_TAIL_LINES = 14
+const OUT_HEAD_LINES = 8
+const OUT_MAX = 1600
+const DIFF_LINES = 14
+const PROMPT_MAX = 500
+const PLAN_MAX = 40
+const THINK_MAX = 4000
+const TARGET_MAX = 240
+
+const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined)
+
+/** "mcp__claude-in-chrome__navigate" → "navigate" */
+function toolLabel(name: string): string {
+  if (!name.startsWith('mcp__')) return name
+  const parts = name.split('__')
+  return parts[parts.length - 1] || name
+}
+
+function readPlan(raw: unknown): PlanItem[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const out: PlanItem[] = []
+  for (const it of raw.slice(0, PLAN_MAX)) {
+    if (!it || typeof it !== 'object') continue
+    const o = it as Record<string, unknown>
+    const text = str(o.content) ?? str(o.subject) ?? str(o.text) ?? str(o.title)
+    if (text) out.push({ text: oneLine(text, 140), status: str(o.status) ?? 'pending' })
   }
   return out
+}
+
+/** Apply an update_plan step ({advance}, {done, start}) to the last full plan. */
+function stepPlan(prev: PlanItem[] | null, i: Record<string, unknown>): PlanItem[] | undefined {
+  if (!prev) return undefined
+  const next = prev.map((p) => ({ ...p }))
+  if (i.advance === true) {
+    const cur = next.findIndex((p) => p.status === 'in_progress')
+    if (cur >= 0) next[cur].status = 'completed'
+    const nxt = next.findIndex((p, k) => k > cur && p.status === 'pending')
+    if (nxt >= 0) next[nxt].status = 'in_progress'
+  }
+  if (Array.isArray(i.done))
+    for (const n of i.done) if (typeof n === 'number' && next[n - 1]) next[n - 1].status = 'completed'
+  if (typeof i.start === 'number' && next[i.start - 1]) {
+    for (const p of next) if (p.status === 'in_progress') p.status = 'pending'
+    next[i.start - 1].status = 'in_progress'
+  }
+  return next
+}
+
+function diffOf(pairs: { old: string; neu: string }[]): DiffPreview {
+  const lines: string[] = []
+  let add = 0
+  let del = 0
+  for (const { old, neu } of pairs) {
+    const o = old ? old.split('\n') : []
+    const n = neu ? neu.split('\n') : []
+    // drop the lines both sides share at the edges, so the preview shows the change
+    let a = 0
+    while (a < o.length && a < n.length && o[a] === n[a]) a++
+    let b = 0
+    while (b < o.length - a && b < n.length - a && o[o.length - 1 - b] === n[n.length - 1 - b]) b++
+    const oc = o.slice(a, o.length - b)
+    const nc = n.slice(a, n.length - b)
+    del += oc.length
+    add += nc.length
+    for (const l of oc) if (lines.length < DIFF_LINES) lines.push('-' + clip(l, 200))
+    for (const l of nc) if (lines.length < DIFF_LINES) lines.push('+' + clip(l, 200))
+  }
+  return { lines, add, del }
+}
+
+function makeTool(
+  id: string,
+  name: string,
+  input: unknown,
+  ts: string | undefined,
+  lastPlan: PlanItem[] | null,
+): ToolCall {
+  const i = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  const t: ToolCall = { kind: 'tool', id, name, label: toolLabel(name), state: 'running', ts }
+  const file = str(i.file_path) ?? str(i.notebook_path)
+  switch (name) {
+    case 'Bash': {
+      const cmd = str(i.command) ?? ''
+      t.command = clip(cmd, CMD_MAX)
+      t.target = str(i.description) ?? cmd
+      break
+    }
+    case 'Edit':
+      t.target = file
+      t.diff = diffOf([{ old: str(i.old_string) ?? '', neu: str(i.new_string) ?? '' }])
+      break
+    case 'MultiEdit':
+      t.target = file
+      if (Array.isArray(i.edits))
+        t.diff = diffOf(
+          i.edits.map((e: Record<string, unknown>) => ({
+            old: str(e?.old_string) ?? '',
+            neu: str(e?.new_string) ?? '',
+          })),
+        )
+      break
+    case 'Write':
+    case 'Create':
+      t.target = file
+      t.diff = diffOf([{ old: '', neu: str(i.content) ?? '' }])
+      break
+    case 'Grep':
+    case 'Glob': {
+      const where = str(i.path) ?? str(i.glob)
+      t.target = [str(i.pattern), where && `in ${where}`].filter(Boolean).join(' ')
+      break
+    }
+    case 'Task':
+    case 'Agent':
+      t.target = str(i.description) ?? str(i.subagent_type)
+      t.prompt = clip(str(i.prompt) ?? '', PROMPT_MAX)
+      break
+    case 'TodoWrite':
+      t.plan = readPlan(i.todos)
+      break
+    case 'mcp__ccd_turn__update_plan':
+      t.plan = Array.isArray(i.items) ? readPlan(i.items) : stepPlan(lastPlan, i)
+      break
+    case 'mcp__ccd_turn__wrap_up':
+      t.target = str(i.recap)
+      break
+    case 'AskUserQuestion': {
+      const q = Array.isArray(i.questions) ? (i.questions[0] as Record<string, unknown>) : null
+      t.target = str(q?.question)
+      break
+    }
+    case 'SendUserFile':
+      t.target = Array.isArray(i.files) ? i.files.filter((f) => typeof f === 'string').join(', ') : undefined
+      break
+    default:
+      t.target =
+        toolTarget(name, i) ??
+        str(i.description) ??
+        str(i.prompt) ??
+        str(i.recap) ??
+        Object.values(i).find((v): v is string => typeof v === 'string' && !!v.trim())
+  }
+  if (t.target) t.target = oneLine(t.target, TARGET_MAX)
+  return t
+}
+
+/** Fill a tool call in from its tool_result block (keeping only a preview). */
+function applyResult(t: ToolCall, r: ToolResultBlock, denied: boolean): ToolCall {
+  let text = ''
+  let images = 0
+  if (typeof r.content === 'string') text = r.content
+  else if (Array.isArray(r.content))
+    for (const c of r.content as Block[]) {
+      if (c?.type === 'text' && c.text) text += (text ? '\n' : '') + c.text
+      else if (c?.type === 'image') images++
+    }
+  const next: ToolCall = { ...t, state: r.is_error || denied ? 'error' : 'done' }
+  if (images) next.images = images
+  text = text
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
+    // a subagent's report ends with its id and token usage: not part of the report
+    .replace(/\n*agentId: [\s\S]*$/, '')
+    .replace(/<usage>[\s\S]*?<\/usage>/g, '')
+    .replace(/\s+$/, '')
+  if (!text) return next
+  const lines = text.split('\n')
+  next.outputLines = lines.length
+  const failed = next.state === 'error'
+  // a file's contents, or "file updated", add nothing a reader of the chat needs
+  if (!failed && (READ_TOOLS.has(t.name) || MUTATE_TOOLS.has(t.name))) return next
+  // Bash and subagents put the useful part (exit status, the report) last
+  const tail = t.name === 'Bash' || t.name === 'Task' || t.name === 'Agent'
+  const keep = tail ? lines.slice(-OUT_TAIL_LINES) : lines.slice(0, failed ? OUT_TAIL_LINES : OUT_HEAD_LINES)
+  let out = keep.join('\n')
+  if (out.length > OUT_MAX) out = tail ? '…' + out.slice(-OUT_MAX) : out.slice(0, OUT_MAX) + '…'
+  next.output = out
+  return next
+}
+
+/**
+ * Incremental transcript parser. Feed it complete JSONL lines as they're
+ * appended (`push`); it keeps `items` up to date. A tool result lands in a
+ * later event than its call (often a later chunk), so the parser remembers
+ * where each open call sits and swaps in a new object for that item: React
+ * readers memoised on item identity re-render only what changed.
+ */
+export class TranscriptParser {
+  items: TranscriptItem[] = []
+  /** open tool calls by id → [item index, step index] */
+  private open = new Map<string, [number, number]>()
+  private lastPlan: PlanItem[] | null = null
+  /** items created during the current push: safe to mutate in place */
+  private fresh = new WeakSet<object>()
+
+  /** Parse appended lines. Returns true when `items` changed. */
+  push(jsonl: string): boolean {
+    let changed = false
+    for (const raw of jsonl.split('\n')) {
+      const ln = raw.trim()
+      if (!ln) continue
+      let ev: UserEvent
+      try {
+        ev = JSON.parse(ln)
+      } catch {
+        continue
+      }
+      if (ev.type === 'assistant') changed = this.assistant(ev) || changed
+      else if (ev.type === 'user') changed = this.user(ev) || changed
+    }
+    this.fresh = new WeakSet()
+    return changed
+  }
+
+  private add(item: TranscriptItem) {
+    this.fresh.add(item)
+    this.items.push(item)
+  }
+
+  /** The last item if it's of `kind`, made safe to mutate. */
+  private tailOf<K extends TranscriptItem['kind']>(kind: K): Extract<TranscriptItem, { kind: K }> | null {
+    const at = this.items.length - 1
+    const last = this.items[at]
+    if (!last || last.kind !== kind) return null
+    if (!this.fresh.has(last)) {
+      const copy = { ...last } as TranscriptItem
+      if (copy.kind === 'activity') copy.steps = copy.steps.slice()
+      this.fresh.add(copy)
+      this.items[at] = copy
+      return copy as Extract<TranscriptItem, { kind: K }>
+    }
+    return last as Extract<TranscriptItem, { kind: K }>
+  }
+
+  private addStep(step: ActivityStep, ts?: string): number {
+    let act = this.tailOf('activity')
+    if (!act) {
+      act = { kind: 'activity', steps: [], ts }
+      this.add(act)
+    }
+    act.steps.push(step)
+    return act.steps.length - 1
+  }
+
+  /** Replace an open tool call (in place when its item is fresh). */
+  private updateTool(id: string, f: (t: ToolCall) => ToolCall): boolean {
+    const at = this.open.get(id)
+    if (!at) return false
+    this.open.delete(id)
+    const [ii, si] = at
+    let item = this.items[ii]
+    if (item?.kind !== 'activity' || item.steps[si]?.kind !== 'tool') return false
+    if (!this.fresh.has(item)) {
+      item = { ...item, steps: item.steps.slice() }
+      this.fresh.add(item)
+      this.items[ii] = item
+    }
+    item.steps[si] = f(item.steps[si] as ToolCall)
+    return true
+  }
+
+  /** A new prompt or an interrupt: calls still open will never finish. */
+  private closeOpen() {
+    for (const id of [...this.open.keys()])
+      this.updateTool(id, (t) => (t.state === 'running' ? { ...t, state: 'stopped' } : t))
+  }
+
+  private assistant(ev: UserEvent): boolean {
+    const content = ev.message?.content
+    const ts = ev.timestamp
+    // harness-made replies (API errors, usage limits) aren't the model talking
+    const synthetic = (ev.message as { model?: string } | undefined)?.model === '<synthetic>'
+    let changed = false
+    const blocks: Block[] =
+      typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []
+    for (const c of blocks) {
+      if (!c) continue
+      if (c.type === 'text' && c.text?.trim()) {
+        if (synthetic) {
+          this.add({ kind: 'event', text: oneLine(c.text), tone: 'error', ts })
+        } else {
+          const last = this.tailOf('text')
+          if (last) last.text += '\n\n' + c.text.trim()
+          else this.add({ kind: 'text', text: c.text.trim(), ts })
+        }
+        changed = true
+      } else if (c.type === 'tool_use') {
+        const id = (c as { id?: string }).id ?? ''
+        const tool = makeTool(id, c.name ?? 'tool', c.input, ts, this.lastPlan)
+        if (tool.plan?.length) this.lastPlan = tool.plan
+        const si = this.addStep(tool, ts)
+        if (id) this.open.set(id, [this.items.length - 1, si])
+        changed = true
+      } else if (c.type === 'thinking') {
+        // most thinking is redacted to an empty block with a signature: skip it
+        const text = (c as { thinking?: string }).thinking?.trim()
+        if (text) {
+          this.addStep({ kind: 'thinking', text: clip(text, THINK_MAX), ts }, ts)
+          changed = true
+        }
+      }
+    }
+    return changed
+  }
+
+  private user(ev: UserEvent): boolean {
+    const content = ev.message?.content
+    let changed = false
+    let text = ''
+    let images = 0
+    if (typeof content === 'string') text = content
+    else if (Array.isArray(content))
+      for (const c of content as Block[]) {
+        if (!c) continue
+        if (c.type === 'tool_result') {
+          const r = c as unknown as ToolResultBlock
+          const denied = !!(ev as { toolDenialKind?: unknown }).toolDenialKind
+          if (r.tool_use_id && this.updateTool(r.tool_use_id, (t) => applyResult(t, r, denied)))
+            changed = true
+        } else if (c.type === 'text' && c.text) text += (text ? '\n' : '') + c.text
+        else if (c.type === 'image') images++
+      }
+    const item = text.trim()
+      ? readUserText(text, ev)
+      : images && !ev.isMeta
+        ? ({ kind: 'user', text: '', images: 0 } as TranscriptItem)
+        : null
+    if (!item) return changed
+    if (item.kind === 'user') {
+      item.images = images
+      this.closeOpen()
+    } else if (item.kind === 'event' && item.text === 'interrupted') this.closeOpen()
+    item.ts = ev.timestamp
+    this.add(item)
+    return true
+  }
+}
+
+/** Parse a whole transcript into readable items. */
+export function parseTranscript(jsonl: string): TranscriptItem[] {
+  const p = new TranscriptParser()
+  p.push(jsonl)
+  return p.items
 }
 
 export type TranscriptChunk = {
