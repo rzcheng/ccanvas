@@ -767,10 +767,14 @@ body.is-panning * {
   top: 0;
   left: 0;
   transform-origin: 0 0;
-  will-change: transform;
   /* The world never intercepts background gestures — the canvas root does the
      hit-testing. Interactive children opt back in below. */
   pointer-events: none;
+}
+/* promoted only while the camera moves (Canvas.tsx), so text is repainted
+   crisp at the new zoom once it settles instead of staying a scaled bitmap */
+.canvas__world--moving {
+  will-change: transform;
 }
 .canvas__world .widget,
 .canvas__world .text-el,

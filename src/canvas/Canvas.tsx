@@ -171,6 +171,25 @@ export function Canvas() {
   const [endpointDrag, setEndpointDrag] = useState(false)
 
   const cam = ws.camera
+  // Promote the world layers to GPU textures only while the camera moves. A
+  // permanently promoted layer is rasterized once and then scaled, so text
+  // stayed blurry at any zoom but 100%; at rest it is now repainted crisp.
+  const [camMoving, setCamMoving] = useState(false)
+  const settleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const firstCam = useRef(true)
+  useEffect(() => {
+    if (firstCam.current) {
+      firstCam.current = false
+      return
+    }
+    setCamMoving(true)
+    if (settleRef.current) clearTimeout(settleRef.current)
+    settleRef.current = setTimeout(() => setCamMoving(false), 200)
+  }, [cam.x, cam.y, cam.zoom])
+  useEffect(() => () => {
+    if (settleRef.current) clearTimeout(settleRef.current)
+  }, [])
+  const worldCls = camMoving ? 'canvas__world canvas__world--moving' : 'canvas__world'
   const selSet = new Set(selection)
   const byId = new Map(ws.elements.map((e) => [e.id, e]))
 
@@ -986,7 +1005,7 @@ export function Canvas() {
     >
       {/* frames sit behind everything */}
       <div
-        className="canvas__world canvas__frames"
+        className={`${worldCls} canvas__frames`}
         style={{ transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.zoom})` }}
       >
         {[...frameEls, ...(draftFrame ? [draftFrame] : [])].map((f) => (
@@ -1007,7 +1026,7 @@ export function Canvas() {
       </svg>
 
       <div
-        className="canvas__world"
+        className={worldCls}
         style={{ transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.zoom})` }}
       >
         {textImageEls.map((el) =>
@@ -1035,7 +1054,7 @@ export function Canvas() {
         return (
           <div
             key={tab.id}
-            className="canvas__world"
+            className={worldCls}
             style={{
               transform: `translate(${tab.camera.x}px, ${tab.camera.y}px) scale(${tab.camera.zoom})`,
               // lets zoomed-out terminal cards size their text in screen px
