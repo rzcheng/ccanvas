@@ -286,6 +286,13 @@ export function CommandPalette() {
         run: () => s.setOpenPanel('roster'),
       },
       {
+        id: 'panel-desktop',
+        label: 'Desktop sessions',
+        hint: 'mirror Claude desktop-app chats',
+        group: 'Panels',
+        run: () => s.setOpenPanel('desktop'),
+      },
+      {
         id: 'panel-prompts',
         label: 'Prompt library',
         group: 'Panels',

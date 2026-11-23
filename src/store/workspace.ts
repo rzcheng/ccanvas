@@ -205,7 +205,7 @@ export type AgentWizardCtx = {
 }
 
 /** Side panels that share the right-hand dock (only one open at a time). */
-export type SidePanel = 'roster' | 'prompts' | 'checkpoints' | 'memory' | 'settings'
+export type SidePanel = 'roster' | 'desktop' | 'prompts' | 'checkpoints' | 'memory' | 'settings'
 
 export type Store = {
   tabs: Workspace[]

@@ -10,6 +10,7 @@ import {
   IconClose,
   IconSearch,
   IconAgent,
+  IconDesktop,
   IconChat,
   IconHistory,
   IconSettings,
@@ -282,6 +283,7 @@ function LabelFilter() {
 
 const PANELS: { id: SidePanel; label: string; title: string; icon: React.ReactNode }[] = [
   { id: 'roster', label: 'Agents', title: 'Agents: every agent across your tabs, with status and a composer', icon: <IconAgent /> },
+  { id: 'desktop', label: 'Desktop sessions', title: 'Desktop sessions: mirror chats from the Claude desktop app onto this canvas', icon: <IconDesktop /> },
   { id: 'prompts', label: 'Prompts', title: 'Prompts: saved prompts you can send to any agent', icon: <IconChat /> },
   { id: 'checkpoints', label: 'Checkpoints', title: 'Checkpoints: git snapshots you can roll back to', icon: <IconHistory /> },
   { id: 'memory', label: 'Memory', title: "Memory: Claude's memory for this project, as a linked graph", icon: <IconClaude /> },
@@ -330,7 +332,7 @@ function Tools() {
       ))}
       <button
         className={`${on(openPanel !== null)} tb-more`}
-        title="Panels: agents, prompts, checkpoints, memory, settings"
+        title="Panels: agents, desktop sessions, prompts, checkpoints, memory, settings"
         onClick={moreMenu}
       >
         <IconMore />

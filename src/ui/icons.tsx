@@ -419,6 +419,14 @@ export const IconInfo = (p: P) => (
   </S>
 )
 
+// A monitor — the Claude desktop app's sessions (mirrors).
+export const IconDesktop = (p: P) => (
+  <S {...p}>
+    <rect x="3" y="4.5" width="18" height="12" rx="1.2" />
+    <path d="M9 20h6M12 16.5V20" />
+  </S>
+)
+
 // Speech bubble with lines — the agent transcript widget.
 export const IconChat = (p: P) => (
   <S {...p}>

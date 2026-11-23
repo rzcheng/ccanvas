@@ -137,7 +137,9 @@ export function TerminalBody({
     if (el.skipPermissions) flags.push('--dangerously-skip-permissions')
     return [base, ...flags].join(' ')
   }
-  const launch = isAgent ? buildAgentLaunch(el.sessionId, !!el.agentStarted) : undefined
+  // a plain terminal may carry a one-shot command (e.g. "Fork into terminal");
+  // it is cleared once typed so reopening the canvas doesn't run it again
+  const launch = isAgent ? buildAgentLaunch(el.sessionId, !!el.agentStarted) : el.startCmd
 
   // ---- terminal lifecycle + single input handler (created once shown) ----
   useEffect(() => {
@@ -668,6 +670,10 @@ export function TerminalBody({
           /* noop */
         }
         t.start()
+        if (!isAgent && el.startCmd)
+          mutateElement(el.id, (w) => {
+            delete (w as WidgetElement).startCmd
+          })
         // A re-attach (the shell survived a webview reload) already has claude
         // running — start() replays its scrollback to restore the view, so we
         // must NOT relaunch or it'd stack a second claude. The activity watchers

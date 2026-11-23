@@ -18,6 +18,7 @@ import { AttentionBar } from './ui/AttentionBar'
 import { Presentation } from './ui/Presentation'
 import { ContextMenuHost, isEditableTarget } from './ui/ContextMenu'
 import { Roster } from './ui/Roster'
+import { DesktopSessions } from './ui/DesktopSessions'
 import { PromptLibrary } from './ui/PromptLibrary'
 import { Checkpoints } from './ui/Checkpoints'
 import { MemoryPanel } from './ui/MemoryPanel'
@@ -416,6 +417,7 @@ export default function App() {
         <AgentWizard />
         <Presentation />
         {openPanel === 'roster' && <Roster />}
+        {openPanel === 'desktop' && <DesktopSessions />}
         {openPanel === 'prompts' && <PromptLibrary />}
         {openPanel === 'checkpoints' && <Checkpoints />}
         {openPanel === 'memory' && <MemoryPanel />}

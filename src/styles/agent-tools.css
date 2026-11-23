@@ -805,3 +805,92 @@
   font-size: 11px;
   color: var(--ink-dim);
 }
+
+/* ---------- desktop sessions picker ---------- */
+.dsk__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.dsk__filter {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+}
+.dsk__filter:focus {
+  border-color: var(--accent-line);
+}
+.dsk__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dsk__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.dsk__row:hover {
+  background: var(--panel-hi);
+}
+.dsk__row--on {
+  cursor: default;
+  opacity: 0.6;
+}
+.dsk__row input {
+  margin: 2px 0 0;
+  flex-shrink: 0;
+}
+.dsk__row .agent-dot {
+  margin-top: 5px;
+}
+.dsk__foot {
+  border-top: 1px solid var(--line);
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.dsk__btn {
+  height: 28px;
+  padding: 0 12px;
+  background: var(--panel-hi);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.dsk__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* the "Desktop" badge on a mirror's title bar and roster row */
+.dsk-badge {
+  font-size: 9.5px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
