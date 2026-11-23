@@ -13,6 +13,7 @@ import {
 import { watchPath, baseName, openExternal } from '../lib/backend'
 import { renderMarkdown } from '../lib/markdown'
 import { IconReload } from '../ui/icons'
+import { useTextScale } from '../lib/settings'
 import '../styles/agent-tools.css'
 
 // Renders an agent's real conversation, read from its session JSONL transcript —
@@ -396,6 +397,23 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
     if (autoscroll && scrollRef.current)
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [items, autoscroll])
+
+  // ...and when the layout changes under it: the widget is resized, or the
+  // Settings text size reflows every message (no scroll event fires for either)
+  const textScale = useTextScale()
+  const autoscrollRef = useRef(autoscroll)
+  autoscrollRef.current = autoscroll
+  useEffect(() => {
+    const n = scrollRef.current
+    if (!n) return
+    const pin = () => {
+      if (autoscrollRef.current) n.scrollTop = n.scrollHeight
+    }
+    pin()
+    const ro = new ResizeObserver(pin)
+    ro.observe(n)
+    return () => ro.disconnect()
+  }, [textScale])
 
   // keep each item's index in the full list as its key, so a row's open
   // state stays with that row while filtering

@@ -6,6 +6,7 @@ import type { WidgetElement } from '../lib/types'
 import { claudeColorName } from '../lib/types'
 import { connectPty, type Term } from '../lib/terminal'
 import { useStore, selectActive } from '../store/workspace'
+import { useTextScale } from '../lib/settings'
 import { findFilePaths, findUrls, widgetKindForFile } from '../lib/filetypes'
 import { resolvePath, baseName, openExternal } from '../lib/backend'
 import {
@@ -81,6 +82,10 @@ export function TerminalBody({
   const lineRef = useRef('')
   const localStartedRef = useRef(false)
   const kRef = useRef(1)
+  // text size from Settings: multiplies the base font, so a change reflows
+  const textScale = useTextScale()
+  const textScaleRef = useRef(textScale)
+  textScaleRef.current = textScale
   // cascade offset so repeatedly opening files from the output don't stack
   const openCountRef = useRef(0)
   const [status, setStatus] = useState<Mode>('connecting')
@@ -146,7 +151,7 @@ export function TerminalBody({
     if (!armed || !innerRef.current || !hostRef.current) return
     const term = new Terminal({
       fontFamily: terminalFontFamily(profile),
-      fontSize: fontBase(profile) * kRef.current,
+      fontSize: fontBase(profile) * textScaleRef.current * kRef.current,
       lineHeight: profile?.lineHeight ?? 1.25,
       cursorBlink: profile?.cursorBlink ?? true,
       cursorStyle: profile?.cursorStyle ?? 'bar',
@@ -762,7 +767,7 @@ export function TerminalBody({
   useEffect(() => {
     const term = termRef.current
     if (!term) return
-    term.options.fontSize = fontBase(profile) * k
+    term.options.fontSize = fontBase(profile) * textScale * k
     const raf = requestAnimationFrame(() => {
       try {
         fitRef.current?.fit()
@@ -772,7 +777,7 @@ export function TerminalBody({
       }
     })
     return () => cancelAnimationFrame(raf)
-  }, [k, armed])
+  }, [k, armed, textScale])
 
   // when our tab becomes visible, force xterm to re-fit + repaint — it was
   // opened/written while hidden (kept mounted across tabs) and its renderer

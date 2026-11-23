@@ -4,6 +4,7 @@ import {
   useSettings,
   PALETTES,
   AGENT_CLIS,
+  TEXT_SIZES,
   comboFrom,
   formatSeq,
   isModifierKey,
@@ -16,7 +17,7 @@ import '../styles/agent-tools.css'
 // How long to wait after the first press for a second one (a chord like ⌃X ⌃F).
 const CHORD_WAIT = 900
 
-// Preferences: which shortcuts open the tab finder, and the app's colour palette.
+// Preferences: which shortcuts open the tab finder, the colour palette and text size.
 export function SettingsPanel() {
   const setOpenPanel = useStore((s) => s.setOpenPanel)
   const s = useSettings()
@@ -89,6 +90,26 @@ export function SettingsPanel() {
           ))}
         </div>
         <div className="set__hint">Terminals keep the colours from your iTerm2 profile.</div>
+
+        <div className="set__section">Text size</div>
+        <div className="set__sizes">
+          {TEXT_SIZES.map((t) => (
+            <button
+              key={t.id}
+              className={`set__size${s.textSize === t.id ? ' set__size--on' : ''}`}
+              title={`${Math.round(t.scale * 100)}%`}
+              onClick={() => s.update({ textSize: t.id })}
+            >
+              <span className="set__size-a" style={{ fontSize: 13 * t.scale }}>
+                Aa
+              </span>
+              <span className="set__swatch-name">{t.name}</span>
+            </button>
+          ))}
+        </div>
+        <div className="set__hint">
+          Scales text in widgets, terminals and panels; widgets keep their size.
+        </div>
       </div>
     </div>
   )

@@ -70,7 +70,7 @@ running agent.
 
 | | |
 | --- | --- |
-| 🎨 **Settings and colour palettes** | A Settings panel (the gear in the top bar, or `⌘,` on macOS) with six palettes — Claude, Ember, Moss, Slate, Plum, and Mono — and the keys that open the tab finder |
+| 🎨 **Settings and colour palettes** | A Settings panel (the gear in the top bar, or `⌘,` on macOS) with six palettes — Claude, Ember, Moss, Slate, Plum, and Mono — a text size (Small to Larger) that scales text in widgets, terminals and panels without resizing anything, and the keys that open the tab finder |
 | 🔎 **Tab finder** | `⌃X ⌃F` opens a bar at the bottom of the window to jump to any tab by name, with Tab completion. Vim keys (`:`, `gt`, `gT`) or a shortcut of your own can be switched on in Settings |
 | 🗂️ **Tabs you can arrange** | Drag tabs to reorder them; a crowded strip squeezes its tabs before it scrolls and keeps the active one in view |
 | 🟣 **A just-finished dot** | An agent's dot turns purple for two minutes after it finishes a turn, in its title bar, the roster, and its zoomed-out card |
@@ -183,7 +183,7 @@ File drag-and-drop needs the desktop app; the VS Code widget works here too.
 | **Prompt library** | Reusable prompt snippets you can insert into the focused agent, drag onto any agent, or manage; persisted like layout templates |
 | **Canvas search** | ⌘/Ctrl-F to search every element's text (titles, notes, paths, URLs, prompts, frame names) and jump to it |
 | **Follow active agent** | A headless camera mode that pans to whichever agent most recently started working |
-| **Settings** | Six colour palettes and the keys that open the tab finder (Emacs on by default; Vim and your own shortcuts are opt-in) |
+| **Settings** | Six colour palettes, text size, and the keys that open the tab finder (Emacs on by default; Vim and your own shortcuts are opt-in) |
 | **Arrange** | Group, lock, align, distribute, tidy, copy/paste/duplicate, z-order, snapping guides; arrange terminals by label colour or by folder |
 | **Right-click menus** | Canvas elements (duplicate, copy, lock, group, z-order, delete), agents (track, open transcript, label), file-tree rows (open in the editor or a viewer, open with the default app, **reveal in Explorer/Finder**, copy path), tabs (pin, rename, close), empty canvas (paste, select all, reveal folder) |
 | **Tabs** | Multiple `.ccnvs` workspaces open at once, each bound to its own folder; drag to reorder, pin the ones you keep, jump with the tab finder |

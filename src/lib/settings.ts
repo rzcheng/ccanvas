@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-// App preferences (keybindings + colour palette), kept in localStorage so they
+// App preferences (keybindings, colour palette, text size), kept in localStorage so they
 // survive restarts. Everything here is per-machine, not part of a canvas file.
 
 const KEY = 'ccanvas.settings'
@@ -36,6 +36,16 @@ export const AGENT_CLIS: { id: AgentCli; name: string; cmd: string }[] = [
   { id: 'codex', name: 'Codex', cmd: 'codex' },
 ]
 
+export type TextSizeId = 'small' | 'default' | 'large' | 'larger'
+
+/** Text size choices: every fixed font size in the app is multiplied by `scale`. */
+export const TEXT_SIZES: { id: TextSizeId; name: string; scale: number }[] = [
+  { id: 'small', name: 'Small', scale: 0.9 },
+  { id: 'default', name: 'Default', scale: 1 },
+  { id: 'large', name: 'Large', scale: 1.15 },
+  { id: 'larger', name: 'Larger', scale: 1.3 },
+]
+
 export interface Settings {
   /** ⌃X ⌃F opens the tab finder */
   emacsKeys: boolean
@@ -46,6 +56,7 @@ export interface Settings {
   palette: PaletteId
   /** CLI that new agents open with; existing agents keep the one they were made with */
   agentCli: AgentCli
+  textSize: TextSizeId
 }
 
 const DEFAULTS: Settings = {
@@ -54,6 +65,7 @@ const DEFAULTS: Settings = {
   customFinderKeys: [],
   palette: 'claude',
   agentCli: 'claude',
+  textSize: 'default',
 }
 
 function load(): Settings {
@@ -92,6 +104,24 @@ export function applyPalette(id: PaletteId) {
 applyPalette(useSettings.getState().palette)
 useSettings.subscribe((s, prev) => {
   if (s.palette !== prev.palette) applyPalette(s.palette)
+})
+
+// ----- text size -----
+
+export function textScale(id: TextSizeId): number {
+  return TEXT_SIZES.find((t) => t.id === id)?.scale ?? 1
+}
+
+/** The current text scale; components that size text in JS (xterm, Monaco) use it. */
+export const useTextScale = () => useSettings((s) => textScale(s.textSize))
+
+// the stylesheets size text as calc(Npx * var(--ts))
+function applyTextSize(id: TextSizeId) {
+  document.documentElement.style.setProperty('--ts', String(textScale(id)))
+}
+applyTextSize(useSettings.getState().textSize)
+useSettings.subscribe((s, prev) => {
+  if (s.textSize !== prev.textSize) applyTextSize(s.textSize)
 })
 
 // ----- key combos -----
