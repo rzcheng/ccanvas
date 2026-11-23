@@ -58,7 +58,7 @@ import { MirrorAsk, MirrorWaitChip } from './MirrorStatus'
 import { openInClaude } from '../lib/desktopSessions'
 import { WidgetErrorBoundary } from '../ui/WidgetErrorBoundary'
 
-const KIND_ICON: Record<WidgetKind, (p: { className?: string; size?: number }) => JSX.Element> = {
+export const KIND_ICON: Record<WidgetKind, (p: { className?: string; size?: number }) => JSX.Element> = {
   terminal: IconTerminal,
   agent: IconAgent,
   web: IconWeb,
@@ -97,7 +97,9 @@ export const WidgetFrame = memo(function WidgetFrame({
   el: WidgetElement
   selected: boolean
   onStartMove: (e: React.PointerEvent, id: string) => void
-  /** is this widget's tab currently shown? */
+  /** is this widget shown (its tab and its layer are the current ones)?
+   *  When not, the card is hidden on its own (`widget--offlayer`) but stays
+   *  mounted, so its shell or agent keeps running. */
   visible?: boolean
 }) {
   const tool = useStore((s) => s.tool)
@@ -352,7 +354,7 @@ export const WidgetFrame = memo(function WidgetFrame({
         active ? ' widget--active' : ''
       }${tagged ? ' widget--tagged' : ''}${isTerminal ? ' widget--term' : ''}${
         dimmed ? ' widget--dimmed' : ''
-      }`}
+      }${visible ? '' : ' widget--offlayer'}`}
       data-widget-id={el.id}
       style={
         {

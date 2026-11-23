@@ -38,10 +38,19 @@ import {
   isEditableTarget,
   type MenuItem,
 } from '../ui/ContextMenu'
-import { IconExternal } from '../ui/icons'
+import { IconExternal, IconLayers } from '../ui/icons'
 import { ElementView } from './ElementView'
 import { TextElement } from './TextElement'
 import { WidgetFrame } from '../widgets/WidgetFrame'
+import {
+  activeLayerElements,
+  activeLayerId,
+  hasLayers,
+  layerNumber,
+  layerOf,
+  layersOf,
+  MAX_LAYERS,
+} from '../lib/layers'
 
 type ScreenRect = { x: number; y: number; w: number; h: number }
 type Corner = 'nw' | 'ne' | 'sw' | 'se'
@@ -124,8 +133,13 @@ function isIdleTerminal(node: HTMLElement | null): boolean {
   if (!id) return false
   const st = useStore.getState()
   if (st.activeWidgetId === id) return false
-  const el = selectActive(st).elements.find((e) => e.id === id)
-  return el?.type === 'widget' && (el.kind === 'terminal' || el.kind === 'agent')
+  const ws = selectActive(st)
+  const el = ws.elements.find((e) => e.id === id)
+  return (
+    el?.type === 'widget' &&
+    (el.kind === 'terminal' || el.kind === 'agent') &&
+    layerOf(el) === activeLayerId(ws)
+  )
 }
 
 /** The world layers' CSS transform. The translate is snapped to whole device
@@ -168,6 +182,8 @@ export function Canvas() {
   const openAgentWizard = useStore((s) => s.openAgentWizard)
   const setSnapGuides = useStore((s) => s.setSnapGuides)
   const guides = useStore((s) => s.snapGuides)
+  // while the layers overview is up, the live canvas is hidden (still mounted)
+  const overview = useStore((s) => s.layerOverview === 'open')
 
   const [draft, setDraft] = useState<CanvasElement | null>(null)
   const [marquee, setMarquee] = useState<ScreenRect | null>(null)
@@ -221,7 +237,12 @@ export function Canvas() {
   )
   useEffect(() => () => cancelAnimationFrame(camRaf.current), [])
   const selSet = new Set(selection)
+  // every element (arrows resolve their bound ends through this) …
   const byId = new Map(ws.elements.map((e) => [e.id, e]))
+  // … but only the layer being shown is drawn, picked, snapped to or selected
+  const els = activeLayerElements(ws)
+  const layered = hasLayers(ws)
+  const curLayer = activeLayerId(ws)
 
   const getPt = (e: { clientX: number; clientY: number }): Point => {
     const r = rootRef.current!.getBoundingClientRect()
@@ -239,8 +260,8 @@ export function Canvas() {
         t.tagName === 'TEXTAREA' ||
         t.closest('.xterm') != null
       if (typing) return
-      // a focused widget wants the space for itself
-      if (useStore.getState().activeWidgetId) return
+      // a focused widget wants the space for itself; the overview owns it while up
+      if (useStore.getState().activeWidgetId || useStore.getState().layerOverview) return
       e.preventDefault()
       const r = rootRef.current?.getBoundingClientRect()
       const fallback = r ? { x: r.width / 2, y: r.height / 2 } : { x: 0, y: 0 }
@@ -287,7 +308,7 @@ export function Canvas() {
   const pickVector = (world: Point): CanvasElement | null => {
     const tol = 6 / cam.zoom
     let best: CanvasElement | null = null
-    for (const el of ws.elements) {
+    for (const el of els) {
       if (
         el.type === 'widget' ||
         el.type === 'text' ||
@@ -304,7 +325,7 @@ export function Canvas() {
   const pickTopForMenu = (world: Point): CanvasElement | null => {
     const tol = 6 / cam.zoom
     let best: CanvasElement | null = null
-    for (const el of ws.elements) {
+    for (const el of els) {
       const hit =
         el.type === 'widget' ||
         el.type === 'frame' ||
@@ -392,6 +413,27 @@ export function Canvas() {
         onClick: () => (grouped ? s().ungroup() : s().group()),
       })
     items.push({ separator: true })
+    // Move to layer ▸ (flat: the menu has no submenus). x/y stay put.
+    const ids = selEls.map((e) => e.id)
+    if (layered)
+      layersOf(ws).forEach((l, i) => {
+        if (l.id === curLayer) return
+        items.push({
+          label: `Move to ${layerNumber(i)} · ${l.name}`,
+          icon: <IconLayers />,
+          onClick: () => s().moveToLayer(ids, l.id),
+        })
+      })
+    if (layersOf(ws).length < MAX_LAYERS)
+      items.push({
+        label: 'Move to new layer…',
+        icon: <IconLayers />,
+        onClick: () =>
+          void s()
+            .newLayerWithPicker()
+            .then((id) => id && s().moveToLayer(ids, id)),
+      })
+    items.push({ separator: true })
     items.push({ label: 'Bring to front', hint: '⌘]', onClick: () => s().bringToFront(s().selection) })
     items.push({ label: 'Send to back', hint: '⌘[', onClick: () => s().sendToBack(s().selection) })
     items.push({ separator: true })
@@ -411,10 +453,23 @@ export function Canvas() {
         hint: '⌘A',
         onClick: () => {
           const st = useStore.getState()
-          st.setSelection(selectActive(st).elements.map((el) => el.id))
+          st.setSelection(activeLayerElements(selectActive(st)).map((el) => el.id))
         },
       },
     ]
+    items.push({ separator: true })
+    items.push({
+      label: 'Layers overview',
+      hint: 'L',
+      icon: <IconLayers />,
+      onClick: () => useStore.getState().setLayerOverview(true),
+    })
+    if (layersOf(ws).length < MAX_LAYERS)
+      items.push({
+        label: 'New layer…',
+        icon: <IconLayers />,
+        onClick: () => void useStore.getState().newLayerWithPicker({ activate: true }),
+      })
     if (ws.dir) {
       items.push({ separator: true })
       items.push({
@@ -438,9 +493,9 @@ export function Canvas() {
       const cur = useStore.getState().selection
       const selIds = cur.includes(picked.id)
         ? cur
-        : withGroupSiblings(ws.elements, [picked.id])
+        : withGroupSiblings(els, [picked.id])
       if (selIds !== cur) setSelection(selIds)
-      const selEls = ws.elements.filter((el) => selIds.includes(el.id))
+      const selEls = els.filter((el) => selIds.includes(el.id))
       openContextMenu(e, elementMenu(selEls))
     } else {
       openContextMenu(e, backgroundMenu(world))
@@ -454,7 +509,7 @@ export function Canvas() {
     const anchorTol = 18 / cam.zoom
     const margin = 12 / cam.zoom
     let target: CanvasElement | null = null
-    for (const el of ws.elements) {
+    for (const el of els) {
       if (el.id === excludeId || !BINDABLE.has(el.type)) continue
       const b = elementBounds(el)
       const exp = { x: b.x - margin, y: b.y - margin, w: b.w + margin * 2, h: b.h + margin * 2 }
@@ -482,7 +537,7 @@ export function Canvas() {
 
   const eraseAt = (world: Point) => {
     const tol = 8 / cam.zoom
-    const hits = ws.elements
+    const hits = els
       .filter((el) => el.type !== 'widget' && el.type !== 'frame' && hitTest(el, world, tol))
       .map((el) => el.id)
     if (!hits.length) return
@@ -520,7 +575,7 @@ export function Canvas() {
       : cur.includes(id)
         ? cur
         : [id]
-    setSelection(withGroupSiblings(ws.elements, next))
+    setSelection(withGroupSiblings(els, next))
     setActiveWidget(null)
     startMoveDrag(e)
   }
@@ -530,7 +585,7 @@ export function Canvas() {
   const startMoveRef = useRef<(e: React.PointerEvent) => void>(() => {})
   startMoveRef.current = (e: React.PointerEvent) => {
     setActiveWidget(null)
-    setSelection(withGroupSiblings(ws.elements, useStore.getState().selection))
+    setSelection(withGroupSiblings(els, useStore.getState().selection))
     startMoveDrag(e)
   }
   const onWidgetStartMove = useCallback((e: React.PointerEvent) => startMoveRef.current(e), [])
@@ -584,7 +639,7 @@ export function Canvas() {
             selection.includes(hit.id)
             ? selection
             : [hit.id]
-        setSelection(withGroupSiblings(ws.elements, base))
+        setSelection(withGroupSiblings(els, base))
         startMoveDrag(e)
       } else if (e.shiftKey) {
         // shift-drag on empty canvas: box-select
@@ -747,11 +802,11 @@ export function Canvas() {
         let dy = world.y - drag.last.y
         // alignment-guide snapping against non-moving elements
         const movingIds = new Set(useStore.getState().selection)
-        const moving = ws.elements.filter((el) => movingIds.has(el.id))
+        const moving = els.filter((el) => movingIds.has(el.id))
         if (moving.length) {
           const mb = unionBounds(moving)
           const target = { x: mb.x + dx, y: mb.y + dy, w: mb.w, h: mb.h }
-          const others = ws.elements
+          const others = els
             .filter((el) => !movingIds.has(el.id))
             .map(elementBounds)
           const snap = snapBox(target, others, 6 / cam.zoom)
@@ -798,7 +853,7 @@ export function Canvas() {
         } else {
           // snap the dragged corner's edges to nearby elements (no aspect lock)
           const tol = 6 / cam.zoom
-          const others = ws.elements.filter((e) => e.id !== drag.id).map(elementBounds)
+          const others = els.filter((e) => e.id !== drag.id).map(elementBounds)
           const { xs, ys } = edgeLines(others)
           let vx: number | null = null
           let hy: number | null = null
@@ -898,10 +953,10 @@ export function Canvas() {
     } else if (drag?.kind === 'marquee' && marquee && (marquee.w > 3 || marquee.h > 3)) {
       const tl = screenToWorld({ x: marquee.x, y: marquee.y }, cam)
       const worldBox: Rect = { x: tl.x, y: tl.y, w: marquee.w / cam.zoom, h: marquee.h / cam.zoom }
-      const hits = ws.elements
+      const hits = els
         .filter((el) => rectsIntersect(elementBounds(el), worldBox))
         .map((el) => el.id)
-      const expanded = withGroupSiblings(ws.elements, hits)
+      const expanded = withGroupSiblings(els, hits)
       setSelection(e.shiftKey ? [...new Set([...selection, ...expanded])] : expanded)
     }
 
@@ -981,7 +1036,7 @@ export function Canvas() {
     const tl = worldToScreen({ x: b.x, y: b.y }, cam)
     return { x: tl.x, y: tl.y, w: b.w * cam.zoom, h: b.h * cam.zoom }
   }
-  const selBoxes = ws.elements
+  const selBoxes = els
     .filter((el) => selSet.has(el.id) && el.type !== 'widget')
     .map((el) => ({ id: el.id, r: screenRectOf(elementBounds(el)) }))
 
@@ -1004,26 +1059,37 @@ export function Canvas() {
   // quick-connect anchor dots on every widget so targets are never a guess
   const showAnchors = tool === 'arrow' || endpointDrag
   const anchorWidgets = showAnchors
-    ? ws.elements.filter((el): el is WidgetElement => el.type === 'widget')
+    ? els.filter((el): el is WidgetElement => el.type === 'widget')
     : []
 
-  const vectorEls = ws.elements
+  // an arrow whose bound end sits on another layer isn't drawn (v1: no stubs)
+  const endHere = (b?: { id: string }) => {
+    const t = b && byId.get(b.id)
+    return !t || layerOf(t) === curLayer
+  }
+  const vectorEls = els
     .filter(
       (el) =>
-        el.type !== 'widget' && el.type !== 'text' && el.type !== 'image' && el.type !== 'frame',
+        el.type !== 'widget' &&
+        el.type !== 'text' &&
+        el.type !== 'image' &&
+        el.type !== 'frame' &&
+        (el.type !== 'arrow' || !layered || (endHere(el.from) && endHere(el.to))),
     )
     .sort((a, b) => a.z - b.z)
     .map((el) => (el.type === 'arrow' ? resolvedArrow(el, byId) : el))
-  const textImageEls = ws.elements
+  const textImageEls = els
     .filter((el) => el.type === 'text' || el.type === 'image')
     .sort((a, b) => a.z - b.z)
-  const frameEls = ws.elements.filter((el): el is FrameElement => el.type === 'frame')
+  const frameEls = els.filter((el): el is FrameElement => el.type === 'frame')
   const draftFrame = draft?.type === 'frame' ? draft : null
 
   return (
     <div
       ref={rootRef}
-      className={`canvas canvas--tool-${tool}${panning ? ' canvas--panning' : ''}`}
+      className={`canvas canvas--tool-${tool}${panning ? ' canvas--panning' : ''}${
+        overview ? ' canvas--overview' : ''
+      }`}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -1087,6 +1153,7 @@ export function Canvas() {
         // end, which resets every scroll position inside it and reloads iframes
         const tabWidgets = tab.elements.filter((e): e is WidgetElement => e.type === 'widget')
         if (!tabWidgets.length) return null
+        const tabLayer = activeLayerId(tab)
         return (
           <div
             key={tab.id}
@@ -1098,15 +1165,21 @@ export function Canvas() {
               visibility: isActiveTab ? undefined : 'hidden',
             }}
           >
-            {tabWidgets.map((el) => (
-              <WidgetFrame
-                key={el.id}
-                el={el}
-                selected={isActiveTab && selSet.has(el.id)}
-                onStartMove={isActiveTab ? onWidgetStartMove : NOOP}
-                visible={isActiveTab}
-              />
-            ))}
+            {tabWidgets.map((el) => {
+              // a widget on another layer stays mounted (its shell, agent or
+              // iframe keeps running) and is hidden per card: switching layers
+              // is a class toggle, never a re-parent or remount
+              const shown = isActiveTab && layerOf(el) === tabLayer
+              return (
+                <WidgetFrame
+                  key={el.id}
+                  el={el}
+                  selected={shown && selSet.has(el.id)}
+                  onStartMove={shown ? onWidgetStartMove : NOOP}
+                  visible={shown}
+                />
+              )
+            })}
           </div>
         )
       })}
