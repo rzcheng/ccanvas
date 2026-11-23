@@ -8,14 +8,17 @@
 // the parsing lives in this one module, so if the format changes this is the
 // only place that breaks — the frontend sees just the `DesktopSession` shape.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// One desktop-app session, as the picker and mirror widget need it.
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopSession {
     /// the desktop app's own id (`local_<uuid>`)
@@ -36,19 +39,33 @@ pub struct DesktopSession {
     transcript_mtime: Option<u64>,
 }
 
-/// The fields we read from a session file; everything else is ignored, and
-/// every field may be missing.
+/// The fields we read from a session file; everything else is skipped without
+/// being built. Each is a loose `Value` so a field of an unexpected type costs
+/// only that field, not the whole session.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Meta {
-    session_id: Option<String>,
-    cli_session_id: Option<String>,
-    cwd: Option<String>,
-    title: Option<String>,
-    model: Option<String>,
-    is_archived: Option<bool>,
-    created_at: Option<u64>,
-    last_activity_at: Option<u64>,
+    session_id: Option<Value>,
+    cli_session_id: Option<Value>,
+    cwd: Option<Value>,
+    title: Option<Value>,
+    model: Option<Value>,
+    is_archived: Option<Value>,
+    created_at: Option<Value>,
+    last_activity_at: Option<Value>,
+}
+
+/// A non-empty, trimmed string.
+fn text(v: Option<Value>) -> Option<String> {
+    let s = v?.as_str()?.trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+/// Epoch milliseconds, whether written as an integer or a float.
+fn millis(v: Option<Value>) -> Option<u64> {
+    let v = v?;
+    v.as_u64()
+        .or_else(|| v.as_f64().filter(|f| *f >= 0.0).map(|f| f as u64))
 }
 
 /// Claude Code's project folder name for a working directory: every character
@@ -83,28 +100,63 @@ fn mtime_ms(path: &Path) -> Option<u64> {
 
 /// Parse one session file's text. None when it isn't JSON or lacks the ids and
 /// working directory a mirror needs.
-fn parse_session(home: &Path, text: &str) -> Option<DesktopSession> {
-    let m: Meta = serde_json::from_str(text).ok()?;
-    let session_id = m.session_id.filter(|s| !s.is_empty())?;
-    let cli_session_id = m.cli_session_id.filter(|s| !s.is_empty())?;
-    let cwd = m.cwd.filter(|s| !s.is_empty())?;
+fn parse_session(home: &Path, body: &str) -> Option<DesktopSession> {
+    let m: Meta = serde_json::from_str(body).ok()?;
+    let session_id = text(m.session_id)?;
+    let cli_session_id = text(m.cli_session_id)?;
+    let cwd = text(m.cwd)?;
     let path = transcript_path(home, &cwd, &cli_session_id);
     Some(DesktopSession {
-        title: m
-            .title
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| "Untitled session".to_string()),
-        model: m.model.filter(|s| !s.is_empty()),
-        is_archived: m.is_archived.unwrap_or(false),
-        created_at: m.created_at,
-        last_activity_at: m.last_activity_at,
+        title: text(m.title).unwrap_or_else(|| "Untitled session".to_string()),
+        model: text(m.model),
+        is_archived: m.is_archived.and_then(|v| v.as_bool()).unwrap_or(false),
+        created_at: millis(m.created_at),
+        last_activity_at: millis(m.last_activity_at),
         transcript_mtime: mtime_ms(&path),
         transcript_path: path.to_string_lossy().into_owned(),
         session_id,
         cli_session_id,
         cwd,
     })
+}
+
+/// Parsed session files, keyed by path and checked against the file's mtime
+/// and size. The picker rescans every few seconds and the files hold large
+/// blobs we don't read (hundreds of files, ~17 MB in all), so only files that
+/// changed are parsed again.
+type Stamp = (SystemTime, u64);
+type ParsedCache = Mutex<HashMap<PathBuf, (Stamp, Option<DesktopSession>)>>;
+fn parsed_cache() -> &'static ParsedCache {
+    static C: OnceLock<ParsedCache> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// One session file, parsed or from the cache, with a fresh transcript mtime.
+fn load_session(home: &Path, path: &Path) -> Option<DesktopSession> {
+    let meta = fs::metadata(path).ok()?;
+    let stamp = (meta.modified().ok()?, meta.len());
+    let hit = parsed_cache()
+        .lock()
+        .unwrap()
+        .get(path)
+        .filter(|(s, _)| *s == stamp)
+        .map(|(_, d)| d.clone());
+    let parsed = match hit {
+        Some(d) => d,
+        None => {
+            let d = fs::read_to_string(path)
+                .ok()
+                .and_then(|t| parse_session(home, &t));
+            parsed_cache()
+                .lock()
+                .unwrap()
+                .insert(path.to_path_buf(), (stamp, d.clone()));
+            d
+        }
+    };
+    let mut s = parsed?;
+    s.transcript_mtime = mtime_ms(Path::new(&s.transcript_path));
+    Some(s)
 }
 
 /// Subdirectories of `dir` (unreadable ones are skipped).
@@ -133,10 +185,7 @@ fn scan(home: &Path, sessions_root: &Path) -> Vec<DesktopSession> {
                 if !is_session {
                     continue;
                 }
-                if let Some(s) = fs::read_to_string(&path)
-                    .ok()
-                    .and_then(|t| parse_session(home, &t))
-                {
+                if let Some(s) = load_session(home, &path) {
                     out.push(s);
                 }
             }
@@ -246,6 +295,22 @@ mod tests {
         assert!(parse_session(h, r#"{"sessionId":"l","cliSessionId":"c"}"#).is_none());
         // wrong types are malformed, not a panic
         assert!(parse_session(h, r#"{"sessionId":1,"cliSessionId":"c","cwd":"/a"}"#).is_none());
+        assert!(parse_session(h, r#"{"sessionId":"l","cliSessionId":null,"cwd":"/a"}"#).is_none());
+    }
+
+    #[test]
+    fn odd_field_types_cost_only_that_field() {
+        let s = parse_session(
+            Path::new("/h"),
+            r#"{"sessionId":"l","cliSessionId":"c","cwd":"/a","title":7,"model":null,
+                "isArchived":"yes","createdAt":1.5e3,"lastActivityAt":"soon"}"#,
+        )
+        .unwrap();
+        assert_eq!(s.title, "Untitled session");
+        assert_eq!(s.model, None);
+        assert!(!s.is_archived);
+        assert_eq!(s.created_at, Some(1500));
+        assert_eq!(s.last_activity_at, None);
     }
 
     #[test]
