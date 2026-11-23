@@ -434,6 +434,9 @@
   overflow: hidden;
 }
 .lr__dir {
+  min-width: 0;
+  direction: rtl;
+  text-align: left;
   color: var(--ink-ghost);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -684,6 +687,9 @@
   font-weight: 600;
 }
 .tb-layer__name {
+  /* the name keeps its room; a long folder path gives way first */
+  flex-shrink: 0;
+  max-width: calc(130px * var(--ts));
   font-family: var(--font-label);
   font-weight: 600;
   text-transform: uppercase;
@@ -694,6 +700,9 @@
   text-overflow: ellipsis;
 }
 .tb-layer__dir {
+  flex: 0 1 auto;
+  direction: rtl; /* ellipsis at the start: the project's own folder stays readable */
+  text-align: left;
   color: var(--ink-faint);
   white-space: nowrap;
   overflow: hidden;

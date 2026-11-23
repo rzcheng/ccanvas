@@ -693,7 +693,7 @@ export function LayerOverview() {
                     {here && <span className="lr__here">here</span>}
                   </div>
                   <div className="lr__meta">
-                    {dir && <span className="lr__dir">{shortPath(dir)}</span>}
+                    {dir && <span className="lr__dir">{"\u200e" + shortPath(dir)}</span>}
                     <span>{st.count ? `${st.count} widget${st.count > 1 ? 's' : ''}` : 'empty'}</span>
                     {st.working > 0 && <span className="m m--working">{st.working}</span>}
                     {st.waiting > 0 && <span className="m m--waiting">{st.waiting} needs you</span>}

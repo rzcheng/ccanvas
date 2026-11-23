@@ -139,7 +139,7 @@ function LayerChip() {
       ) : (
         <span className="tb-layer__name">{layer.name}</span>
       )}
-      {layer.dir && <span className="tb-layer__dir">{shortPath(layer.dir)}</span>}
+      {layer.dir && <span className="tb-layer__dir">{"\u200e" + shortPath(layer.dir)}</span>}
     </button>
   )
 }
