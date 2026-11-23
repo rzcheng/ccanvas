@@ -27,6 +27,8 @@ import { Minibuffer } from './ui/Minibuffer'
 import { TrackingBar } from './ui/TrackingBar'
 import { FollowController } from './ui/FollowController'
 import { useTerminalFileDrop } from './lib/fileDrop'
+import { LayerOverview } from './ui/LayerOverview'
+import { activeLayerElements, activeLayerId, layersOf } from './lib/layers'
 import { SettingsPanel } from './ui/SettingsPanel'
 import { UpdateBanner } from './ui/UpdateBanner'
 import { inEmacs } from './lib/terminal'
@@ -55,8 +57,9 @@ function worldCenter() {
 function closeCurrentWidget() {
   const store = useStore.getState()
   const ws = store.active()
+  // the active layer only: a widget you can't see is never the one ⌘W closes
   const widgetIds = new Set(
-    (ws?.elements ?? []).filter((e) => e.type === 'widget').map((e) => e.id),
+    (ws ? activeLayerElements(ws) : []).filter((e) => e.type === 'widget').map((e) => e.id),
   )
   const focused = (document.activeElement as HTMLElement | null)
     ?.closest?.('[data-widget-id]')
@@ -81,16 +84,26 @@ export default function App() {
   useTerminalFileDrop()
   const tool = useStore((s) => s.tool)
   const openPanel = useStore((s) => s.openPanel)
+  const layerOverview = useStore((s) => !!s.layerOverview)
 
   // Terminal navigation runs in the capture phase, ahead of xterm, so the keys
   // work while you're typing in a terminal and never reach the shell:
   //   ⌘1–9     jump to the Nth terminal (reading order) and click into it
   //   ⌘⇧] / ⌘⇧[  next / previous terminal
   //   ⌘Esc     click out of the current terminal
+  //   ⌃⌘↑      open the layers overview (from anywhere, even a terminal)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.metaKey && !e.altKey && !e.shiftKey && e.code === 'ArrowUp') {
+        e.preventDefault()
+        e.stopPropagation()
+        useStore.getState().setLayerOverview(true)
+        return
+      }
       if (!(e.metaKey || (e.ctrlKey && !IS_MAC))) return
       if (e.altKey) return
+      // nothing jumps into a terminal while the layers overview is up
+      if (useStore.getState().layerOverview) return
       const stop = () => {
         e.preventDefault()
         e.stopPropagation()
@@ -296,12 +309,32 @@ export default function App() {
         }
         if (key === 'a') {
           e.preventDefault()
-          store.setSelection(selectActive(store).elements.map((el) => el.id))
+          store.setSelection(activeLayerElements(selectActive(store)).map((el) => el.id))
           return
         }
       }
 
-      if (editing || mod) return
+      // the overview owns the bare keys while it's open
+      if (editing || mod || store.layerOverview) return
+
+      // layers: L opens the overview; ⌥↑ / ⌥↓ step up / down the stack and
+      // ⌥1–9 jumps to a layer (instant switch)
+      if ((e.key === 'l' || e.key === 'L') && !e.altKey && !e.ctrlKey) {
+        e.preventDefault()
+        store.setLayerOverview(true)
+        return
+      }
+      if (e.altKey && !e.ctrlKey && (e.code === 'ArrowUp' || e.code === 'ArrowDown' || /^Digit[1-9]$/.test(e.code))) {
+        const ws = selectActive(store)
+        const ls = layersOf(ws)
+        if (ls.length < 2) return
+        e.preventDefault()
+        const cur = ls.findIndex((l) => l.id === activeLayerId(ws))
+        const to =
+          e.code === 'ArrowUp' ? cur + 1 : e.code === 'ArrowDown' ? cur - 1 : Number(e.code.slice(5)) - 1
+        if (to >= 0 && to < ls.length && to !== cur) store.setActiveLayer(ls[to].id)
+        return
+      }
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
@@ -416,6 +449,7 @@ export default function App() {
         <CanvasSearch />
         <AgentWizard />
         <Presentation />
+        {layerOverview && <LayerOverview />}
         {openPanel === 'roster' && <Roster />}
         {openPanel === 'desktop' && <DesktopSessions />}
         {openPanel === 'prompts' && <PromptLibrary />}

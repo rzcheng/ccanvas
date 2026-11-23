@@ -17,7 +17,17 @@ import {
   IconClaude,
   IconPin,
   IconMore,
+  IconLayers,
 } from './icons'
+import {
+  MAX_LAYERS,
+  activeLayerId,
+  findLayer,
+  hasLayers,
+  layerIndex,
+  layerNumber,
+  shortPath,
+} from '../lib/layers'
 import { UsagePill } from './UsagePill'
 import { openContextMenu } from './ContextMenu'
 
@@ -31,6 +41,9 @@ export function TopBar() {
   const ws = useStore(selectActive)
   const setActiveDir = useStore((s) => s.setActiveDir)
   const setPaletteOpen = useStore((s) => s.setPaletteOpen)
+  // the folder chip shows the current layer's folder when it has its own
+  const layerDirOwn = hasLayers(ws) ? findLayer(ws, activeLayerId(ws))?.dir : undefined
+  const dir = layerDirOwn ?? ws.dir
 
   return (
     <header
@@ -45,13 +58,20 @@ export function TopBar() {
 
       <div className="topbar__spacer" data-tauri-drag-region />
 
+      <LayerChip />
       <button
-        className={`tb-chip${ws.dir ? '' : ' tb-chip--unset'}`}
-        title={ws.dir ? `Canvas folder: ${ws.dir}\nClick to change` : 'Bind this canvas to a folder'}
+        className={`tb-chip${dir ? '' : ' tb-chip--unset'}`}
+        title={
+          layerDirOwn
+            ? `Layer folder: ${layerDirOwn}\nClick to change`
+            : ws.dir
+              ? `Canvas folder: ${ws.dir}\nClick to change`
+              : 'Bind this canvas to a folder'
+        }
         onClick={() => void setActiveDir()}
       >
         <IconFolder />
-        <span className="tb-chip__name">{ws.dir ? baseName(ws.dir) : 'set folder'}</span>
+        <span className="tb-chip__name">{dir ? baseName(dir) : 'set folder'}</span>
       </button>
 
       <LabelFilter />
@@ -61,6 +81,66 @@ export function TopBar() {
         <IconSearch />
       </button>
     </header>
+  )
+}
+
+// ≡ 02 ROOTOP ~/p/rootop — the layer you're on, shown once a tab has two or
+// more. Click opens the layers overview; right-click to add, rename, or set
+// the layer's folder.
+function LayerChip() {
+  const ws = useStore(selectActive)
+  const [editing, setEditing] = useState(false)
+  if (!hasLayers(ws)) return null
+  const id = activeLayerId(ws)
+  const layer = findLayer(ws, id)!
+  const i = layerIndex(ws, id)
+  const s = () => useStore.getState()
+  const menu = (e: React.MouseEvent) =>
+    openContextMenu(e, [
+      {
+        label: 'New layer…',
+        icon: <IconLayers />,
+        disabled: ws.layers!.length >= MAX_LAYERS,
+        onClick: () => void s().newLayerWithPicker({ activate: true }),
+      },
+      { label: 'Set folder…', icon: <IconFolder />, onClick: () => void s().pickLayerDir(id) },
+      ...(layer.dir
+        ? [{ label: "Use the tab's folder", onClick: () => s().setLayerDir(id, undefined) }]
+        : []),
+      { label: 'Rename…', onClick: () => setEditing(true) },
+      { separator: true as const },
+      { label: 'Layers overview', hint: 'L', onClick: () => s().setLayerOverview(true) },
+    ])
+  return (
+    <button
+      className="tb-layer"
+      title={`Layer ${layerNumber(i)} · ${layer.name}${layer.dir ? `\n${layer.dir}` : ''}\nClick for the layers overview (L, or ⌃⌘↑ from anywhere)`}
+      onClick={() => !editing && s().setLayerOverview(true)}
+      onContextMenu={menu}
+    >
+      <IconLayers />
+      <span className="tb-layer__num">{layerNumber(i)}</span>
+      {editing ? (
+        <input
+          className="tb-layer__input"
+          defaultValue={layer.name}
+          autoFocus
+          onClick={(e) => e.stopPropagation()}
+          onBlur={(e) => {
+            s().renameLayer(id, e.target.value)
+            setEditing(false)
+          }}
+          onKeyDown={(e) => {
+            e.stopPropagation()
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            if (e.key === 'Escape') setEditing(false)
+          }}
+        />
+      ) : (
+        <span className="tb-layer__name">{layer.name}</span>
+      )}
+      {layer.dir && <span className="tb-layer__dir">{shortPath(layer.dir)}</span>}
+    </button>
   )
 }
 
