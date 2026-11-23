@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { WidgetElement, WidgetKind } from '../lib/types'
 import { WIDGET_ACCENT, AGENT_COLORS, claudeColorName } from '../lib/types'
 import { useStore, selectActive } from '../store/workspace'
@@ -82,7 +82,10 @@ const KIND_ICON: Record<WidgetKind, (p: { className?: string; size?: number }) =
 const MIN_W = 220
 const MIN_H = 150
 
-export function WidgetFrame({
+// Memoised: the canvas re-renders on every camera move, and re-rendering every
+// widget body (terminals, long transcripts) per frame made pan/zoom stutter.
+// Props are stable between frames: el only changes when that widget does.
+export const WidgetFrame = memo(function WidgetFrame({
   el,
   selected,
   onStartMove,
@@ -527,7 +530,7 @@ export function WidgetFrame({
       )}
     </div>
   )
-}
+})
 
 // Activity dot for terminal/agent widgets: reflects whether the session is
 // idle, streaming output, or appears to be waiting on a prompt.
@@ -635,7 +638,7 @@ function LabelPopover({ el, onClose }: { el: WidgetElement; onClose: () => void 
 }
 
 // Zoomed-out summary of a terminal/agent: name, colour, status, context use and
-// the latest line of output, sized in screen pixels (via the world's --z) so it
+// the latest line of output, sized in screen pixels (via its --z) so it
 // stays readable however far out you are. Sits over the live terminal, which
 // keeps running underneath.
 const STATUS_LABEL: Record<string, string> = {
@@ -649,9 +652,16 @@ const STATUS_LABEL: Record<string, string> = {
 function TermCard({ el }: { el: WidgetElement }) {
   const status = useDisplayStatus(el.id) ?? 'off'
   const lastLine = useAgents((s) => s.lastLine[el.id])
+  // the card sizes its text in screen px from the zoom. Set here rather than
+  // on the world layer: a custom property changed on the world restyled
+  // every element on the canvas on each zoom frame
+  const zoom = useStore((s) => selectActive(s).camera.zoom)
   const folder = el.cwd ? el.cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() : null
   return (
-    <div className={`term-card term-card--${status}`}>
+    <div
+      className={`term-card term-card--${status}`}
+      style={{ ['--z' as string]: zoom }}
+    >
       <div className="term-card__name">{el.title}</div>
       <div className="term-card__meta">
         <span className="term-card__status">

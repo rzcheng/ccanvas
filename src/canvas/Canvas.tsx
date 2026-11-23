@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { isDesktopMirror, forkIntoTerminal } from '../lib/desktopSessions'
 import { useStore, selectActive, withGroupSiblings } from '../store/workspace'
 import type {
   ArrowElement,
+  Camera,
   CanvasElement,
   FrameElement,
   ImageElement,
@@ -127,6 +128,15 @@ function isIdleTerminal(node: HTMLElement | null): boolean {
   return el?.type === 'widget' && (el.kind === 'terminal' || el.kind === 'agent')
 }
 
+/** The world layers' CSS transform. The translate is snapped to whole device
+ *  pixels: a fractional offset puts every glyph between pixels, which blurs
+ *  text, most visibly on 1x displays. (Under ½ px, so hit-testing is unaffected.) */
+function worldTransform(cam: Camera): string {
+  const dpr = window.devicePixelRatio || 1
+  const snap = (v: number) => Math.round(v * dpr) / dpr
+  return `translate(${snap(cam.x)}px, ${snap(cam.y)}px) scale(${cam.zoom})`
+}
+
 export function Canvas() {
   const rootRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<Drag>(null)
@@ -190,6 +200,26 @@ export function Canvas() {
     if (settleRef.current) clearTimeout(settleRef.current)
   }, [])
   const worldCls = camMoving ? 'canvas__world canvas__world--moving' : 'canvas__world'
+
+  // Camera writes are batched to one per animation frame: a trackpad sends
+  // several wheel events per frame, and each store write re-renders the canvas.
+  // `pendingCam` is the newest camera not yet written, so deltas accumulate.
+  const pendingCam = useRef<Camera | null>(null)
+  const camRaf = useRef(0)
+  const scheduleCamera = useCallback(
+    (c: Camera) => {
+      pendingCam.current = c
+      if (camRaf.current) return
+      camRaf.current = requestAnimationFrame(() => {
+        camRaf.current = 0
+        const next = pendingCam.current
+        pendingCam.current = null
+        if (next) setCamera(next)
+      })
+    },
+    [setCamera],
+  )
+  useEffect(() => () => cancelAnimationFrame(camRaf.current), [])
   const selSet = new Set(selection)
   const byId = new Map(ws.elements.map((e) => [e.id, e]))
 
@@ -234,7 +264,7 @@ export function Canvas() {
       e.preventDefault()
       // zooming while hovering a widget: don't also scroll the widget under it
       if (overWidget) e.stopPropagation()
-      const live = selectActive(useStore.getState()).camera
+      const live = pendingCam.current ?? selectActive(useStore.getState()).camera
       const pt = getPt(e)
       // normalise delta across line / page wheel modes
       let dy = e.deltaY
@@ -243,15 +273,15 @@ export function Canvas() {
       if (zoomGesture) {
         // gentle per-event step, clamped so a single notch never jumps far
         const factor = Math.exp(-clamp(dy, -100, 100) * 0.0017)
-        setCamera(zoomAt(live, pt, live.zoom * factor))
+        scheduleCamera(zoomAt(live, pt, live.zoom * factor))
       } else {
-        setCamera({ ...live, x: live.x - e.deltaX, y: live.y - e.deltaY })
+        scheduleCamera({ ...live, x: live.x - e.deltaX, y: live.y - e.deltaY })
       }
     }
     // capture phase so we can intercept before the widget when zooming
     node.addEventListener('wheel', onWheel, { passive: false, capture: true })
     return () => node.removeEventListener('wheel', onWheel, { capture: true })
-  }, [setCamera])
+  }, [scheduleCamera])
 
   // topmost vector under a world point (text/images/frames/widgets self-pick)
   const pickVector = (world: Point): CanvasElement | null => {
@@ -493,12 +523,15 @@ export function Canvas() {
     startMoveDrag(e)
   }
 
-  // widget frames pre-select themselves, then ask us to begin the move drag
-  const onWidgetStartMove = (e: React.PointerEvent) => {
+  // widget frames pre-select themselves, then ask us to begin the move drag.
+  // Kept identity-stable (via a ref) so memoised WidgetFrames don't re-render.
+  const startMoveRef = useRef<(e: React.PointerEvent) => void>(() => {})
+  startMoveRef.current = (e: React.PointerEvent) => {
     setActiveWidget(null)
     setSelection(withGroupSiblings(ws.elements, useStore.getState().selection))
     startMoveDrag(e)
   }
+  const onWidgetStartMove = useCallback((e: React.PointerEvent) => startMoveRef.current(e), [])
 
   // ---- transform handles ----
   const onHandleDown = (e: React.PointerEvent, id: string, corner: Corner) => {
@@ -628,7 +661,7 @@ export function Canvas() {
 
     switch (drag.kind) {
       case 'pan':
-        setCamera({
+        scheduleCamera({
           ...cam,
           x: drag.startCam.x + (pt.x - drag.startPtr.x),
           y: drag.startCam.y + (pt.y - drag.startPtr.y),
@@ -1006,7 +1039,7 @@ export function Canvas() {
       {/* frames sit behind everything */}
       <div
         className={`${worldCls} canvas__frames`}
-        style={{ transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.zoom})` }}
+        style={{ transform: worldTransform(cam) }}
       >
         {[...frameEls, ...(draftFrame ? [draftFrame] : [])].map((f) => (
           <FrameView key={f.id} el={f} selected={selSet.has(f.id)} onPointerDown={onElementPointerDown} />
@@ -1027,7 +1060,7 @@ export function Canvas() {
 
       <div
         className={worldCls}
-        style={{ transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.zoom})` }}
+        style={{ transform: worldTransform(cam) }}
       >
         {textImageEls.map((el) =>
           el.type === 'text' ? (
@@ -1056,9 +1089,7 @@ export function Canvas() {
             key={tab.id}
             className={worldCls}
             style={{
-              transform: `translate(${tab.camera.x}px, ${tab.camera.y}px) scale(${tab.camera.zoom})`,
-              // lets zoomed-out terminal cards size their text in screen px
-              ['--z' as string]: tab.camera.zoom,
+              transform: worldTransform(tab.camera),
               // hidden (not display:none) so xterm keeps real dimensions and
               // renders correctly even on inactive tabs — it just stays invisible
               visibility: isActiveTab ? undefined : 'hidden',

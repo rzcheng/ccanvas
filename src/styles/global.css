@@ -5285,7 +5285,7 @@ body.is-panning * {
 }
 
 /* zoomed-out summary card. Sizes are screen px divided by the world zoom
-   (--z, set on the tab's world layer), capped so text never outgrows the box */
+   (--z, set on the card itself), capped so text never outgrows the box */
 .term-card {
   --px: calc(1px / var(--z, 1));
   position: absolute;
