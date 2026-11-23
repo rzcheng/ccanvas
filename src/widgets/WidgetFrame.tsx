@@ -360,6 +360,7 @@ export const WidgetFrame = memo(function WidgetFrame({
           top: el.y,
           width: el.w,
           height: el.h,
+          zIndex: el.z,
           '--k': accent,
         } as React.CSSProperties
       }

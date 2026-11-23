@@ -1082,9 +1082,10 @@ export function Canvas() {
           live session across tab switches; only the active tab's layer shows */}
       {tabs.map((tab) => {
         const isActiveTab = tab.id === activeId
-        const tabWidgets = tab.elements
-          .filter((e): e is WidgetElement => e.type === 'widget')
-          .sort((a, b) => a.z - b.z)
+        // kept in creation order and stacked with z-index (WidgetFrame), not
+        // sorted by z: re-sorting would move a clicked widget's DOM node to the
+        // end, which resets every scroll position inside it and reloads iframes
+        const tabWidgets = tab.elements.filter((e): e is WidgetElement => e.type === 'widget')
         if (!tabWidgets.length) return null
         return (
           <div
