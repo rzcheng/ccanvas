@@ -86,6 +86,7 @@ running agent.
 | 🧠 **Memory panel** | A side dock renders Claude's own cross-session memory for the bound folder as a force-directed graph — nodes, links, and types, read straight from `~/.claude/projects/…/memory/` each time you open it |
 | 🔢 **Hold ⌘ to see terminal numbers** | Hold `⌘` for a beat and every terminal shows the digit that `⌘1`–`⌘9` jumps to; let go and they're gone again |
 | 🪞 **Desktop sessions, mirrored** | The **Desktop sessions** panel lists the chats you're running in the Claude desktop app (Code tab); pick some, or *Add all running*, and each becomes a read-only, live-following transcript on the canvas, with a context meter and a row in the Agents roster. Right-click a mirror → *Fork into terminal* to branch it. macOS desktop app only; it reads the desktop app's internal session files |
+| 🗂️ **Layers** | A tab can hold a stack of layers, and each layer can be its own project, with its own folder and its own view. Press `L` and the canvas tilts back into a stack of every layer; click one to dive in. Agents on hidden layers keep running. See [Layers](#layers) |
 | 📛 **Agent titles that stay in sync** | A Claude agent widget adopts the name you `/rename` inside the session, or the title Claude generates after the first prompt, instead of sitting at "claude agent" forever |
 | 🪶 **A slimmer toolbar** | Fewer buttons, same power — the vector-drawing tools and GitHub-issue widgets from upstream are gone from the chrome; the surface is just Claude, a shell, and the files between them |
 
@@ -186,6 +187,7 @@ File drag-and-drop needs the desktop app; the VS Code widget works here too.
 | **Settings** | Six colour palettes, text size, and the keys that open the tab finder (Emacs on by default; Vim and your own shortcuts are opt-in) |
 | **Arrange** | Group, lock, align, distribute, tidy, copy/paste/duplicate, z-order, snapping guides; arrange terminals by label colour or by folder |
 | **Right-click menus** | Canvas elements (duplicate, copy, lock, group, z-order, delete), agents (track, open transcript, label), file-tree rows (open in the editor or a viewer, open with the default app, **reveal in Explorer/Finder**, copy path), tabs (pin, rename, close), empty canvas (paste, select all, reveal folder) |
+| **Layers** | A stack of planes per tab, each optionally its own project folder with its own view; `L` opens a tilted overview of every layer with live agent status, and hidden layers keep running |
 | **Tabs** | Multiple `.ccnvs` workspaces open at once, each bound to its own folder; drag to reorder, pin the ones you keep, jump with the tab finder |
 | **Persistence** | Save/Open into the canvas folder (backend) or File System Access API; reusable widget-layout templates; PNG/SVG export |
 
@@ -263,6 +265,44 @@ This reads the desktop app's internal, undocumented session files
 in the macOS desktop build, and a change to that format would break discovery
 (all of that parsing lives in `src-tauri/src/desktop_sessions.rs`).
 
+## Layers
+
+A tab can hold a stack of **layers**. Use them to keep several projects, or
+several groups of agents, on one canvas without them crowding each other.
+
+- **Make one.** Right-click empty canvas → *New layer…*, press `N` in the
+  overview, or right-click a widget → *Move to new layer…*. Each opens the
+  same folder picker as the folder chip: the layer becomes that project, named
+  after the folder. Cancel the picker for a plain layer in the tab's folder.
+- **Each layer is its own project.** New terminals, agents, file trees, git
+  panels and editors open in the layer's folder (falling back to the tab's).
+  The folder chip shows and sets the current layer's folder when it has one,
+  and each layer remembers its own view, so switching returns you to where
+  you were.
+- **Switch.** Press `L` (or `⌃⌘↑` from anywhere, even inside a terminal) to
+  tilt the canvas into a stack of every layer, with a rail listing each one's
+  widgets and agent status. Hover or press `↑` / `↓` to look through it, then
+  click a sheet, press `⏎`, or press its digit to dive in. `Esc` or `L` goes
+  back. `⌥↑` / `⌥↓` and `⌥1`–`⌥9` switch instantly. `G` in the overview
+  switches the sheets between frosted and solid.
+- **Move widgets.** Right-click → *Move to 02 · name*. A widget keeps its
+  position and its folder (a running terminal can't change directory); the
+  overview marks it with its home folder.
+- **Desktop mirrors sort themselves.** *Add* in the Desktop sessions panel puts
+  each mirror on the layer whose folder holds that session's folder, and on
+  the current layer otherwise.
+- **Nothing stops.** Widgets on hidden layers stay mounted, so their agents,
+  shells and mirrors keep running and the roster, attention inbox and search
+  still see them. Clicking one of those jumps to its layer first. Switching
+  layers always drops keyboard focus, so typing never reaches a terminal you
+  can't see, and `⌘1`–`⌘9`, `⌘W` and `⌘A` act on the current layer only.
+- **Saved in the canvas file.** One `.ccnvs` holds every layer. A canvas with
+  a single layer saves exactly as before, and an older build opening a layered
+  file shows everything on one plane without losing anything.
+
+The right-click menu on the layer chip (`≡ 02 ROOTOP`, shown once a tab has two
+layers) adds a layer, sets or clears its folder, and renames it.
+
 ## Safety net: checkpoints
 
 Before turning an agent loose on your working tree, drop a **checkpoint**
@@ -295,16 +335,19 @@ terminal untouched; on Windows and Linux they use Ctrl.
 | ⌘/Ctrl + `T` / `Shift T` | new terminal · new Claude agent |
 | ⌘/Ctrl + `Shift V` | new VS Code widget for this canvas's folder |
 | hold ⌘ | show the jump-number on every terminal |
-| ⌘/Ctrl + `1`–`9` | jump to and focus the Nth terminal or agent |
+| ⌘/Ctrl + `1`–`9` | jump to and focus the Nth terminal or agent on the current layer |
 | ⌘/Ctrl + `Shift ]` / `[` | next · previous terminal |
 | ⌘/Ctrl + `Esc` | leave the focused terminal |
-| ⌘/Ctrl + `W` | close the focused widget (desktop app; quits when no tab has a widget left) |
+| ⌘/Ctrl + `W` | close the focused widget on the current layer (desktop app; quits when no tab has a widget left) |
+| `L` · ⌃⌘`↑` | layers overview (`⌃⌘↑` works inside a terminal too) |
+| `⌥↑` / `⌥↓` · `⌥1`–`⌥9` | layer up / down · jump to layer N |
+| in the overview: `↑` `↓` · `⏎` · `1`–`9` · `N` · `R` · `G` · `Esc` | move · dive in · jump · new layer · rename · frosted/solid · back |
 | ⌘/Ctrl + `Z` / `Shift Z` | undo · redo |
 | ⌘/Ctrl + `C` / `X` / `V` / `D` | copy · cut · paste · duplicate |
 | ⌘/Ctrl + `G` / `Shift G` | group · ungroup |
 | ⌘/Ctrl + `L` | lock / unlock selection |
 | ⌘/Ctrl + `[` / `]` | send to back / bring to front |
-| ⌘/Ctrl + `A` | select all |
+| ⌘/Ctrl + `A` | select all on the current layer |
 | ⌘/Ctrl + `0` `+` `-` | 100% / zoom in / zoom out |
 | `\` | zoom to the selection, or fit everything |
 | `Delete` / `Backspace` | delete selection |
