@@ -1,14 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { WidgetElement } from '../lib/types'
 import { useStore, selectActive } from '../store/workspace'
-import { transcriptPathFor, parseTranscript, type TranscriptTurn } from '../lib/transcript'
-import { readFile, watchPath, baseName } from '../lib/backend'
+import {
+  transcriptPathFor,
+  parseTranscript,
+  readTranscriptChunk,
+  type TranscriptTurn,
+} from '../lib/transcript'
+import { watchPath, baseName } from '../lib/backend'
 import { IconReload } from '../ui/icons'
 import '../styles/agent-tools.css'
 
 // Renders an agent's real conversation, read from its session JSONL transcript —
 // the clean version, free of the terminal's box-drawing chrome. Bound to an
-// agent widget by id (el.agentId); follows its session live and lets you filter.
+// agent widget by id (el.agentId), or — for a desktop-app mirror
+// (el.mirrorOf === 'desktop') — straight to el.cwd + el.sessionId. Follows the
+// session live and lets you filter. Read-only either way.
+
+// a mirror's first read starts this far from the end of a huge transcript
+const MIRROR_TAIL_BYTES = 8 * 1024 * 1024
 
 function ToolChip({ name, target }: { name: string; target?: string }) {
   const short = target
@@ -31,8 +41,9 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
       (e): e is WidgetElement => e.type === 'widget' && e.id === el.agentId,
     ),
   )
-  const cwd = agent?.cwd ?? el.cwd
-  const sessionId = agent?.sessionId
+  const mirror = el.mirrorOf === 'desktop'
+  const cwd = mirror ? el.cwd : (agent?.cwd ?? el.cwd)
+  const sessionId = mirror ? el.sessionId : agent?.sessionId
 
   const [turns, setTurns] = useState<TranscriptTurn[]>([])
   const [path, setPath] = useState<string | null>(null)
@@ -52,19 +63,56 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
     }
   }, [cwd, sessionId])
 
-  const reload = useMemo(
-    () => async () => {
-      if (!path) return
-      const content = await readFile(path)
-      if (content == null) {
-        setOffline(true)
+  // Read incrementally: keep the byte offset parsed so far and parse only what
+  // was appended (each line is one event, so appended turns just concatenate).
+  // Desktop transcripts reach ~100 MB; re-reading them per write was too heavy.
+  const offsetRef = useRef(0)
+  const busyRef = useRef(false)
+  // a change that arrives mid-read re-runs once that read finishes
+  const pendingRef = useRef<'none' | 'more' | 'fresh'>('none')
+  const pathRef = useRef(path)
+  pathRef.current = path
+  const tail = mirror ? MIRROR_TAIL_BYTES : undefined
+  const [truncated, setTruncated] = useState(false)
+
+  const read = useCallback(
+    async (fresh = false) => {
+      if (busyRef.current) {
+        if (fresh) pendingRef.current = 'fresh'
+        else if (pendingRef.current === 'none') pendingRef.current = 'more'
         return
       }
-      setOffline(false)
-      setTurns(parseTranscript(content))
+      busyRef.current = true
+      try {
+        let mode: 'none' | 'more' | 'fresh' = fresh ? 'fresh' : 'more'
+        while (mode !== 'none') {
+          const p = pathRef.current
+          if (!p) break
+          const from = mode === 'fresh' ? 0 : offsetRef.current
+          const chunk = await readTranscriptChunk(p, from, tail)
+          if (pathRef.current === p) {
+            if (!chunk) setOffline(true)
+            else {
+              setOffline(false)
+              const restart = from === 0 || chunk.reset
+              offsetRef.current = chunk.next
+              const added = chunk.text ? parseTranscript(chunk.text) : []
+              if (restart) {
+                setTruncated(chunk.truncated)
+                setTurns(added)
+              } else if (added.length) setTurns((t) => [...t, ...added])
+            }
+          }
+          mode = pendingRef.current
+          pendingRef.current = 'none'
+        }
+      } finally {
+        busyRef.current = false
+      }
     },
-    [path],
+    [tail],
   )
+  const reload = useCallback(() => read(true), [read])
 
   // initial load + live refresh on transcript writes
   useEffect(() => {
@@ -75,7 +123,7 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
     let t: ReturnType<typeof setTimeout> | null = null
     const onChange = () => {
       if (t) clearTimeout(t)
-      t = setTimeout(() => void reload(), 350)
+      t = setTimeout(() => void read(), 350)
     }
     void watchPath(path, onChange, 1500).then((d) => (cancelled ? d() : (dispose = d)))
     return () => {
@@ -83,7 +131,7 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
       if (t) clearTimeout(t)
       dispose?.()
     }
-  }, [path, reload])
+  }, [path, reload, read])
 
   // keep pinned to the newest turn unless the user scrolls up
   useEffect(() => {
@@ -101,7 +149,7 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
     )
   }, [turns, q])
 
-  if (!el.agentId) {
+  if (!el.agentId && !mirror) {
     return (
       <div className="tx tx--empty">
         Open this from an agent’s menu — “Open transcript” — to mirror its conversation.
@@ -146,17 +194,26 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
           setAutoscroll(atBottom)
         }}
       >
-        {offline ? (
+        {offline && mirror ? (
+          <div className="tx__hint">
+            transcript not found — the desktop session may have been deleted, or its folder
+            moved
+          </div>
+        ) : offline ? (
           <div className="tx__hint">
             backend offline, or no transcript yet — run <code>npm run server</code> or use the
             desktop app
           </div>
-        ) : filtered.length === 0 ? (
+        ) : filtered.length === 0 && !truncated ? (
           <div className="tx__hint">{q ? 'no matching messages' : 'no messages yet'}</div>
         ) : (
-          filtered.map((m, i) => (
+          <>
+          {truncated && (
+            <div className="tx__hint">earlier messages not loaded — this transcript is very large</div>
+          )}
+          {filtered.map((m, i) => (
             <div key={i} className={`tx__msg tx__msg--${m.role}`}>
-              <div className="tx__role">{m.role === 'user' ? 'you' : baseName(agent?.title ?? 'agent')}</div>
+              <div className="tx__role">{m.role === 'user' ? 'you' : mirror ? 'claude' : baseName(agent?.title ?? 'agent')}</div>
               {m.text && <div className="tx__text">{m.text}</div>}
               {m.tools.length > 0 && (
                 <div className="tx__tools">
@@ -166,7 +223,8 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
                 </div>
               )}
             </div>
-          ))
+          ))}
+          </>
         )}
       </div>
     </div>

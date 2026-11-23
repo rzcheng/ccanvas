@@ -199,6 +199,15 @@ export type WidgetElement = Base & {
   query?: string // last SQL text, so reopening the canvas restores it
   /** transcript widget: the agent widget whose conversation it mirrors */
   agentId?: string
+  /** transcript widget: set to 'desktop' for a read-only mirror of a Claude
+   *  desktop-app session. It binds directly to `cwd` + `sessionId` (the Claude
+   *  Code session id) instead of an agent widget, and never spawns claude. */
+  mirrorOf?: 'desktop'
+  /** desktop mirror: the desktop app's own session id (`local_<uuid>`) */
+  desktopId?: string
+  /** terminal widget: shell command typed once when the shell first opens,
+   *  then cleared (used by "Fork into terminal"). */
+  startCmd?: string
 }
 
 export type CanvasElement =

@@ -268,6 +268,38 @@ export function parseTranscript(jsonl: string): TranscriptTurn[] {
   return out
 }
 
+export type TranscriptChunk = {
+  /** complete lines read since the offset */
+  text: string
+  /** offset to pass next time */
+  next: number
+  /** the file was rewritten: drop what was parsed before */
+  reset: boolean
+  /** earlier lines were skipped to honour `tail` */
+  truncated: boolean
+}
+
+/** What was appended to a transcript since `offset` (null when unreadable). On
+ *  the desktop app only the new bytes are read; the web bridge has no such
+ *  command, so the browser build re-reads the whole file and reports a reset.
+ *  `tail` caps a first read of a huge file to roughly its last `tail` bytes. */
+export async function readTranscriptChunk(
+  path: string,
+  offset: number,
+  tail?: number,
+): Promise<TranscriptChunk | null> {
+  if (isTauri()) {
+    try {
+      return await invoke<TranscriptChunk | null>('transcript_chunk', { path, offset, tail })
+    } catch {
+      return null
+    }
+  }
+  const text = await readFile(path)
+  if (text == null) return null
+  return { text, next: text.length, reset: true, truncated: false }
+}
+
 function lastStringField(jsonl: string, type: string, field: string): string | null {
   const at = jsonl.lastIndexOf(`"type":"${type}"`)
   if (at < 0) return null
@@ -304,6 +336,8 @@ export type TranscriptSummary = {
   aiTitle: string | null
   /** text of the latest turn's assistant replies */
   lastReply: string | null
+  /** when the transcript file was last written (epoch ms). Desktop only. */
+  modified?: number | null
 }
 
 /** Summarize an agent's transcript (null when unavailable). The desktop

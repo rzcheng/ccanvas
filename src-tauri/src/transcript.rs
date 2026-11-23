@@ -69,11 +69,14 @@ pub struct Summary {
     ai_title: Option<String>,
     /// text of the latest turn's assistant replies
     last_reply: Option<String>,
+    /// when the file was last written (epoch ms); mirrors use it for "running"
+    modified: Option<u64>,
 }
 
 #[derive(Default)]
 struct Tracked {
     offset: u64,
+    modified: Option<u64>,
     context: Option<Context>,
     peak: u64,
     custom_title: Option<String>,
@@ -110,6 +113,11 @@ impl Tracked {
             self.apply(line);
         }
         self.offset = next;
+        self.modified = std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64);
         Ok(())
     }
 
@@ -200,6 +208,7 @@ impl Tracked {
             custom_title: self.custom_title.clone(),
             ai_title: self.ai_title.clone(),
             last_reply: (!reply.is_empty()).then_some(reply),
+            modified: self.modified,
         }
     }
 }
@@ -228,4 +237,102 @@ pub async fn transcript_summary(path: String) -> Option<Summary> {
     .await
     .ok()
     .flatten()
+}
+
+/// A slice of a transcript for the transcript widget, which parses it into turns.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Chunk {
+    /// complete lines read (a line still being written waits for the next call)
+    text: String,
+    /// offset to pass next time
+    next: u64,
+    /// the file was rewritten rather than appended to: drop what you had
+    reset: bool,
+    /// earlier lines were skipped to honour `tail`
+    truncated: bool,
+}
+
+fn read_chunk(path: &Path, offset: u64, tail: Option<u64>) -> io::Result<Chunk> {
+    let len = std::fs::metadata(path)?.len();
+    let reset = len < offset;
+    let mut start = if reset { 0 } else { offset };
+    let mut truncated = false;
+    // a first read of a huge file starts near the end, on a line boundary
+    if start == 0 {
+        if let Some(t) = tail.filter(|&t| len > t) {
+            let mut f = File::open(path)?;
+            let from = len - t;
+            f.seek(SeekFrom::Start(from))?;
+            let mut probe = Vec::new();
+            f.take(t).read_to_end(&mut probe)?;
+            let skip = probe
+                .iter()
+                .position(|&b| b == b'\n')
+                .map_or(probe.len(), |i| i + 1);
+            start = from + skip as u64;
+            truncated = true;
+        }
+    }
+    let (bytes, next) = read_appended(path, start)?.unwrap_or((Vec::new(), start));
+    Ok(Chunk {
+        text: as_text(&bytes).into_owned(),
+        next,
+        reset,
+        truncated,
+    })
+}
+
+/// What was appended to the transcript at `path` since `offset` (None if it
+/// can't be read). With `tail`, a first read (offset 0) of a file larger than
+/// `tail` bytes returns only roughly its last `tail` bytes.
+#[tauri::command]
+pub async fn transcript_chunk(path: String, offset: u64, tail: Option<u64>) -> Option<Chunk> {
+    tauri::async_runtime::spawn_blocking(move || read_chunk(Path::new(&path), offset, tail).ok())
+        .await
+        .ok()
+        .flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("ccanvas-tx-{name}-{}.jsonl", std::process::id()))
+    }
+
+    #[test]
+    fn chunk_reads_appended_lines_and_resets() {
+        let p = scratch("chunk");
+        std::fs::write(&p, "a\nb\npart").unwrap();
+        let c = read_chunk(&p, 0, None).unwrap();
+        assert_eq!(
+            (c.text.as_str(), c.next, c.reset, c.truncated),
+            ("a\nb\n", 4, false, false)
+        );
+        std::fs::write(&p, "a\nb\npartial\nc\n").unwrap();
+        let c = read_chunk(&p, 4, None).unwrap();
+        assert_eq!(c.text, "partial\nc\n");
+        std::fs::write(&p, "x\n").unwrap();
+        let c = read_chunk(&p, 14, None).unwrap();
+        assert!(c.reset);
+        assert_eq!(c.text, "x\n");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn chunk_tail_starts_on_a_line_boundary() {
+        let p = scratch("tail");
+        std::fs::write(&p, "first line\nsecond\nthird\n").unwrap();
+        // the last 10 bytes start mid "second"; skip to "third"
+        let c = read_chunk(&p, 0, Some(10)).unwrap();
+        assert!(c.truncated);
+        assert_eq!(c.text, "third\n");
+        // small files are read whole
+        let c = read_chunk(&p, 0, Some(1000)).unwrap();
+        assert!(!c.truncated);
+        assert_eq!(c.text, "first line\nsecond\nthird\n");
+        let _ = std::fs::remove_file(&p);
+    }
 }
