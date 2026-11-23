@@ -1,4 +1,5 @@
 // ccanvas desktop backend (pty + native dialogs/fs)
+mod desktop_sessions;
 mod editor;
 mod files;
 mod media;
@@ -144,6 +145,7 @@ pub fn run() {
             media::media_info,
             usage::claude_usage,
             transcript::transcript_summary,
+            desktop_sessions::desktop_sessions,
             plan_usage::claude_plan_usage,
             pty::pty_open,
             pty::pty_start,
