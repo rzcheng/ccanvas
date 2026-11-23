@@ -85,6 +85,7 @@ running agent.
 | 🎨 **Your terminal, not a generic one** | On macOS, terminal widgets pick up your default iTerm2 profile — font, cursor, ANSI palette — so a ccanvas terminal looks like the one you already live in; anything it can't read falls back to the built-in theme, as does every other platform today |
 | 🧠 **Memory panel** | A side dock renders Claude's own cross-session memory for the bound folder as a force-directed graph — nodes, links, and types, read straight from `~/.claude/projects/…/memory/` each time you open it |
 | 🔢 **Hold ⌘ to see terminal numbers** | Hold `⌘` for a beat and every terminal shows the digit that `⌘1`–`⌘9` jumps to; let go and they're gone again |
+| 🪞 **Desktop sessions, mirrored** | The **Desktop sessions** panel lists the chats you're running in the Claude desktop app (Code tab); pick some, or *Add all running*, and each becomes a read-only, live-following transcript on the canvas, with a context meter and a row in the Agents roster. Right-click a mirror → *Fork into terminal* to branch it. macOS desktop app only; it reads the desktop app's internal session files |
 | 📛 **Agent titles that stay in sync** | A Claude agent widget adopts the name you `/rename` inside the session, or the title Claude generates after the first prompt, instead of sitting at "claude agent" forever |
 | 🪶 **A slimmer toolbar** | Fewer buttons, same power — the vector-drawing tools and GitHub-issue widgets from upstream are gone from the chrome; the surface is just Claude, a shell, and the files between them |
 
@@ -208,6 +209,34 @@ three features are the answer at scale:
 - **Follow the active agent** (command palette → *Follow the active agent*): a
   lightweight mode that just pans to whichever agent most recently started
   working. It stands down while the tracking camera is active.
+
+### Mirroring Claude desktop-app sessions
+
+If you run Claude Code chats in the Claude desktop app, you can watch them on
+the canvas alongside your own agents. Open **Desktop sessions** (the monitor
+button beside **Agents** in the top bar, or command palette → *Desktop
+sessions*). It lists every session the desktop app knows about, newest first,
+with its folder, model and a dot that pulses while the session is running (its
+transcript was written in the last 30 seconds). Filter by title, folder or
+model; archived sessions are hidden unless you untick *hide archived*. Tick
+some and press **Add**, or press **Add all running**. Each becomes a mirror
+on the active canvas (sessions already mirrored there are skipped).
+
+A mirror is a transcript widget with a **Desktop** badge. It follows the
+session live, picks up renames, and shows its context fill, both on the widget
+and in the Agents roster. It is **read-only**: there is no composer and no
+compact button, and ccanvas never runs `claude --resume` on a mirrored session,
+because a second writer would split the desktop app's transcript. To take a
+session somewhere else, right-click the mirror → **Fork into terminal**. That
+opens a terminal in the session's folder running
+`claude --resume <id> --fork-session`, which continues from a copy under a new
+session id. Mirrors save with the workspace; if a session's transcript is gone
+when you reopen, the mirror says so.
+
+This reads the desktop app's internal, undocumented session files
+(`~/Library/Application Support/Claude/claude-code-sessions/`). It works only
+in the macOS desktop build, and a change to that format would break discovery
+(all of that parsing lives in `src-tauri/src/desktop_sessions.rs`).
 
 ## Safety net: checkpoints
 
