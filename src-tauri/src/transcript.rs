@@ -71,7 +71,33 @@ pub struct Summary {
     last_reply: Option<String>,
     /// when the file was last written (epoch ms); mirrors use it for "running"
     modified: Option<u64>,
+    /// a tool call still waiting for its result (a question for the user, a
+    /// permission prompt, or a tool that's still running)
+    pending: Option<Pending>,
 }
+
+/// A tool call the transcript has no result for yet.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Pending {
+    /// tool name, e.g. `AskUserQuestion`, `Bash`
+    tool: String,
+    /// for AskUserQuestion / ExitPlanMode: what the user is being asked
+    question: Option<String>,
+    /// for AskUserQuestion: the first question's option labels
+    options: Vec<String>,
+    /// how many tool calls are open
+    count: usize,
+}
+
+#[derive(Clone)]
+struct OpenTool {
+    id: String,
+    pending: Pending,
+}
+
+/// Open tool calls kept at most; more only happens when results go missing.
+const MAX_OPEN: usize = 64;
 
 #[derive(Default)]
 struct Tracked {
@@ -83,6 +109,8 @@ struct Tracked {
     ai_title: Option<String>,
     /// text of each assistant reply since the last user event, oldest first
     reply: Vec<String>,
+    /// main-thread tool calls with no result yet, oldest first
+    open: Vec<OpenTool>,
 }
 
 /// Just the event type, so a line we don't need is skipped without building it.
@@ -136,11 +164,20 @@ impl Tracked {
         };
         match head.kind.as_deref() {
             // a user message or tool result starts a new turn
-            Some("user") => self.reply.clear(),
+            Some("user") => {
+                self.reply.clear();
+                // tool results can be large: only parse them while a call is open
+                if !self.open.is_empty() {
+                    if let Ok(ev) = serde_json::from_str::<Value>(line) {
+                        self.settle(&ev);
+                    }
+                }
+            }
             Some("assistant") => {
                 if let Ok(ev) = serde_json::from_str::<Value>(line) {
                     self.add_usage(&ev);
                     self.add_reply(&ev);
+                    self.add_tool_calls(&ev);
                 }
             }
             _ => {}
@@ -197,6 +234,59 @@ impl Tracked {
         }
     }
 
+    /// Remember each main-thread tool call until its result arrives.
+    fn add_tool_calls(&mut self, ev: &Value) {
+        if ev["isSidechain"].as_bool() == Some(true) {
+            return;
+        }
+        let Some(blocks) = ev["message"]["content"].as_array() else {
+            return;
+        };
+        for b in blocks.iter().filter(|b| b["type"] == "tool_use") {
+            let (Some(id), Some(tool)) = (b["id"].as_str(), b["name"].as_str()) else {
+                continue;
+            };
+            let (question, options) = ask_of(tool, &b["input"]);
+            self.open.push(OpenTool {
+                id: id.to_string(),
+                pending: Pending {
+                    tool: tool.to_string(),
+                    question,
+                    options,
+                    count: 0,
+                },
+            });
+        }
+        if self.open.len() > MAX_OPEN {
+            self.open.drain(..self.open.len() - MAX_OPEN);
+        }
+    }
+
+    /// Close the tool calls a user event answers. A real prompt (no tool
+    /// results) means anything still open was interrupted.
+    fn settle(&mut self, ev: &Value) {
+        if ev["isSidechain"].as_bool() == Some(true) {
+            return;
+        }
+        let results: Vec<&str> = ev["message"]["content"]
+            .as_array()
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .filter(|b| b["type"] == "tool_result")
+                    .filter_map(|b| b["tool_use_id"].as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if results.is_empty() {
+            if ev["isMeta"].as_bool() != Some(true) {
+                self.open.clear();
+            }
+        } else {
+            self.open.retain(|t| !results.contains(&t.id.as_str()));
+        }
+    }
+
     fn summary(&self) -> Summary {
         let reply = self.reply.join("\n\n");
         Summary {
@@ -209,7 +299,48 @@ impl Tracked {
             ai_title: self.ai_title.clone(),
             last_reply: (!reply.is_empty()).then_some(reply),
             modified: self.modified,
+            // a question for the user matters more than a tool that's running
+            pending: self
+                .open
+                .iter()
+                .rev()
+                .find(|t| t.pending.question.is_some())
+                .or(self.open.last())
+                .map(|t| Pending {
+                    count: self.open.len(),
+                    ..t.pending.clone()
+                }),
         }
+    }
+}
+
+/// The question a tool call puts to the user, if it's one that waits on them.
+fn ask_of(tool: &str, input: &Value) -> (Option<String>, Vec<String>) {
+    match tool {
+        "AskUserQuestion" => {
+            let qs = input["questions"].as_array();
+            let first = qs.and_then(|q| q.first());
+            let Some(text) = first.and_then(|q| q["question"].as_str()) else {
+                return (Some("Claude has a question".into()), vec![]);
+            };
+            let more = qs.map_or(0, |q| q.len().saturating_sub(1));
+            let text = if more > 0 {
+                format!("{text} (+{more} more)")
+            } else {
+                text.to_string()
+            };
+            let options = first
+                .and_then(|q| q["options"].as_array())
+                .map(|o| {
+                    o.iter()
+                        .filter_map(|o| o["label"].as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            (Some(text), options)
+        }
+        "ExitPlanMode" => (Some("Approve the plan?".into()), vec![]),
+        _ => (None, vec![]),
     }
 }
 
@@ -319,6 +450,43 @@ mod tests {
         assert!(c.reset);
         assert_eq!(c.text, "x\n");
         let _ = std::fs::remove_file(&p);
+    }
+
+    fn track(lines: &[&str]) -> Summary {
+        let mut t = Tracked::default();
+        for l in lines {
+            t.apply(l);
+        }
+        t.summary()
+    }
+
+    const ASK: &str = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"AskUserQuestion","input":{"questions":[{"question":"Which?","options":[{"label":"A"},{"label":"B"}]}]}}]}}"#;
+    const BASH: &str = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"ls"}}]}}"#;
+
+    #[test]
+    fn pending_prefers_a_question_and_clears_on_results() {
+        let s = track(&[BASH, ASK]);
+        let p = s.pending.unwrap();
+        assert_eq!((p.tool.as_str(), p.count), ("AskUserQuestion", 2));
+        assert_eq!(p.question.as_deref(), Some("Which?"));
+        assert_eq!(p.options, ["A", "B"]);
+
+        let answered = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"A"}]}}"#;
+        let p = track(&[BASH, ASK, answered]).pending.unwrap();
+        assert_eq!((p.tool.as_str(), p.count), ("Bash", 1));
+
+        let done = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]}}"#;
+        assert!(track(&[BASH, ASK, answered, done]).pending.is_none());
+    }
+
+    #[test]
+    fn pending_ignores_sidechains_and_clears_on_a_new_prompt() {
+        let side = r#"{"type":"assistant","isSidechain":true,"message":{"content":[{"type":"tool_use","id":"s1","name":"Read","input":{}}]}}"#;
+        assert!(track(&[side]).pending.is_none());
+        let meta = r#"{"type":"user","isMeta":true,"message":{"content":"caveat"}}"#;
+        assert!(track(&[BASH, meta]).pending.is_some());
+        let prompt = r#"{"type":"user","message":{"content":"never mind"}}"#;
+        assert!(track(&[BASH, ASK, prompt]).pending.is_none());
     }
 
     #[test]

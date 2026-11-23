@@ -421,6 +421,19 @@ export type TranscriptSummary = {
   lastReply: string | null
   /** when the transcript file was last written (epoch ms). Desktop only. */
   modified?: number | null
+  /** the tool call still waiting for its result, if any. Desktop only. */
+  pending?: TranscriptPending | null
+}
+
+export type TranscriptPending = {
+  /** tool name, e.g. `AskUserQuestion`, `Bash` */
+  tool: string
+  /** for AskUserQuestion / ExitPlanMode: what the user is being asked */
+  question: string | null
+  /** for AskUserQuestion: the first question's option labels */
+  options: string[]
+  /** how many tool calls are open */
+  count: number
 }
 
 /** Summarize an agent's transcript (null when unavailable). The desktop
