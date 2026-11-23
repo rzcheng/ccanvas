@@ -1,15 +1,23 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { WidgetElement } from '../lib/types'
 import { useStore, selectActive } from '../store/workspace'
 import {
   transcriptPathFor,
   readTranscriptChunk,
+  readTranscriptFiles,
+  subagentLogPath,
+  transcriptMarkdown,
+  watchTranscriptSummary,
   TranscriptParser,
   type ActivityStep,
+  type FileChange,
   type ThinkingStep,
   type ToolCall,
   type TranscriptItem,
+  type TranscriptSummary,
 } from '../lib/transcript'
+import { sessionCost, fmtUsd, costTitle } from '../lib/cost'
+import { widgetKindForFile } from '../lib/filetypes'
 import { watchPath, baseName, openExternal } from '../lib/backend'
 import { renderMarkdown } from '../lib/markdown'
 import { IconReload } from '../ui/icons'
@@ -24,6 +32,11 @@ import '../styles/agent-tools.css'
 
 // a mirror's first read starts this far from the end of a huge transcript
 const MIRROR_TAIL_BYTES = 8 * 1024 * 1024
+// a subagent's log is read from at most this far from its end
+const SUBAGENT_TAIL_BYTES = 2 * 1024 * 1024
+
+/** The transcript file the widget shows, for finding its subagents' logs. */
+const TxPath = createContext<string | null>(null)
 
 /** A message body rendered as markdown. Memoised per text, so appending turns
  *  to a long conversation doesn't re-render every earlier one. */
@@ -136,8 +149,67 @@ const ToolBody = ({ t }: { t: ToolCall }) => (
     {t.output && !t.plan?.length && (
       <pre className={`tx__out${t.state === 'error' ? ' tx__out--error' : ''}`}>{t.output}</pre>
     )}
+    {(t.name === 'Task' || t.name === 'Agent') && <SubagentLog t={t} />}
   </div>
 )
+
+// ---------- subagents ----------
+// A subagent's work lives in its own log. It's read only when you ask for it,
+// followed only while it's shown, and dropped when you hide it.
+
+function SubagentLog({ t }: { t: ToolCall }) {
+  const main = useContext(TxPath)
+  const [open, setOpen] = useState(false)
+  if (!main) return null
+  return (
+    <div className="tx__sub">
+      <button className="tx__sub-toggle" onClick={() => setOpen((o) => !o)}>
+        {open ? '▾ Hide' : '▸ Show'} the subagent’s work
+      </button>
+      {open && <SubagentFeed main={main} t={t} />}
+    </div>
+  )
+}
+
+function SubagentFeed({ main, t }: { main: string; t: ToolCall }) {
+  // undefined while looking it up; null when there's no log
+  const [path, setPath] = useState<string | null | undefined>(undefined)
+  useEffect(() => {
+    let alive = true
+    void subagentLogPath(main, t.id, t.agentId).then((p) => alive && setPath(p))
+    return () => {
+      alive = false
+    }
+  }, [main, t.id, t.agentId])
+  const feed = useTranscriptFeed(path ?? null, SUBAGENT_TAIL_BYTES)
+  const boxRef = useRef<HTMLDivElement>(null)
+  const stick = useRef(true)
+  useEffect(() => {
+    const n = boxRef.current
+    if (n && stick.current) n.scrollTop = n.scrollHeight
+  }, [feed.items])
+  if (path === undefined) return <div className="tx__sub-hint">finding its log…</div>
+  if (!path || feed.offline)
+    return (
+      <div className="tx__sub-hint">
+        {t.state === 'running' ? 'its log hasn’t been written yet' : 'no separate log for this subagent'}
+      </div>
+    )
+  return (
+    <div
+      className="tx__sub-box"
+      ref={boxRef}
+      onScroll={(e) => {
+        const n = e.currentTarget
+        stick.current = n.scrollHeight - n.scrollTop - n.clientHeight < 30
+      }}
+    >
+      {feed.truncated && <div className="tx__sub-hint">earlier steps not loaded — this log is large</div>}
+      <ItemList items={feed.items} who="subagent" me="brief" />
+      {!feed.items.length && <div className="tx__sub-hint">no steps yet</div>}
+    </div>
+  )
+}
 
 const ToolRow = memo(function ToolRow({ t }: { t: ToolCall }) {
   const [open, setOpen] = useState(false)
@@ -242,12 +314,15 @@ const Item = memo(function Item({
   who,
   head,
   live,
+  me = 'you',
 }: {
   m: TranscriptItem
   who: string
   /** first assistant item after a prompt: show the speaker */
   head: boolean
   live: boolean
+  /** label on your prompts */
+  me?: string
 }) {
   if (m.kind === 'event')
     return (
@@ -258,7 +333,7 @@ const Item = memo(function Item({
   if (m.kind === 'user')
     return (
       <div className="tx__msg tx__msg--user">
-        <div className="tx__role" title={when(m.ts)}>you</div>
+        <div className="tx__role" title={when(m.ts)}>{me}</div>
         {m.text && <MdText text={m.text} />}
         {m.images > 0 && (
           <div className="tx__tools">
@@ -289,38 +364,29 @@ function itemMatches(m: TranscriptItem, q: string): boolean {
   )
 }
 
-export function TranscriptBody({ el }: { el: WidgetElement }) {
-  // resolve the agent we mirror (live, so a self-healed session id is picked up)
-  const agent = useStore((s) =>
-    selectActive(s).elements.find(
-      (e): e is WidgetElement => e.type === 'widget' && e.id === el.agentId,
-    ),
+/** Items in order, with the speaker shown on the first reply after a prompt. */
+function ItemList({ items, who, keys, me }: { items: TranscriptItem[]; who: string; keys?: number[]; me?: string }) {
+  return (
+    <>
+      {items.map((m, k) => {
+        const prev = items[k - 1]
+        const head =
+          m.kind !== 'user' && m.kind !== 'event' && (!prev || prev.kind === 'user' || prev.kind === 'event')
+        const key = keys ? keys[k] : k
+        return <Item key={key} m={m} who={who} me={me} head={head} live={k === items.length - 1} />
+      })}
+    </>
   )
-  const mirror = el.mirrorOf === 'desktop'
-  const cwd = mirror ? el.cwd : (agent?.cwd ?? el.cwd)
-  const sessionId = mirror ? el.sessionId : agent?.sessionId
+}
 
+/** A transcript file parsed into items, kept current as it's appended to.
+ *  Reads incrementally: the byte offset parsed so far is kept and only what
+ *  was appended is parsed (each line is one event). Desktop transcripts reach
+ *  ~100 MB; re-reading them per write was too heavy. */
+function useTranscriptFeed(path: string | null, tail: number | undefined) {
   const [items, setItems] = useState<TranscriptItem[]>([])
-  const [path, setPath] = useState<string | null>(null)
   const [offline, setOffline] = useState(false)
-  const [q, setQ] = useState('')
-  const [autoscroll, setAutoscroll] = useState(true)
-  const scrollRef = useRef<HTMLDivElement>(null)
-
-  // resolve the transcript path whenever the bound session changes
-  useEffect(() => {
-    let alive = true
-    void transcriptPathFor(cwd, sessionId).then((p) => {
-      if (alive) setPath(p)
-    })
-    return () => {
-      alive = false
-    }
-  }, [cwd, sessionId])
-
-  // Read incrementally: keep the byte offset parsed so far and parse only what
-  // was appended (each line is one event, so appended turns just concatenate).
-  // Desktop transcripts reach ~100 MB; re-reading them per write was too heavy.
+  const [truncated, setTruncated] = useState(false)
   const offsetRef = useRef(0)
   // keeps tool calls open across chunks so their results can be paired later
   const parserRef = useRef(new TranscriptParser())
@@ -329,8 +395,6 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
   const pendingRef = useRef<'none' | 'more' | 'fresh'>('none')
   const pathRef = useRef(path)
   pathRef.current = path
-  const tail = mirror ? MIRROR_TAIL_BYTES : undefined
-  const [truncated, setTruncated] = useState(false)
 
   const read = useCallback(
     async (fresh = false) => {
@@ -373,7 +437,7 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
   )
   const reload = useCallback(() => read(true), [read])
 
-  // initial load + live refresh on transcript writes
+  // initial load + live refresh on writes
   useEffect(() => {
     if (!path) return
     void reload()
@@ -391,6 +455,62 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
       dispose?.()
     }
   }, [path, reload, read])
+
+  return { items, offline, truncated, reload }
+}
+
+const copyText = (text: string) => navigator.clipboard?.writeText(text).then(
+  () => true,
+  () => false,
+) ?? Promise.resolve(false)
+
+/** "src/App.tsx" for a file under cwd, else the path as is. */
+function shortPath(p: string, cwd: string | undefined): string {
+  if (cwd && p.startsWith(cwd.replace(/\/$/, '') + '/')) return p.slice(cwd.replace(/\/$/, '').length + 1)
+  return p
+}
+
+export function TranscriptBody({ el }: { el: WidgetElement }) {
+  // resolve the agent we mirror (live, so a self-healed session id is picked up)
+  const agent = useStore((s) =>
+    selectActive(s).elements.find(
+      (e): e is WidgetElement => e.type === 'widget' && e.id === el.agentId,
+    ),
+  )
+  const mirror = el.mirrorOf === 'desktop'
+  const cwd = mirror ? el.cwd : (agent?.cwd ?? el.cwd)
+  const sessionId = mirror ? el.sessionId : agent?.sessionId
+
+  const [path, setPath] = useState<string | null>(null)
+  const [q, setQ] = useState('')
+  const [autoscroll, setAutoscroll] = useState(true)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // resolve the transcript path whenever the bound session changes
+  useEffect(() => {
+    let alive = true
+    void transcriptPathFor(cwd, sessionId).then((p) => {
+      if (alive) setPath(p)
+    })
+    return () => {
+      alive = false
+    }
+  }, [cwd, sessionId])
+
+  const { items, offline, truncated, reload } = useTranscriptFeed(path, mirror ? MIRROR_TAIL_BYTES : undefined)
+
+  // cost and changed files come from the backend's running summary
+  const [summary, setSummary] = useState<TranscriptSummary | null>(null)
+  useEffect(() => watchTranscriptSummary(cwd, sessionId, setSummary), [cwd, sessionId])
+  const cost = useMemo(() => sessionCost(summary?.tokens), [summary?.tokens])
+
+  const [pop, setPop] = useState<'files' | 'menu' | null>(null)
+  const closePop = useCallback(() => setPop(null), [])
+  const [flash, setFlash] = useState<string | null>(null)
+  const say = (text: string) => {
+    setFlash(text)
+    setTimeout(() => setFlash((f) => (f === text ? null : f)), 1400)
+  }
 
   // keep pinned to the newest turn unless the user scrolls up
   useEffect(() => {
@@ -422,6 +542,8 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
     const all = items.map((m, i) => ({ m, i }))
     return t ? all.filter(({ m }) => itemMatches(m, t)) : all
   }, [items, q])
+  const filteredItems = useMemo(() => filtered.map((f) => f.m), [filtered])
+  const filteredKeys = useMemo(() => filtered.map((f) => f.i), [filtered])
   const msgCount = useMemo(
     () => items.reduce((n, m) => (m.kind === 'user' || m.kind === 'text' ? n + 1 : n), 0),
     [items],
@@ -431,6 +553,45 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
     setAutoscroll(true)
     const n = scrollRef.current
     if (n) n.scrollTop = n.scrollHeight
+  }
+
+  /** Scroll to the previous (-1) or next (1) prompt you typed. */
+  const jumpPrompt = (dir: -1 | 1) => {
+    const n = scrollRef.current
+    if (!n) return
+    const base = n.getBoundingClientRect().top - n.scrollTop
+    const tops = Array.from(n.querySelectorAll<HTMLElement>(':scope > .tx__msg--user')).map(
+      (e) => e.getBoundingClientRect().top - base - 8,
+    )
+    const at = n.scrollTop
+    const to = dir < 0 ? tops.filter((y) => y < at - 4).pop() : tops.find((y) => y > at + 4)
+    if (to == null) {
+      if (dir > 0) jumpToLatest()
+      return
+    }
+    setAutoscroll(false)
+    n.scrollTop = to
+  }
+
+  // Claude's final message: the last prose after your latest prompt
+  const copyLastReply = async () => {
+    const at = items.map((m) => m.kind).lastIndexOf('user')
+    const last = items.slice(at + 1).filter((m) => m.kind === 'text').pop()
+    const text = last?.kind === 'text' ? last.text : ''
+    say(text ? ((await copyText(text)) ? 'copied' : 'copy failed') : 'no reply yet')
+  }
+  const copyChat = async (whole: boolean) => {
+    let list = items
+    if (whole && path) {
+      // the widget holds only the end of a huge transcript: read it all once
+      say('reading…')
+      const chunk = await readTranscriptChunk(path, 0)
+      if (!chunk) return say('could not read it')
+      const p = new TranscriptParser()
+      p.push(chunk.text)
+      list = p.items
+    }
+    say((await copyText(transcriptMarkdown(list, mirror ? 'Claude' : who))) ? 'copied' : 'copy failed')
   }
 
   if (!el.agentId && !mirror) {
@@ -456,7 +617,29 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
             if (e.key === 'Escape') setQ('')
           }}
         />
-        <span className="tx__count">{msgCount} msgs</span>
+        <span className="tx__count">{flash ?? `${msgCount} msgs`}</span>
+        {cost && summary?.tokens && (
+          <span className="tx__cost" title={costTitle(summary.tokens, cost)}>
+            {cost.unpriced.length && !cost.usd ? '—' : '≈' + fmtUsd(cost.usd)}
+          </span>
+        )}
+        {!!summary?.fileCount && (
+          <button
+            className={`tx__chip${pop === 'files' ? ' tx__chip--on' : ''}`}
+            title="Files this session changed"
+            onClick={() => setPop((p) => (p === 'files' ? null : 'files'))}
+          >
+            ✎ {summary.fileCount}
+          </button>
+        )}
+        <span className="tx__nav">
+          <button className="tx__btn tx__btn--half" title="Previous prompt (⌥↑)" onClick={() => jumpPrompt(-1)}>
+            <Chevron up />
+          </button>
+          <button className="tx__btn tx__btn--half" title="Next prompt (⌥↓)" onClick={() => jumpPrompt(1)}>
+            <Chevron />
+          </button>
+        </span>
         <button
           className={`tx__btn${autoscroll ? ' tx__btn--on' : ''}`}
           title="Stick to newest"
@@ -464,14 +647,46 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
         >
           ↓
         </button>
-        <button className="tx__btn" title="Reload" onClick={() => void reload()}>
-          <IconReload />
+        <button
+          className={`tx__btn${pop === 'menu' ? ' tx__btn--on' : ''}`}
+          title="Copy, reload"
+          onClick={() => setPop((p) => (p === 'menu' ? null : 'menu'))}
+        >
+          ⋯
         </button>
       </div>
+      {pop === 'files' && (
+        <FilesPop el={el} cwd={cwd} sessionId={sessionId} count={summary?.fileCount ?? 0} onClose={closePop} />
+      )}
+      {pop === 'menu' && (
+        <Pop onClose={closePop} className="tx__pop--menu">
+          <button className="tx__pop-item" onClick={() => (setPop(null), void copyLastReply())}>
+            Copy last reply
+          </button>
+          <button className="tx__pop-item" onClick={() => (setPop(null), void copyChat(false))}>
+            {truncated ? 'Copy loaded chat as Markdown' : 'Copy chat as Markdown'}
+          </button>
+          {truncated && (
+            <button className="tx__pop-item" onClick={() => (setPop(null), void copyChat(true))}>
+              Copy whole chat as Markdown <span className="tx__pop-note">reads the full file</span>
+            </button>
+          )}
+          <button className="tx__pop-item" onClick={() => (setPop(null), void reload())}>
+            <IconReload /> Reload
+          </button>
+        </Pop>
+      )}
 
       <div
         className="tx__scroll"
         ref={scrollRef}
+        tabIndex={-1}
+        onKeyDown={(e) => {
+          if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return
+          e.preventDefault()
+          e.stopPropagation()
+          jumpPrompt(e.key === 'ArrowUp' ? -1 : 1)
+        }}
         onScroll={(e) => {
           const n = e.currentTarget
           const atBottom = n.scrollHeight - n.scrollTop - n.clientHeight < 40
@@ -495,12 +710,9 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
           {truncated && (
             <div className="tx__hint">earlier messages not loaded — this transcript is very large</div>
           )}
-          {filtered.map(({ m, i }, k) => {
-            const prev = filtered[k - 1]?.m
-            const head =
-              m.kind !== 'user' && m.kind !== 'event' && (!prev || prev.kind === 'user' || prev.kind === 'event')
-            return <Item key={i} m={m} who={who} head={head} live={i === items.length - 1} />
-          })}
+          <TxPath.Provider value={path}>
+            <ItemList items={filteredItems} keys={filteredKeys} who={who} />
+          </TxPath.Provider>
           </>
         )}
       </div>
@@ -512,3 +724,100 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
     </div>
   )
 }
+
+/** A small panel under the bar that closes on a click elsewhere. */
+function Pop({ onClose, className, children }: { onClose: () => void; className?: string; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const down = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    // a frame late, so the click that opened it doesn't close it
+    const t = setTimeout(() => window.addEventListener('pointerdown', down, true))
+    return () => {
+      clearTimeout(t)
+      window.removeEventListener('pointerdown', down, true)
+    }
+  }, [onClose])
+  return (
+    <div ref={ref} className={`tx__pop${className ? ' ' + className : ''}`} onPointerDown={(e) => e.stopPropagation()}>
+      {children}
+    </div>
+  )
+}
+
+/** The files a session changed; a click opens one beside the transcript. */
+function FilesPop({
+  el,
+  cwd,
+  sessionId,
+  count,
+  onClose,
+}: {
+  el: WidgetElement
+  cwd: string | undefined
+  sessionId: string | undefined
+  count: number
+  onClose: () => void
+}) {
+  const [files, setFiles] = useState<FileChange[] | null>(null)
+  // re-read when the session changes another file while this is open
+  useEffect(() => {
+    let alive = true
+    void readTranscriptFiles(cwd, sessionId).then((f) => alive && setFiles(f ?? []))
+    return () => {
+      alive = false
+    }
+  }, [cwd, sessionId, count])
+  const spawnWidget = useStore((s) => s.spawnWidget)
+  const open = (path: string) => {
+    onClose()
+    spawnWidget(widgetKindForFile(path), el.x + el.w + 340, el.y + 220, { path, cwd, title: baseName(path) })
+  }
+  const openGit = () => {
+    onClose()
+    spawnWidget('diff', el.x + el.w + 340, el.y + 220, { path: cwd, cwd })
+  }
+  return (
+    <Pop onClose={onClose} className="tx__pop--files">
+      <div className="tx__pop-head">
+        <span>{count === 1 ? '1 file changed' : `${count} files changed`}</span>
+        {cwd && (
+          <button className="tx__pop-link" title={`git panel for ${cwd}`} onClick={openGit}>
+            Open git panel
+          </button>
+        )}
+      </div>
+      <div className="tx__pop-list">
+        {files == null ? (
+          <div className="tx__sub-hint">loading…</div>
+        ) : (
+          files.map((f) => {
+            const rel = shortPath(f.path, cwd)
+            const cut = rel.lastIndexOf('/')
+            return (
+              <button key={f.path} className="tx__file" title={`${f.path}\n${f.edits}× · last: ${f.tool}`} onClick={() => open(f.path)}>
+                <span className="tx__file-name">{rel.slice(cut + 1)}</span>
+                {cut > 0 && <span className="tx__file-dir">{'\u200e' + rel.slice(0, cut) + '\u200e'}</span>}
+                {f.edits > 1 && <span className="tx__file-n">×{f.edits}</span>}
+              </button>
+            )
+          })
+        )}
+      </div>
+    </Pop>
+  )
+}
+
+const Chevron = ({ up }: { up?: boolean }) => (
+  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+    <path
+      d={up ? 'M2 6.5 5 3.5 8 6.5' : 'M2 3.5 5 6.5 8 3.5'}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+)

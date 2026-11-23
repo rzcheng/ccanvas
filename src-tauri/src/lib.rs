@@ -146,6 +146,7 @@ pub fn run() {
             usage::claude_usage,
             transcript::transcript_summary,
             transcript::transcript_chunk,
+            transcript::transcript_files,
             desktop_sessions::desktop_sessions,
             plan_usage::claude_plan_usage,
             pty::pty_open,

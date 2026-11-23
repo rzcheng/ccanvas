@@ -174,7 +174,7 @@ File drag-and-drop needs the desktop app; the VS Code widget works here too.
 | **Drag & drop** | Drop a file from the OS onto a terminal or agent to paste its path in — the way you'd hand Claude a screenshot |
 | **Agent orchestration** | Per-agent status dot (idle, working, waiting, just finished), an *N waiting* inbox, idle notifications, broadcast to many, per-agent model/prompt/flags, and colour labels you can filter the canvas by |
 | **Context meter** | Each agent's bar shows how full its context window is (read from its session transcript), with a one-click **compact** past 70% |
-| **Plan usage** | The top-bar pill shows Claude's own session and weekly limit % with reset times, using your Claude Code sign-in (desktop app); falls back to a local token estimate |
+| **Plan usage** | The top-bar pill shows Claude's own session and weekly limit % with reset times, using your Claude Code sign-in (desktop app); falls back to a local token estimate. Its popover also estimates what the canvas's agents and mirrors would cost at API prices |
 | **Memory panel** | Claude's cross-session memory for the bound folder, rendered as a graph you can pan, zoom, and click into |
 | **Agent roster** | Mission-control list of every agent across all tabs: status, cost/turns, latest reply, click-to-focus, and a composer to message one or broadcast to all |
 | **Tracking camera** | Follow an agent and watch every file it touches spawn as a viewer in an **orbit** around it, arrows pointing back; the camera stays framed on the action |
@@ -240,6 +240,23 @@ its roster row show **Needs you**, and the question and its options appear
 under the transcript. When a tool call has had no result for 10 seconds, a
 **Bash?**-style chip appears: it is waiting for your approval or still
 running, and the transcript can't tell which.
+
+Every transcript widget (mirrors and your own agents' transcripts) also has:
+
+- **Cost**: `≈$12.40` in the bar is what the session's tokens would cost at
+  Claude API list prices (hover for each model's share). On a subscription
+  it's an API-equivalent estimate, not a bill. The usage pill's popover adds
+  up every agent and mirror on the canvas.
+- **Files changed**: the `✎ 15` chip lists the files the session's Edit and
+  Write calls changed, newest first. Click one to open it beside the
+  transcript, or open the git panel for the session's folder.
+- **Prompt jumps**: `⌃` / `⌄` (or ⌥↑ / ⌥↓ with the transcript focused) move
+  between the prompts you typed.
+- **Copy**: the `⋯` menu copies the last reply, or the chat as Markdown. For a
+  transcript too large to load whole, it offers to read the full file once.
+- **Subagent work**: open a Task row and press *Show the subagent's work* to
+  read that subagent's own log inside it. It's loaded only then, followed
+  only while it's shown, and dropped when you hide it.
 
 This reads the desktop app's internal, undocumented session files
 (`~/Library/Application Support/Claude/claude-code-sessions/`). It works only

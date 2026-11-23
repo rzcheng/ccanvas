@@ -74,7 +74,51 @@ pub struct Summary {
     /// a tool call still waiting for its result (a question for the user, a
     /// permission prompt, or a tool that's still running)
     pending: Option<Pending>,
+    /// tokens spent per model (each API reply counted once, subagents that log
+    /// to this file included)
+    tokens: Vec<ModelTokens>,
+    /// files the session's Edit / Write calls changed; the list itself comes
+    /// from `transcript_files`
+    file_count: usize,
 }
+
+/// Tokens one model used across the session, by kind (they're priced apart).
+#[derive(Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelTokens {
+    model: String,
+    input: u64,
+    output: u64,
+    cache_read: u64,
+    /// prompt-cache writes kept 5 minutes / 1 hour
+    cache_write_5m: u64,
+    cache_write_1h: u64,
+}
+
+impl ModelTokens {
+    fn add(&mut self, u: &[u64; 5], sign: i64) {
+        let f = |a: &mut u64, b: u64| *a = (*a as i64 + sign * b as i64).max(0) as u64;
+        f(&mut self.input, u[0]);
+        f(&mut self.output, u[1]);
+        f(&mut self.cache_read, u[2]);
+        f(&mut self.cache_write_5m, u[3]);
+        f(&mut self.cache_write_1h, u[4]);
+    }
+}
+
+/// A file the session changed.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileChange {
+    path: String,
+    /// how many Edit / Write calls touched it
+    edits: u32,
+    /// the last tool that did
+    tool: String,
+}
+
+/// Files kept at most per session; the least recently changed drop off.
+const MAX_FILES: usize = 300;
 
 /// A tool call the transcript has no result for yet.
 #[derive(Clone, Serialize)]
@@ -111,6 +155,12 @@ struct Tracked {
     reply: Vec<String>,
     /// main-thread tool calls with no result yet, oldest first
     open: Vec<OpenTool>,
+    tokens: Vec<ModelTokens>,
+    /// the last reply counted: Claude Code writes one line per content block,
+    /// each repeating the reply's usage, so a repeat replaces it
+    last_usage: Option<(String, usize, [u64; 5])>,
+    /// changed files, least recently changed first
+    files: Vec<FileChange>,
 }
 
 /// Just the event type, so a line we don't need is skipped without building it.
@@ -175,6 +225,7 @@ impl Tracked {
             }
             Some("assistant") => {
                 if let Ok(ev) = serde_json::from_str::<Value>(line) {
+                    self.add_tokens(&ev);
                     self.add_usage(&ev);
                     self.add_reply(&ev);
                     self.add_tool_calls(&ev);
@@ -216,6 +267,78 @@ impl Tracked {
         });
     }
 
+    /// Add a reply's token usage to its model's totals, once per reply.
+    fn add_tokens(&mut self, ev: &Value) {
+        let msg = &ev["message"];
+        let u = &msg["usage"];
+        let model = msg["model"].as_str().unwrap_or("");
+        if u.is_null() || model.is_empty() || model == "<synthetic>" {
+            return;
+        }
+        let n = |v: &Value| v.as_u64().unwrap_or(0);
+        let write = n(&u["cache_creation_input_tokens"]);
+        let cc = &u["cache_creation"];
+        // the 5m / 1h split when given; otherwise all writes are 5m ones
+        let (w5, w1) = if cc.is_object() {
+            (n(&cc["ephemeral_5m_input_tokens"]), n(&cc["ephemeral_1h_input_tokens"]))
+        } else {
+            (write, 0)
+        };
+        let now = [n(&u["input_tokens"]), n(&u["output_tokens"]), n(&u["cache_read_input_tokens"]), w5, w1];
+        let id = msg["id"].as_str().unwrap_or("").to_string();
+        if let Some((last, at, prev)) = &self.last_usage {
+            if !id.is_empty() && *last == id {
+                let (at, prev) = (*at, *prev);
+                self.tokens[at].add(&prev, -1);
+                self.tokens[at].add(&now, 1);
+                self.last_usage = Some((id, at, now));
+                return;
+            }
+        }
+        let at = match self.tokens.iter().position(|t| t.model == model) {
+            Some(i) => i,
+            None => {
+                self.tokens.push(ModelTokens {
+                    model: model.to_string(),
+                    ..Default::default()
+                });
+                self.tokens.len() - 1
+            }
+        };
+        self.tokens[at].add(&now, 1);
+        self.last_usage = Some((id, at, now));
+    }
+
+    /// Remember the files a reply's Edit / Write calls change.
+    fn add_files(&mut self, b: &Value) {
+        let Some(tool) = b["name"].as_str() else { return };
+        if !matches!(tool, "Edit" | "MultiEdit" | "Write" | "Create" | "NotebookEdit") {
+            return;
+        }
+        let input = &b["input"];
+        let Some(path) = input["file_path"]
+            .as_str()
+            .or_else(|| input["notebook_path"].as_str())
+            .filter(|p| !p.is_empty())
+        else {
+            return;
+        };
+        let mut f = match self.files.iter().position(|f| f.path == path) {
+            Some(i) => self.files.remove(i),
+            None => FileChange {
+                path: path.to_string(),
+                edits: 0,
+                tool: String::new(),
+            },
+        };
+        f.edits += 1;
+        f.tool = tool.to_string();
+        self.files.push(f);
+        if self.files.len() > MAX_FILES {
+            self.files.remove(0);
+        }
+    }
+
     fn add_reply(&mut self, ev: &Value) {
         let content = &ev["message"]["content"];
         let text = match content {
@@ -243,6 +366,7 @@ impl Tracked {
             return;
         };
         for b in blocks.iter().filter(|b| b["type"] == "tool_use") {
+            self.add_files(b);
             let (Some(id), Some(tool)) = (b["id"].as_str(), b["name"].as_str()) else {
                 continue;
             };
@@ -310,6 +434,8 @@ impl Tracked {
                     count: self.open.len(),
                     ..t.pending.clone()
                 }),
+            tokens: self.tokens.clone(),
+            file_count: self.files.len(),
         }
     }
 }
@@ -364,6 +490,27 @@ pub async fn transcript_summary(path: String) -> Option<Summary> {
         let mut t = tracked.lock().unwrap();
         t.update(&path).ok()?;
         Some(t.summary())
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// The files a session changed, most recently changed first (None if the
+/// transcript can't be read). Read on demand: summaries only carry the count.
+#[tauri::command]
+pub async fn transcript_files(path: String) -> Option<Vec<FileChange>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = PathBuf::from(path);
+        let tracked = cache()
+            .lock()
+            .unwrap()
+            .entry(path.clone())
+            .or_default()
+            .clone();
+        let mut t = tracked.lock().unwrap();
+        t.update(&path).ok()?;
+        Some(t.files.iter().rev().cloned().collect())
     })
     .await
     .ok()
@@ -487,6 +634,43 @@ mod tests {
         assert!(track(&[BASH, meta]).pending.is_some());
         let prompt = r#"{"type":"user","message":{"content":"never mind"}}"#;
         assert!(track(&[BASH, ASK, prompt]).pending.is_none());
+    }
+
+    #[test]
+    fn tokens_count_each_reply_once_per_model() {
+        let a = r#"{"type":"assistant","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":2,"output_tokens":10,"cache_read_input_tokens":100,"cache_creation_input_tokens":50,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":50}},"content":[{"type":"text","text":"hi"}]}}"#;
+        // the same reply's next content block repeats its usage, output grown
+        let a2 = a.replace(r#""output_tokens":10"#, r#""output_tokens":30"#);
+        let b = r#"{"type":"assistant","message":{"id":"m2","model":"claude-haiku-5-5","usage":{"input_tokens":5,"output_tokens":1,"cache_creation_input_tokens":7},"content":[]}}"#;
+        let s = track(&[a, &a2, b]);
+        assert_eq!(s.tokens.len(), 2);
+        let o = &s.tokens[0];
+        assert_eq!(
+            (o.input, o.output, o.cache_read, o.cache_write_5m, o.cache_write_1h),
+            (2, 30, 100, 0, 50)
+        );
+        let h = &s.tokens[1];
+        assert_eq!((h.model.as_str(), h.input, h.cache_write_5m), ("claude-haiku-5-5", 5, 7));
+    }
+
+    #[test]
+    fn files_track_edits_most_recent_last() {
+        let edit = |id: &str, tool: &str, path: &str| {
+            format!(r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"{id}","name":"{tool}","input":{{"file_path":"{path}"}}}}]}}}}"#)
+        };
+        let lines = [
+            edit("1", "Edit", "/a.ts"),
+            edit("2", "Write", "/b.ts"),
+            edit("3", "Read", "/c.ts"),
+            edit("4", "Edit", "/a.ts"),
+        ];
+        let mut t = Tracked::default();
+        for l in &lines {
+            t.apply(l);
+        }
+        assert_eq!(t.summary().file_count, 2);
+        let got: Vec<_> = t.files.iter().map(|f| (f.path.as_str(), f.edits, f.tool.as_str())).collect();
+        assert_eq!(got, [("/b.ts", 1, "Write"), ("/a.ts", 2, "Edit")]);
     }
 
     #[test]

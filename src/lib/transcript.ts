@@ -13,7 +13,8 @@
 // keep the two in step.
 
 import { invoke } from '@tauri-apps/api/core'
-import { defaultDir, readFile, joinPath, isTauri } from './backend'
+import { defaultDir, readFile, joinPath, isTauri, listDir } from './backend'
+import type { ModelTokens } from './cost'
 
 // ---------- transcript location ----------
 
@@ -253,6 +254,8 @@ export type ToolCall = {
   plan?: PlanItem[]
   /** Agent / Task: the start of the subagent's brief */
   prompt?: string
+  /** Agent / Task: the subagent's id, once its result names it */
+  agentId?: string
   /** the result, truncated (a tail for Bash and subagents, else a head) */
   output?: string
   /** lines in the full result */
@@ -522,6 +525,8 @@ function applyResult(t: ToolCall, r: ToolResultBlock, denied: boolean): ToolCall
     }
   const next: ToolCall = { ...t, state: r.is_error || denied ? 'error' : 'done' }
   if (images) next.images = images
+  const agent = /\bagentId: ([A-Za-z0-9_-]+)/.exec(text)
+  if (agent) next.agentId = agent[1]
   text = text
     .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
     // a subagent's report ends with its id and token usage: not part of the report
@@ -780,6 +785,90 @@ export type TranscriptSummary = {
   modified?: number | null
   /** the tool call still waiting for its result, if any. Desktop only. */
   pending?: TranscriptPending | null
+  /** tokens per model, each reply counted once. Desktop only. */
+  tokens?: ModelTokens[]
+  /** how many files Edit / Write calls changed (list: readTranscriptFiles). Desktop only. */
+  fileCount?: number
+}
+
+export type FileChange = { path: string; edits: number; tool: string }
+
+/** Files a session changed, most recently changed first (desktop only). */
+export async function readTranscriptFiles(
+  cwd: string | undefined,
+  sessionId: string | undefined,
+): Promise<FileChange[] | null> {
+  const path = await transcriptPathFor(cwd, sessionId)
+  if (!path || !isTauri()) return null
+  try {
+    return await invoke<FileChange[] | null>('transcript_files', { path })
+  } catch {
+    return null
+  }
+}
+
+// ---------- subagent logs ----------
+// A subagent (Task / Agent call) logs to its own file beside the session's:
+//   <session>.jsonl  →  <session>/subagents/agent-<agentId>.jsonl
+// with an agent-<agentId>.meta.json naming the tool call that started it.
+
+/** The log of the subagent a Task / Agent call started, or null. */
+export async function subagentLogPath(
+  transcriptPath: string,
+  toolUseId: string,
+  agentId?: string,
+): Promise<string | null> {
+  const dir = transcriptPath.replace(/\.jsonl$/, '') + '/subagents'
+  if (agentId && /^[A-Za-z0-9_-]+$/.test(agentId)) return `${dir}/agent-${agentId}.jsonl`
+  // still running: no result names it yet, so match the call id in the metadata
+  const entries = await listDir(dir)
+  if (!entries) return null
+  for (const e of entries) {
+    if (!e.name.endsWith('.meta.json')) continue
+    const raw = await readFile(e.path)
+    if (!raw) continue
+    try {
+      if ((JSON.parse(raw) as { toolUseId?: string }).toolUseId === toolUseId)
+        return e.path.replace(/\.meta\.json$/, '.jsonl')
+    } catch {
+      /* unreadable metadata: skip it */
+    }
+  }
+  return null
+}
+
+// ---------- Markdown export ----------
+
+const STEP_GLYPH: Record<ToolState, string> = { running: '…', done: '✓', error: '✕', stopped: '–' }
+
+/** A conversation as Markdown: prompts, replies, and each tool call as a
+ *  one-line bullet. */
+export function transcriptMarkdown(items: TranscriptItem[], who = 'Claude'): string {
+  const out: string[] = []
+  let speaker = ''
+  const say = (name: string) => {
+    if (speaker !== name) out.push(`**${name}:**`)
+    speaker = name
+  }
+  for (const m of items) {
+    if (m.kind === 'user') {
+      say('You')
+      out.push(m.text + (m.images ? `\n\n_(${m.images} image${m.images > 1 ? 's' : ''})_` : ''))
+    } else if (m.kind === 'text') {
+      say(who)
+      out.push(m.text)
+    } else if (m.kind === 'event') {
+      out.push(`_${m.text}_`)
+      speaker = ''
+    } else {
+      say(who)
+      const lines = m.steps
+        .filter((s): s is ToolCall => s.kind === 'tool')
+        .map((t) => `- ${STEP_GLYPH[t.state]} ${t.label}${t.target ? ': ' + t.target.replace(/\n/g, ' ') : ''}`)
+      if (lines.length) out.push(lines.join('\n'))
+    }
+  }
+  return out.join('\n\n') + '\n'
 }
 
 export type TranscriptPending = {
