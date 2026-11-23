@@ -51,6 +51,9 @@ type Base = {
   /** elements spawned by the agent-tracking camera carry the tracked agent's id,
    *  so "stop & clear" can remove the orbit (satellite widgets + their arrows) */
   trackOf?: string
+  /** the layer this element sits on (lib/layers.ts). Missing = the base layer,
+   *  so files from before layers existed load unchanged. */
+  layer?: string
 }
 
 export type DrawElement = Base & {
@@ -221,6 +224,20 @@ export type CanvasElement =
 
 export type Camera = { x: number; y: number; zoom: number }
 
+/**
+ * One plane in a tab's stack of layers. A layer can be its own project: with a
+ * `dir`, new widgets on it open in that folder instead of the tab's. `camera`
+ * remembers where you were looking the last time you left the layer.
+ */
+export type Layer = {
+  id: string
+  name: string
+  /** absolute folder for this layer's widgets; missing = the tab's folder */
+  dir?: string
+  /** the view to restore when switching back to this layer */
+  camera?: Camera
+}
+
 export type Workspace = {
   id: string
   name: string
@@ -234,6 +251,11 @@ export type Workspace = {
   dirty?: boolean
   /** pinned tabs sit first in the tab strip and can't be closed until unpinned */
   pinned?: boolean
+  /** the tab's stack of layers, bottom first. Materialised only once a second
+   *  layer exists; missing = one implicit base layer. */
+  layers?: Layer[]
+  /** the layer being shown and edited; `camera` above is its view */
+  activeLayerId?: string
 }
 
 /** On-disk shape of a .ccnvs file */
@@ -243,6 +265,10 @@ export type CcnvsFile = {
   name: string
   camera: Camera
   elements: CanvasElement[]
+  /** written only when the canvas has two or more layers (still version 1:
+   *  older builds ignore it and show every element on one plane) */
+  layers?: Layer[]
+  activeLayer?: string
 }
 
 /** A reusable layout of widgets spawned together onto a fresh canvas. */
