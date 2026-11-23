@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { isDesktopMirror, forkIntoTerminal } from '../lib/desktopSessions'
 import { useStore, selectActive, withGroupSiblings } from '../store/workspace'
 import type {
   ArrowElement,
@@ -313,6 +314,16 @@ export function Canvas() {
             cwd: agent.cwd,
             title: `${agent.title} · transcript`,
           }),
+      })
+      items.push({ separator: true })
+    }
+    // a desktop-app mirror → fork it into a terminal. Never `--resume` the id
+    // itself: the desktop app is still writing that transcript.
+    if (lone?.type === 'widget' && isDesktopMirror(lone)) {
+      const mirror = lone
+      items.push({
+        label: 'Fork into terminal',
+        onClick: () => void forkIntoTerminal(mirror),
       })
       items.push({ separator: true })
     }
