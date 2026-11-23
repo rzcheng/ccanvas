@@ -61,7 +61,9 @@ fn encode_project(cwd: &str) -> String {
         if c.is_ascii_alphanumeric() {
             out.push(c);
         } else {
-            out.extend(std::iter::repeat_n('-', c.len_utf16()));
+            for _ in 0..c.len_utf16() {
+                out.push('-');
+            }
         }
     }
     out
