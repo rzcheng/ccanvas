@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { WidgetElement } from '../lib/types'
 import { useStore, selectActive } from '../store/workspace'
 import {
@@ -7,7 +7,8 @@ import {
   readTranscriptChunk,
   type TranscriptTurn,
 } from '../lib/transcript'
-import { watchPath, baseName } from '../lib/backend'
+import { watchPath, baseName, openExternal } from '../lib/backend'
+import { renderMarkdown } from '../lib/markdown'
 import { IconReload } from '../ui/icons'
 import '../styles/agent-tools.css'
 
@@ -19,6 +20,27 @@ import '../styles/agent-tools.css'
 
 // a mirror's first read starts this far from the end of a huge transcript
 const MIRROR_TAIL_BYTES = 8 * 1024 * 1024
+
+/** A message body rendered as markdown. Memoised per text, so appending turns
+ *  to a long conversation doesn't re-render every earlier one. */
+const MdText = memo(function MdText({ text }: { text: string }) {
+  const html = useMemo(() => renderMarkdown(text), [text])
+  return (
+    <div
+      className="tx__md"
+      // renderMarkdown escapes everything, then re-allows a safe tag subset
+      dangerouslySetInnerHTML={{ __html: html }}
+      onClick={(e) => {
+        // a link would navigate the whole app away: open it in the browser
+        const a = (e.target as HTMLElement).closest('a')
+        if (!a) return
+        e.preventDefault()
+        const href = a.getAttribute('href') ?? ''
+        if (/^https?:\/\//i.test(href)) void openExternal(href)
+      }}
+    />
+  )
+})
 
 function ToolChip({ name, target }: { name: string; target?: string }) {
   const short = target
@@ -211,10 +233,15 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
           {truncated && (
             <div className="tx__hint">earlier messages not loaded — this transcript is very large</div>
           )}
-          {filtered.map((m, i) => (
+          {filtered.map((m, i) =>
+            m.role === 'event' ? (
+              <div key={i} className="tx__event" title={m.text}>
+                {m.text}
+              </div>
+            ) : (
             <div key={i} className={`tx__msg tx__msg--${m.role}`}>
               <div className="tx__role">{m.role === 'user' ? 'you' : mirror ? 'claude' : baseName(agent?.title ?? 'agent')}</div>
-              {m.text && <div className="tx__text">{m.text}</div>}
+              {m.text && <MdText text={m.text} />}
               {m.tools.length > 0 && (
                 <div className="tx__tools">
                   {m.tools.map((tool, j) => (
@@ -223,7 +250,8 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
                 </div>
               )}
             </div>
-          ))}
+            ),
+          )}
           </>
         )}
       </div>

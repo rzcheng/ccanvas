@@ -223,12 +223,82 @@ export function extractToolFiles(
 
 export type TranscriptTool = { name: string; target?: string }
 export type TranscriptTurn = {
-  role: 'user' | 'assistant'
+  /** `event` is harness traffic shown as a muted one-liner: a task
+   *  notification, a message from another session, a compaction, an
+   *  interrupt, a slash command's output */
+  role: 'user' | 'assistant' | 'event'
   text: string
   tools: TranscriptTool[]
 }
 
-/** Parse a transcript into an ordered list of readable user/assistant turns. */
+type UserEvent = Event & { isMeta?: boolean; isCompactSummary?: boolean; origin?: unknown }
+
+const tagBody = (text: string, tag: string): string | null => {
+  const m = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`).exec(text)
+  return m ? m[1].trim() : null
+}
+const tagAttr = (text: string, tag: string, attr: string): string | null => {
+  const m = new RegExp(`<${tag}\\s[^>]*\\b${attr}="([^"]*)"`).exec(text)
+  return m ? m[1] : null
+}
+const oneLine = (s: string, max = 160): string => {
+  const line = s.replace(/\s+/g, ' ').trim()
+  return line.length > max ? line.slice(0, max - 1) + '…' : line
+}
+
+/** Claude Code wraps what you type (and what it injects) in harness markup.
+ *  Turn one user event's text into what to show: your prompt with the markup
+ *  removed, a muted event line, or nothing. */
+function readUserText(raw: string, ev: UserEvent): TranscriptTurn | null {
+  const event = (text: string): TranscriptTurn => ({ role: 'event', text: oneLine(text), tools: [] })
+  if (ev.isCompactSummary) return event('conversation compacted — earlier turns summarized')
+  // context the harness adds to your turn: never something you typed
+  let text = raw.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim()
+  if (!text) return null
+
+  if (text.includes('<cross-session-message')) {
+    const from = tagAttr(text, 'cross-session-message', 'from-name') ?? 'another session'
+    return event(`message from ${from}: ${tagBody(text, 'cross-session-message') ?? ''}`)
+  }
+  if (text.startsWith('<task-notification')) {
+    const summary = tagBody(text, 'summary') ?? tagBody(text, 'status') ?? 'background task update'
+    return event(`task · ${summary}`)
+  }
+  if (text.startsWith('<side-sessions-event')) return event('side sessions updated')
+  // skill instructions, command caveats and other injected context
+  if (ev.isMeta || text.startsWith('<local-command-caveat')) return null
+
+  const cmd = tagBody(text, 'command-name')
+  if (cmd) {
+    const args = tagBody(text, 'command-args')
+    return { role: 'user', text: '`' + [cmd, args].filter(Boolean).join(' ') + '`', tools: [] }
+  }
+  const stdout = tagBody(text, 'local-command-stdout')
+  if (stdout != null) return stdout ? event(stdout) : null
+  const bash = tagBody(text, 'bash-input')
+  if (bash != null) return { role: 'user', text: '```\n! ' + bash + '\n```', tools: [] }
+  const bashOut = tagBody(text, 'bash-stdout') ?? tagBody(text, 'bash-stderr')
+  if (bashOut != null) return bashOut ? event(bashOut) : null
+  if (/^\[Request interrupted/.test(text)) return event('interrupted')
+  if (/^\[(Usage limit|Earlier usage)/.test(text)) return event(text.replace(/^\[|\]$/g, ''))
+  // the harness's note when Claude reads an image file, not a prompt
+  if (/^\[Image: original \d+x\d+/.test(text)) return null
+
+  // pasted blocks: keep a short quoted preview instead of the whole paste
+  text = text.replace(/<pasted_content[^>]*>([\s\S]*?)<\/pasted_content[^>]*>/g, (_m, body: string) => {
+    const lines = body.trim().split('\n')
+    const head = lines
+      .slice(0, 4)
+      .map((l) => '> ' + l)
+      .join('\n')
+    const more = lines.length > 4 ? `\n> … ${lines.length - 4} more lines` : ''
+    return `\n\n*pasted:*\n${head}${more}\n\n`
+  })
+  text = text.trim()
+  return text ? { role: 'user', text, tools: [] } : null
+}
+
+/** Parse a transcript into an ordered list of readable turns. */
 export function parseTranscript(jsonl: string): TranscriptTurn[] {
   const out: TranscriptTurn[] = []
   for (const raw of jsonl.split('\n')) {
@@ -252,17 +322,30 @@ export function parseTranscript(jsonl: string): TranscriptTurn[] {
           else if (c.type === 'tool_use')
             tools.push({ name: c.name ?? 'tool', target: toolTarget(c.name, c.input) })
         }
-      if (text.trim() || tools.length) out.push({ role: 'assistant', text: text.trim(), tools })
+      // harness-made replies (API errors, usage limits) aren't the model talking
+      const synthetic = (ev.message as { model?: string } | undefined)?.model === '<synthetic>'
+      if (synthetic && text.trim()) out.push({ role: 'event', text: oneLine(text), tools: [] })
+      else if (text.trim() || tools.length) out.push({ role: 'assistant', text: text.trim(), tools })
     } else if (ev.type === 'user') {
+      // pure tool-result turns carry no user text — skip them; an attached
+      // image shows as a chip on the prompt
       let text = ''
+      let images = 0
       if (typeof content === 'string') text = content
       else if (Array.isArray(content))
-        text = (content as Block[])
-          .filter((c): c is Block & { text: string } => !!c && c.type === 'text' && !!c.text)
-          .map((c) => c.text)
-          .join('\n')
-      // pure tool-result turns carry no user text — skip them
-      if (text.trim()) out.push({ role: 'user', text: text.trim(), tools: [] })
+        for (const c of content as Block[]) {
+          if (c?.type === 'text' && c.text) text += (text ? '\n' : '') + c.text
+          else if (c?.type === 'image') images++
+        }
+      const meta = (ev as UserEvent).isMeta
+      const turn = text.trim()
+        ? readUserText(text, ev as UserEvent)
+        : images && !meta
+          ? { role: 'user' as const, text: '', tools: [] }
+          : null
+      if (turn?.role === 'user' && images)
+        turn.tools.push({ name: images > 1 ? `${images} images` : 'image' })
+      if (turn) out.push(turn)
     }
   }
   return out
