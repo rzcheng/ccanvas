@@ -9,7 +9,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { isTauri, openExternal } from './backend'
 import { watchTranscriptSummary, type TranscriptSummary } from './transcript'
 import { useStore, selectActive } from '../store/workspace'
-import { viewCenter } from './view'
+import { viewCenter, viewport } from './view'
+import { activeLayerId, landingCamera, layerForPath } from './layers'
 import { screenToWorld } from './geometry'
 import type { CanvasElement, WidgetElement } from './types'
 
@@ -92,16 +93,28 @@ export function addDesktopMirrors(sessions: DesktopSession[]): number {
   const have = mirroredIds(ws.elements)
   const todo = sessions.filter((d) => !have.has(d.cliSessionId))
   if (!todo.length) return 0
-  const c = screenToWorld(viewCenter(), ws.camera)
-  const cols = Math.min(COLS, todo.length)
-  const rows = Math.ceil(todo.length / cols)
-  const x0 = c.x - ((cols - 1) * (MIRROR_W + GAP)) / 2
-  const y0 = c.y - ((rows - 1) * (MIRROR_H + GAP)) / 2
-  todo.forEach((d, i) => {
-    const x = x0 + (i % cols) * (MIRROR_W + GAP)
-    const y = y0 + Math.floor(i / cols) * (MIRROR_H + GAP)
-    s.spawnWidget('transcript', x, y, mirrorInit(d))
-  })
+  // each mirror goes to the layer whose folder holds its session's folder,
+  // else the layer you're on; each layer's batch is centred in that layer's view
+  const here = activeLayerId(ws)
+  const groups = new Map<string, DesktopSession[]>()
+  for (const d of todo) {
+    const id = layerForPath(ws, d.cwd) ?? here
+    groups.set(id, [...(groups.get(id) ?? []), d])
+  }
+  const { vw, vh } = viewport()
+  for (const [layer, batch] of groups) {
+    const cam = layer === here ? ws.camera : landingCamera(ws, layer, vw, vh)
+    const c = screenToWorld(viewCenter(), cam)
+    const cols = Math.min(COLS, batch.length)
+    const rows = Math.ceil(batch.length / cols)
+    const x0 = c.x - ((cols - 1) * (MIRROR_W + GAP)) / 2
+    const y0 = c.y - ((rows - 1) * (MIRROR_H + GAP)) / 2
+    batch.forEach((d, i) => {
+      const x = x0 + (i % cols) * (MIRROR_W + GAP)
+      const y = y0 + Math.floor(i / cols) * (MIRROR_H + GAP)
+      s.spawnWidget('transcript', x, y, { ...mirrorInit(d), layer })
+    })
+  }
   return todo.length
 }
 

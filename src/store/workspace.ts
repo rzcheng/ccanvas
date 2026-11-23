@@ -41,6 +41,20 @@ import { resetFlowState } from '../lib/flow'
 import { startTracking, stopTracking } from '../lib/tracker'
 import { killPty } from '../lib/terminal'
 import { useSettings } from '../lib/settings'
+import {
+  BASE_LAYER_ID,
+  MAX_LAYERS,
+  activeLayerElements,
+  activeLayerId,
+  findLayer,
+  hasLayers,
+  landingCamera,
+  layerDir,
+  layerOf,
+  layersOf,
+  newLayerId,
+  normalizeLayers,
+} from '../lib/layers'
 
 let zCounter = 1
 const nextZ = () => zCounter++
@@ -135,6 +149,30 @@ export function withGroupSiblings(
   for (const el of elements)
     if (el.groupId && groups.has(el.groupId)) out.add(el.id)
   return [...out]
+}
+
+/** Size of the canvas area (kept here rather than importing lib/view, which
+ *  imports this store). */
+function canvasSize(): { vw: number; vh: number } {
+  const main = typeof document !== 'undefined' ? document.querySelector('.app__main') : null
+  if (main) return { vw: main.clientWidth, vh: main.clientHeight }
+  const w = typeof window !== 'undefined' ? window.innerWidth : 1280
+  const h = typeof window !== 'undefined' ? window.innerHeight - 38 : 720
+  return { vw: w, vh: h }
+}
+
+/** Put a new element on the active layer unless it names one. Base-layer
+ *  elements carry no `layer` field, so a single-layer canvas saves as before. */
+function stampLayer(ws: Workspace, el: CanvasElement): CanvasElement {
+  if (el.layer === BASE_LAYER_ID) {
+    // an explicit base layer (e.g. a tracked agent's satellite) is stored as none
+    const copy = { ...el } as CanvasElement
+    delete copy.layer
+    return copy
+  }
+  if (el.layer !== undefined || !hasLayers(ws)) return el
+  const id = activeLayerId(ws)
+  return id === BASE_LAYER_ID ? el : ({ ...el, layer: id } as CanvasElement)
 }
 
 /** Ask the backend (or the user) for an absolute folder path. */
@@ -246,6 +284,9 @@ export type Store = {
   presenting: boolean
   /** master switch for arrow orchestration (flow edges between agents) */
   flowsEnabled: boolean
+  /** the layers overview (the tilted stack): 'open' hides the live canvas;
+   *  'closing' shows it again under the overview's last fade. Not saved. */
+  layerOverview: false | 'open' | 'closing'
 
   // ----- derived -----
   active: () => Workspace | null
@@ -366,6 +407,27 @@ export type Store = {
   // ----- flows -----
   setFlowsEnabled: (on: boolean) => void
 
+  // ----- layers -----
+  setLayerOverview: (open: boolean | 'closing') => void
+  /** add a layer on top of the stack (the first call also materialises the
+   *  base layer); returns its id, or null at the nine-layer cap */
+  addLayer: (opts?: { name?: string; dir?: string; activate?: boolean }) => string | null
+  /** "New layer…": pick its folder (cancel = a plain layer in the tab's
+   *  folder), name it after the folder, add it on top */
+  newLayerWithPicker: (opts?: { activate?: boolean }) => Promise<string | null>
+  renameLayer: (id: string, name: string) => void
+  setLayerDir: (id: string, dir: string | undefined) => void
+  /** pick a folder for a layer (the folder chip and "Set folder…") */
+  pickLayerDir: (id: string) => Promise<void>
+  /** Show another layer. Always drops keyboard focus, the selection, the
+   *  active widget and any text edit, so typing can never reach a terminal
+   *  that's no longer visible. Saves the current view into the layer being
+   *  left and restores the target layer's (or `cam`). */
+  setActiveLayer: (id: string, cam?: Camera) => void
+  /** move elements to another layer, keeping x/y. Carries group siblings,
+   *  label boxes and arrows whose two ends both move. Undoable. */
+  moveToLayer: (ids: string[], layerId: string) => void
+
   // ----- history -----
   beginHistory: () => void
   undo: () => void
@@ -404,6 +466,7 @@ export const useStore = create<Store>((set, get) => ({
   snapGuides: null,
   presenting: false,
   flowsEnabled: false, // connector flows were removed from the UI
+  layerOverview: false,
 
   active: () => {
     const s = get()
@@ -484,6 +547,9 @@ export const useStore = create<Store>((set, get) => ({
   setActiveDir: async () => {
     const ws = get().active()
     if (!ws) return
+    // a layer with its own folder: the chip shows and sets that folder
+    const layer = hasLayers(ws) ? findLayer(ws, activeLayerId(ws)) : undefined
+    if (layer?.dir) return get().pickLayerDir(layer.id)
     const dir = await chooseDir(ws.dir)
     if (dir === null) return // cancelled
     const realDir = dir || undefined
@@ -683,7 +749,7 @@ export const useStore = create<Store>((set, get) => ({
   homeView: (vw, vh) => {
     const ws = get().active()
     if (!ws) return
-    const b = boundsOfMany(ws.elements)
+    const b = boundsOfMany(activeLayerElements(ws))
     let cam: Camera
     if (!b) {
       // empty canvas → put the world origin at the viewport centre
@@ -708,7 +774,7 @@ export const useStore = create<Store>((set, get) => ({
     set((s) =>
       patchActive(s, (ws) => ({
         ...ws,
-        elements: [...ws.elements, { ...el, z: nextZ() } as CanvasElement],
+        elements: [...ws.elements, stampLayer(ws, { ...el, z: nextZ() } as CanvasElement)],
         dirty: true,
       })),
     ),
@@ -719,7 +785,7 @@ export const useStore = create<Store>((set, get) => ({
         ...ws,
         elements: [
           ...ws.elements,
-          ...els.map((el) => ({ ...el, z: nextZ() }) as CanvasElement),
+          ...els.map((el) => stampLayer(ws, { ...el, z: nextZ() } as CanvasElement)),
         ],
         dirty: true,
       })),
@@ -785,7 +851,10 @@ export const useStore = create<Store>((set, get) => ({
     const w = init?.w ?? WIDGET_SIZE[kind].w
     const h = init?.h ?? WIDGET_SIZE[kind].h
     const id = newId()
-    const dir = get().active()?.dir
+    const ws = get().active()
+    // new widgets open in their layer's folder, falling back to the tab's
+    const onLayerId = init?.layer ?? (ws ? activeLayerId(ws) : BASE_LAYER_ID)
+    const dir = ws ? layerDir(ws, onLayerId) : undefined
     const el: CanvasElement = {
       id,
       type: 'widget',
@@ -814,7 +883,9 @@ export const useStore = create<Store>((set, get) => ({
     get().beginHistory()
     get().addElement(el)
     // auto-focus the new widget so notes/terminals are usable immediately
-    set({ selection: [id], tool: 'select', activeWidgetId: id })
+    // (unless it was placed on a layer you can't see, e.g. a sorted mirror)
+    if (!ws || onLayerId === activeLayerId(ws))
+      set({ selection: [id], tool: 'select', activeWidgetId: id })
     return id
   },
 
@@ -999,7 +1070,16 @@ export const useStore = create<Store>((set, get) => ({
     )
   },
 
-  setActiveWidget: (id) => set({ activeWidgetId: id }),
+  // A widget on another layer of this tab is brought into view first, so a
+  // jump (roster, search, attention) never focuses something you can't see.
+  setActiveWidget: (id) => {
+    const ws = get().active()
+    if (id && ws && hasLayers(ws)) {
+      const el = ws.elements.find((e) => e.id === id)
+      if (el && layerOf(el) !== activeLayerId(ws)) get().setActiveLayer(layerOf(el))
+    }
+    set({ activeWidgetId: id })
+  },
   setEditingText: (id) => set({ editingTextId: id }),
   setLabelingWidget: (id) => set({ labelingWidgetId: id }),
   setLabelFilter: (f) => set({ labelFilter: f && f.length ? f : null }),
@@ -1347,7 +1427,8 @@ export const useStore = create<Store>((set, get) => ({
   applyTemplate: (id, x, y) => {
     const tpl = get().templates.find((t) => t.id === id)
     if (!tpl || !tpl.widgets.length) return
-    const dir = get().active()?.dir
+    const tplWs = get().active()
+    const dir = tplWs ? layerDir(tplWs) : undefined
     const maxDx = Math.max(...tpl.widgets.map((w) => w.dx + w.w))
     const maxDy = Math.max(...tpl.widgets.map((w) => w.dy + w.h))
     const ox = x - maxDx / 2
@@ -1436,8 +1517,9 @@ export const useStore = create<Store>((set, get) => ({
     const ws = get().active()
     if (!ws) return
     const ids = new Set(get().selection)
-    const sel = ws.elements.filter((e) => ids.has(e.id))
-    const b = boundsOfMany(sel.length ? sel : ws.elements)
+    const els = activeLayerElements(ws)
+    const sel = els.filter((e) => ids.has(e.id))
+    const b = boundsOfMany(sel.length ? sel : els)
     if (!b) return
     const pad = 80
     const zoom = clamp(Math.min(vw / (b.w + pad * 2), vh / (b.h + pad * 2)), 0.1, 2)
@@ -1450,6 +1532,153 @@ export const useStore = create<Store>((set, get) => ({
   setFlowsEnabled: (on) => {
     if (!on) resetFlowState() // drop pending satisfied/turn bookkeeping
     set({ flowsEnabled: on })
+  },
+
+  // ---------- layers ----------
+  setLayerOverview: (open) => {
+    if (open === true) {
+      if (get().layerOverview) return
+      // nothing typed while the stack is up may reach a widget
+      ;(document.activeElement as HTMLElement | null)?.blur?.()
+      set({ layerOverview: 'open', activeWidgetId: null, editingTextId: null })
+    } else set({ layerOverview: open })
+  },
+
+  addLayer: (opts = {}) => {
+    const ws = get().active()
+    if (!ws) return null
+    const cur = layersOf(ws)
+    if (cur.length >= MAX_LAYERS) return null
+    const id = newLayerId(ws)
+    const name = (opts.name?.trim() || `layer ${cur.length + 1}`).slice(0, 40)
+    const layer = { id, name, ...(opts.dir ? { dir: opts.dir } : {}) }
+    set((s) =>
+      patchActive(s, (w) => ({
+        ...w,
+        // first use materialises the implicit base layer under the new one
+        layers: [...layersOf(w).map((l) => ({ ...l })), layer],
+        activeLayerId: activeLayerId(w),
+        dirty: true,
+      })),
+    )
+    if (opts.activate) get().setActiveLayer(id)
+    return id
+  },
+
+  newLayerWithPicker: async (opts = {}) => {
+    const ws = get().active()
+    if (!ws || layersOf(ws).length >= MAX_LAYERS) return null
+    const dir = await chooseDir(ws.dir)
+    const realDir = dir || undefined
+    return get().addLayer({
+      dir: realDir,
+      name: realDir ? baseName(realDir) : undefined,
+      activate: opts.activate,
+    })
+  },
+
+  renameLayer: (id, name) => {
+    const n = name.trim().slice(0, 40)
+    if (!n) return
+    set((s) =>
+      patchActive(s, (w) =>
+        hasLayers(w)
+          ? { ...w, dirty: true, layers: w.layers!.map((l) => (l.id === id ? { ...l, name: n } : l)) }
+          : w,
+      ),
+    )
+  },
+
+  setLayerDir: (id, dir) =>
+    set((s) =>
+      patchActive(s, (w) => {
+        if (!hasLayers(w)) return w
+        return {
+          ...w,
+          dirty: true,
+          layers: w.layers!.map((l) => {
+            if (l.id !== id) return l
+            const next = { ...l }
+            if (dir) next.dir = dir
+            else delete next.dir
+            // a layer still called "layer N" takes its new folder's name
+            if (dir && /^layer \d+$/.test(l.name)) next.name = baseName(dir)
+            return next
+          }),
+        }
+      }),
+    ),
+
+  pickLayerDir: async (id) => {
+    const ws = get().active()
+    if (!ws) return
+    const dir = await chooseDir(findLayer(ws, id)?.dir ?? ws.dir)
+    if (dir === null) return // cancelled
+    get().setLayerDir(id, dir || undefined)
+  },
+
+  setActiveLayer: (id, cam) => {
+    const ws = get().active()
+    if (!ws) return
+    // the focus-leak rule: whatever happens next, nothing keeps keyboard focus
+    ;(document.activeElement as HTMLElement | null)?.blur?.()
+    set({ selection: [], activeWidgetId: null, editingTextId: null, labelingWidgetId: null })
+    if (!hasLayers(ws) || !findLayer(ws, id)) return
+    const cur = activeLayerId(ws)
+    if (cur === id && !cam) return
+    const { vw, vh } = canvasSize()
+    // remember where we were on the layer we're leaving
+    const left = {
+      ...ws,
+      layers: ws.layers!.map((l) => (l.id === cur ? { ...l, camera: ws.camera } : l)),
+    }
+    const next = cam ?? landingCamera(left, id, vw, vh)
+    set((s) =>
+      patchActive(s, (w) => ({
+        ...w,
+        layers: left.layers,
+        activeLayerId: id,
+        camera: next,
+      })),
+    )
+  },
+
+  moveToLayer: (ids, layerId) => {
+    const ws = get().active()
+    if (!ws || !findLayer(ws, layerId) || !ids.length) return
+    const moving = new Set(withGroupSiblings(ws.elements, ids))
+    // label boxes travel with the widget they wrap
+    for (const e of ws.elements) if (e.labelFor && moving.has(e.labelFor)) moving.add(e.id)
+    // arrows go along when both of their ends do
+    for (const e of ws.elements)
+      if (e.type === 'arrow' && e.from && e.to && moving.has(e.from.id) && moving.has(e.to.id))
+        moving.add(e.id)
+    get().beginHistory()
+    set((s) =>
+      patchActive(s, (w) => ({
+        ...w,
+        dirty: true,
+        elements: w.elements.map((e) => {
+          if (!moving.has(e.id) || layerOf(e) === layerId) return e
+          const copy = { ...e } as CanvasElement
+          if (layerId === BASE_LAYER_ID) delete copy.layer
+          else copy.layer = layerId
+          return copy
+        }),
+      })),
+    )
+    // anything that just left the layer you're on can't stay selected or focused
+    if (layerId !== activeLayerId(ws)) {
+      const focused = (document.activeElement as HTMLElement | null)
+        ?.closest?.('[data-widget-id]')
+        ?.getAttribute('data-widget-id')
+      if (focused && moving.has(focused)) (document.activeElement as HTMLElement).blur()
+      const st = get()
+      set({
+        selection: st.selection.filter((x) => !moving.has(x)),
+        activeWidgetId: st.activeWidgetId && moving.has(st.activeWidgetId) ? null : st.activeWidgetId,
+      })
+    }
   },
 
   // ---------- history ----------
@@ -1501,7 +1730,7 @@ export function bootstrap() {
     for (const ws of session.tabs)
       for (const el of ws.elements) zCounter = Math.max(zCounter, el.z + 1)
     useStore.setState({
-      tabs: session.tabs,
+      tabs: session.tabs.map(normalizeLayers),
       activeTabId:
         session.activeTabId && session.tabs.some((t) => t.id === session.activeTabId)
           ? session.activeTabId

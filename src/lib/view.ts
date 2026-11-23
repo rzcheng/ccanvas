@@ -5,6 +5,7 @@
 import { useStore, selectActive } from '../store/workspace'
 import { clamp } from './geometry'
 import type { CanvasElement, WidgetElement } from './types'
+import { activeLayerElements, activeLayerId, hasLayers, layerOf } from './layers'
 
 /** Below this zoom, terminals render as readable summary cards. */
 export const FAR_ZOOM = 0.5
@@ -40,8 +41,9 @@ export function passesLabelFilter(el: WidgetElement, filter: string[] | null): b
  */
 export function orderedTerminals(): WidgetElement[] {
   const st = useStore.getState()
-  const terms = selectActive(st)
-    .elements.filter(isTermWidget)
+  // the active layer only: ⌘1–9 means "the Nth terminal I can see"
+  const terms = activeLayerElements(selectActive(st))
+    .filter(isTermWidget)
     .filter((t) => passesLabelFilter(t, st.labelFilter))
   const byY = [...terms].sort((a, b) => a.y + a.h / 2 - (b.y + b.h / 2))
   const rows: WidgetElement[][] = []
@@ -60,6 +62,7 @@ export function orderedTerminals(): WidgetElement[] {
  * otherwise it's centred, zooming in (up to 100%) far enough to fit.
  */
 export function focusWidget(id: string) {
+  revealLayerOf(id)
   const st = useStore.getState()
   const el = selectActive(st).elements.find((e) => e.id === id)
   if (!el || el.type !== 'widget') return
@@ -83,6 +86,22 @@ export function focusWidget(id: string) {
   st.setSelection([id])
   st.bringToFront([id])
   st.setActiveWidget(id)
+}
+
+/**
+ * If `id` sits on another layer of the active tab, switch to that layer first
+ * (restoring its view). Call before computing a camera for a jump: roster,
+ * search and attention clicks all land on the right layer this way.
+ * Returns true if the layer changed.
+ */
+export function revealLayerOf(id: string): boolean {
+  const st = useStore.getState()
+  const ws = selectActive(st)
+  if (!ws || !hasLayers(ws)) return false
+  const el = ws.elements.find((e) => e.id === id)
+  if (!el || layerOf(el) === activeLayerId(ws)) return false
+  st.setActiveLayer(layerOf(el))
+  return true
 }
 
 /** Step the active terminal forward/back through reading order (wraps). */

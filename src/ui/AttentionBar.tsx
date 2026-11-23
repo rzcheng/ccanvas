@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { viewCenter } from '../lib/view'
+import { viewCenter, revealLayerOf } from '../lib/view'
 import { useStore, selectActive } from '../store/workspace'
 import { useAgents, sendTo } from '../lib/agents'
 import type { WidgetElement } from '../lib/types'
@@ -24,7 +24,8 @@ export function AttentionBar() {
   if (waiting.length === 0) return null
 
   const goto = (el: WidgetElement) => {
-    const cam = ws.camera
+    revealLayerOf(el.id)
+    const cam = selectActive(useStore.getState()).camera
     const cx = el.x + el.w / 2
     const cy = el.y + el.h / 2
     setCamera({

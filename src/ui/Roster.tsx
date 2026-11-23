@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { viewCenter } from '../lib/view'
-import { useStore } from '../store/workspace'
+import { viewCenter, revealLayerOf } from '../lib/view'
+import { useStore, selectActive } from '../store/workspace'
 import { useAgents, useDisplayStatus, sendPrompt } from '../lib/agents'
 import { watchTranscriptSummary, type TranscriptSummary } from '../lib/transcript'
 import { useAgentContext } from '../lib/context'
@@ -167,7 +167,9 @@ export function Roster() {
 
   const focus = (row: Row, asTarget = true) => {
     if (activeTabId !== row.tab.id) switchTab(row.tab.id)
-    const cam = row.tab.camera
+    // an agent on another layer: switch there first, then frame it in that view
+    revealLayerOf(row.agent.id)
+    const cam = selectActive(useStore.getState()).camera
     const cx = row.agent.x + row.agent.w / 2
     const cy = row.agent.y + row.agent.h / 2
     setCamera({
