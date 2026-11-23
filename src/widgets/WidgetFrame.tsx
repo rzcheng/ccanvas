@@ -398,7 +398,15 @@ export function WidgetFrame({
           </span>
         )}
         {el.kind === 'agent' && <AgentMeter id={el.id} />}
-        {el.kind === 'agent' && <ContextMeter el={el} />}
+        {el.mirrorOf === 'desktop' && (
+          <span
+            className="dsk-badge"
+            title="Read-only mirror of a Claude desktop-app session. Right-click to fork it into a terminal."
+          >
+            Desktop
+          </span>
+        )}
+        {(el.kind === 'agent' || el.mirrorOf === 'desktop') && <ContextMeter el={el} />}
         <span className="widget__bar-spacer" />
         <div className="widget__actions">
           {el.kind === 'agent' && (
@@ -694,6 +702,8 @@ function ContextMeter({ el }: { el: WidgetElement }) {
   const ctx = useAgentContext(el.cwd, el.sessionId, el.model)
   if (!ctx) return null
   const pct = Math.round(ctx.pct)
+  // a desktop mirror is read-only: it shows the fill but never sends /compact
+  const canCompact = el.kind === 'agent'
   const level = pct >= 85 ? 'hot' : pct >= COMPACT_AT ? 'warm' : 'ok'
   return (
     <span
@@ -704,7 +714,7 @@ function ContextMeter({ el }: { el: WidgetElement }) {
         <span className="ctx__fill" style={{ width: `${ctx.pct}%` }} />
       </span>
       <span className="ctx__pct">{pct}%</span>
-      {pct >= COMPACT_AT && (
+      {canCompact && pct >= COMPACT_AT && (
         <button
           className="ctx__compact"
           title="Summarize the conversation to free up context (/compact)"

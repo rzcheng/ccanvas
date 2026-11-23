@@ -56,6 +56,8 @@ export function mirrorInit(s: DesktopSession): Partial<WidgetElement> {
     cwd: s.cwd,
     sessionId: s.cliSessionId,
     title: s.title,
+    // only read for the context meter's window size (a `[1m]` suffix)
+    ...(s.model ? { model: s.model } : {}),
   }
 }
 
