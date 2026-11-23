@@ -4,8 +4,10 @@
 // to a Claude Code session id — we NEVER spawn `claude --resume` on that id, as
 // two writers would split the JSONL. "Fork into terminal" uses --fork-session.
 
+import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { isTauri } from './backend'
+import { isTauri, openExternal } from './backend'
+import { watchTranscriptSummary, type TranscriptSummary } from './transcript'
 import { useStore, selectActive } from '../store/workspace'
 import { viewCenter } from './view'
 import { screenToWorld } from './geometry'
@@ -113,4 +115,62 @@ export function forkIntoTerminal(mirror: WidgetElement): boolean {
     startCmd: cmd,
   })
   return true
+}
+
+// ---------- what a mirrored session is waiting on ----------
+
+/** Deep link that opens one session in the Claude desktop app, where it can be
+ *  answered, approved or replied to. The app looks the id up among its
+ *  unarchived sessions. */
+export function claudeAppUrl(desktopId: string | undefined): string | null {
+  if (!desktopId || !/^local_[A-Za-z0-9-]+$/.test(desktopId)) return null
+  return `claude://code/continue?session=${desktopId}`
+}
+
+/** Bring the mirrored session up in the Claude desktop app. */
+export function openInClaude(mirror: WidgetElement): boolean {
+  const url = claudeAppUrl(mirror.desktopId)
+  if (!url) return false
+  void openExternal(url)
+  return true
+}
+
+/** A tool call with no result for this long is flagged: it's waiting for
+ *  approval or still running. The transcript can't tell those apart. */
+export const STALL_MS = 10_000
+
+export type MirrorWaiting =
+  /** Claude asked the user something (AskUserQuestion, plan approval) */
+  | { kind: 'ask'; question: string; options: string[] }
+  /** a tool call has had no result for a while: a permission prompt, or slow */
+  | { kind: 'stalled'; tool: string; sinceMs: number }
+
+export function mirrorWaiting(s: TranscriptSummary | null, now = Date.now()): MirrorWaiting | null {
+  const p = s?.pending
+  if (!p) return null
+  if (p.question) return { kind: 'ask', question: p.question, options: p.options }
+  const since = s.modified ?? now
+  return now - since >= STALL_MS ? { kind: 'stalled', tool: p.tool, sinceMs: now - since } : null
+}
+
+/** What a mirror's session is waiting on, re-checked every few seconds while a
+ *  tool call is open (the transcript stays quiet while it waits). */
+export function useMirrorWaiting(el: WidgetElement): MirrorWaiting | null {
+  const [summary, setSummary] = useState<TranscriptSummary | null>(null)
+  const [now, setNow] = useState(Date.now())
+  useEffect(
+    () =>
+      watchTranscriptSummary(el.cwd, el.sessionId, (s) => {
+        setSummary(s)
+        setNow(Date.now())
+      }),
+    [el.cwd, el.sessionId],
+  )
+  const open = !!summary?.pending
+  useEffect(() => {
+    if (!open) return
+    const t = setInterval(() => setNow(Date.now()), 5000)
+    return () => clearInterval(t)
+  }, [open])
+  return mirrorWaiting(summary, now)
 }

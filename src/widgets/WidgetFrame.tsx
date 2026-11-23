@@ -17,6 +17,7 @@ import {
   IconLock,
   IconTag,
   IconSettings,
+  IconExternal,
   IconPr,
   IconRun,
   IconIssue,
@@ -53,6 +54,8 @@ import { TranscriptBody } from './TranscriptBody'
 import { VideoBody } from './VideoBody'
 import { MediaInfoBody } from './MediaInfoBody'
 import { ClaudeBody } from './ClaudeBody'
+import { MirrorAsk, MirrorWaitChip } from './MirrorStatus'
+import { openInClaude } from '../lib/desktopSessions'
 import { WidgetErrorBoundary } from '../ui/WidgetErrorBoundary'
 
 const KIND_ICON: Record<WidgetKind, (p: { className?: string; size?: number }) => JSX.Element> = {
@@ -404,14 +407,25 @@ export const WidgetFrame = memo(function WidgetFrame({
         {el.mirrorOf === 'desktop' && (
           <span
             className="dsk-badge"
-            title="Read-only mirror of a Claude desktop-app session. Right-click to fork it into a terminal."
+            title="Read-only mirror of a Claude desktop-app session. Open it in Claude to reply, or right-click to fork it into a terminal."
           >
             Desktop
           </span>
         )}
+        {el.mirrorOf === 'desktop' && <MirrorWaitChip el={el} />}
         {(el.kind === 'agent' || el.mirrorOf === 'desktop') && <ContextMeter el={el} />}
         <span className="widget__bar-spacer" />
         <div className="widget__actions">
+          {el.mirrorOf === 'desktop' && el.desktopId && (
+            <button
+              className="widget__btn"
+              title="Open in the Claude app (reply, answer, approve)"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => openInClaude(el)}
+            >
+              <IconExternal />
+            </button>
+          )}
           {el.kind === 'agent' && (
             <button
               className="widget__btn"
@@ -517,6 +531,8 @@ export const WidgetFrame = memo(function WidgetFrame({
           </div>
         )}
       </div>
+
+      {el.mirrorOf === 'desktop' && <MirrorAsk el={el} />}
 
       {!el.locked && (
         <div

@@ -233,6 +233,14 @@ opens a terminal in the session's folder running
 session id. Mirrors save with the workspace; if a session's transcript is gone
 when you reopen, the mirror says so.
 
+To reply, answer a question or approve a tool, use the arrow button in the
+mirror's title bar (or right-click → **Open in Claude app**). It opens that
+exact chat in the desktop app. When Claude asks you something, the mirror and
+its roster row show **Needs you**, and the question and its options appear
+under the transcript. When a tool call has had no result for 10 seconds, a
+**Bash?**-style chip appears: it is waiting for your approval or still
+running, and the transcript can't tell which.
+
 This reads the desktop app's internal, undocumented session files
 (`~/Library/Application Support/Claude/claude-code-sessions/`). It works only
 in the macOS desktop build, and a change to that format would break discovery

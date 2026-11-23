@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { isDesktopMirror, forkIntoTerminal } from '../lib/desktopSessions'
+import { isDesktopMirror, forkIntoTerminal, openInClaude } from '../lib/desktopSessions'
 import { useStore, selectActive, withGroupSiblings } from '../store/workspace'
 import type {
   ArrowElement,
@@ -370,6 +370,8 @@ export function Canvas() {
     // itself: the desktop app is still writing that transcript.
     if (lone?.type === 'widget' && isDesktopMirror(lone)) {
       const mirror = lone
+      if (mirror.desktopId)
+        items.push({ label: 'Open in Claude app', onClick: () => void openInClaude(mirror) })
       items.push({
         label: 'Fork into terminal',
         onClick: () => void forkIntoTerminal(mirror),

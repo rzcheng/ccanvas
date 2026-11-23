@@ -881,6 +881,79 @@
   flex-shrink: 0;
 }
 
+/* what a mirror's session is waiting on; a click opens it in the Claude app */
+.dsk-wait {
+  font: inherit;
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 6px;
+  border-radius: 7px;
+  flex-shrink: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.dsk-wait--ask {
+  color: #1a1408;
+  background: var(--led-waiting);
+}
+.dsk-wait--stalled {
+  color: var(--led-waiting);
+  border-color: var(--led-waiting);
+  background: transparent;
+}
+.dsk-wait:hover {
+  filter: brightness(1.12);
+}
+
+/* the question a mirror's session is asking, under its transcript (read-only) */
+.dsk-ask {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--led-waiting);
+  background: var(--panel);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  cursor: default;
+}
+.dsk-ask__q {
+  color: var(--ink);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.dsk-ask__opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.dsk-ask__opt {
+  font-size: 11px;
+  color: var(--ink-dim);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.dsk-ask__go {
+  align-self: flex-start;
+  font: inherit;
+  font-size: 11.5px;
+  padding: 3px 10px;
+  border-radius: 5px;
+  border: 0;
+  cursor: pointer;
+  color: #1a1408;
+  background: var(--led-waiting);
+}
+.dsk-ask__go:hover {
+  filter: brightness(1.1);
+}
+
 /* ---------- transcript messages as markdown ---------- */
 /* Prose in the sans face at a readable size (it shrinks with the canvas
    zoom); code stays monospace. Mirrors the note widget's markdown styles. */

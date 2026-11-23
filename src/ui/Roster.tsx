@@ -4,7 +4,8 @@ import { useStore } from '../store/workspace'
 import { useAgents, useDisplayStatus, sendPrompt } from '../lib/agents'
 import { watchTranscriptSummary, type TranscriptSummary } from '../lib/transcript'
 import { useAgentContext } from '../lib/context'
-import { isDesktopMirror, isRunningNow } from '../lib/desktopSessions'
+import { isDesktopMirror, isRunningNow, mirrorWaiting, openInClaude } from '../lib/desktopSessions'
+import { waitingTitle } from '../widgets/MirrorStatus'
 import type { WidgetElement, Workspace } from '../lib/types'
 import { IconClose, IconBroadcast } from './icons'
 import '../styles/agent-tools.css'
@@ -37,18 +38,52 @@ function MirrorRow({ row, onFocus }: { row: Row; onFocus: () => void }) {
     [el.cwd, el.sessionId],
   )
   const ctx = useAgentContext(el.cwd, el.sessionId, el.model)
-  const st = !summary ? 'off' : isRunningNow(summary.modified, now) ? 'working' : 'idle'
-  const last = firstLine(summary?.lastReply)
+  // re-check while a tool call is open: the transcript is quiet while it waits
+  const open = !!summary?.pending
+  useEffect(() => {
+    if (!open) return
+    const t = setInterval(() => setNow(Date.now()), 5000)
+    return () => clearInterval(t)
+  }, [open])
+  const waiting = mirrorWaiting(summary, now)
+  const st = !summary
+    ? 'off'
+    : waiting
+      ? 'waiting'
+      : isRunningNow(summary.modified, now)
+        ? 'working'
+        : 'idle'
+  const last = waiting?.kind === 'ask' ? waiting.question : firstLine(summary?.lastReply)
   return (
     <div className="roster__row" onClick={onFocus}>
       <span
         className={`agent-dot agent-dot--${st}`}
-        title={st === 'working' ? 'running now' : st === 'idle' ? 'idle' : 'no transcript'}
+        title={
+          waiting
+            ? waitingTitle(waiting)
+            : st === 'working'
+              ? 'running now'
+              : st === 'idle'
+                ? 'idle'
+                : 'no transcript'
+        }
       />
       <div className="roster__main">
         <div className="roster__top">
           <span className="roster__name">{el.title}</span>
           <span className="dsk-badge">Desktop</span>
+          {waiting && (
+            <button
+              className={`dsk-wait dsk-wait--${waiting.kind}`}
+              title={waitingTitle(waiting)}
+              onClick={(e) => {
+                e.stopPropagation()
+                openInClaude(el)
+              }}
+            >
+              {waiting.kind === 'ask' ? 'Needs you' : `${waiting.tool}?`}
+            </button>
+          )}
           {tab.id !== activeTabId && <span className="roster__tab">{tab.name}</span>}
           {ctx && (
             <span className="roster__meter" title="context window fill">
