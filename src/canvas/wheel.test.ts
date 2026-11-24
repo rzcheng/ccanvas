@@ -114,15 +114,18 @@ describe('decide', () => {
   it('holds a zoom-surface gesture until its direction is known', () => {
     expect(decide(g('zoom', null), 1, 2, false)).toEqual({ do: 'hold' })
   })
+  it('pans a sideways start every way the fingers go, not just sideways', () => {
+    expect(decide(g('zoom', 'x', true), 2, -25, false)).toEqual({ do: 'pan', dx: 2, dy: -25 })
+  })
   it('pans sideways on a zoom surface unless something there scrolls sideways', () => {
-    expect(decide(g('zoom', 'x', true), 20, 3, false)).toEqual({ do: 'pan', dx: 20, dy: 0 })
+    expect(decide(g('zoom', 'x', true), 20, 3, false)).toEqual({ do: 'pan', dx: 20, dy: 3 })
     expect(decide(g('zoom', 'x', false), 20, 3, false)).toEqual({ do: 'native' })
   })
   it('leaves scrolling content alone, except a sideways swipe it cannot follow', () => {
     expect(decide(g('content', 'y'), 0, 40, false)).toEqual({ do: 'native' })
     expect(decide(g('content', null), 0, 1, false)).toEqual({ do: 'native' })
     expect(decide(g('content', 'x', false), 30, 0, false)).toEqual({ do: 'native' })
-    expect(decide(g('content', 'x', true), 30, 0, false)).toEqual({ do: 'pan', dx: 30, dy: 0 })
+    expect(decide(g('content', 'x', true), 30, 12, false)).toEqual({ do: 'pan', dx: 30, dy: 12 })
   })
   it('zooms the canvas on a pinch everywhere but outside the app regions', () => {
     for (const r of ['canvas', 'zoom', 'content'] as const)

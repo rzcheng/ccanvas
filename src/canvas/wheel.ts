@@ -184,9 +184,10 @@ export function decide(g: Gesture, dx: number, dy: number, pinch: boolean): Whee
       if (g.axis === null) return { do: 'hold' }
       if (g.axis === 'y') return { do: 'zoom', dy: dy * SWIPE_GAIN }
       if (g.axis === 'xy') return { do: 'pan', dx, dy }
-      return g.sideToCanvas ? { do: 'pan', dx, dy: 0 } : { do: 'native' }
+      // a pan follows the fingers every way, however it started
+      return g.sideToCanvas ? { do: 'pan', dx, dy } : { do: 'native' }
     case 'content':
-      return g.axis === 'x' && g.sideToCanvas ? { do: 'pan', dx, dy: 0 } : { do: 'native' }
+      return g.axis === 'x' && g.sideToCanvas ? { do: 'pan', dx, dy } : { do: 'native' }
   }
 }
 
