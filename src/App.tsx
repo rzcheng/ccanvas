@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { isTauri } from './lib/backend'
 import { useStore, selectActive } from './store/workspace'
+import { stackOfId } from './lib/stacks'
 import { zoomAt, screenToWorld } from './lib/geometry'
 import { TopBar } from './ui/TopBar'
 import { TermNumbers } from './ui/TermNumbers'
@@ -99,6 +100,18 @@ export default function App() {
         e.stopPropagation()
         useStore.getState().setLayerOverview(true)
         return
+      }
+      // ⌃⇥ / ⌃⇧⇥ step through the stack of the widget you're in (or have
+      // selected), in place. A terminal running emacs keeps the key.
+      if (e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Tab' && !inEmacs(e.target)) {
+        const st = useStore.getState()
+        const id = st.activeWidgetId ?? (st.selection.length === 1 ? st.selection[0] : null)
+        if (id && stackOfId(selectActive(st).elements, id)) {
+          e.preventDefault()
+          e.stopPropagation()
+          st.cycleStack(id, e.shiftKey ? -1 : 1)
+          return
+        }
       }
       if (!(e.metaKey || (e.ctrlKey && !IS_MAC))) return
       if (e.altKey) return
@@ -346,6 +359,27 @@ export default function App() {
         e.preventDefault()
         store.deleteSelection()
         return
+      }
+      // stacks: S stacks the selection; with a stacked widget selected,
+      // [ / ] switch the front and U unstacks everything
+      if (key === 's' && !e.altKey && store.selection.length >= 2) {
+        e.preventDefault()
+        store.stackSelection()
+        return
+      }
+      if (store.selection.length === 1 && !e.altKey) {
+        const stk = stackOfId(selectActive(store).elements, store.selection[0])
+        if (stk && (e.key === '[' || e.key === ']')) {
+          e.preventDefault()
+          store.cycleStack(store.selection[0], e.key === ']' ? 1 : -1)
+          return
+        }
+        if (stk && key === 'u') {
+          e.preventDefault()
+          store.beginHistory()
+          store.unstackAll(stk.id)
+          return
+        }
       }
       if (e.key === 'Escape') {
         if (store.presenting) store.setPresenting(false)

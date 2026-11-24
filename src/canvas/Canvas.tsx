@@ -41,7 +41,6 @@ import {
 import { IconExternal, IconLayers } from '../ui/icons'
 import { ElementView } from './ElementView'
 import { TextElement } from './TextElement'
-import { WidgetFrame } from '../widgets/WidgetFrame'
 import {
   activeLayerElements,
   activeLayerId,
@@ -51,6 +50,18 @@ import {
   layersOf,
   MAX_LAYERS,
 } from '../lib/layers'
+import { WidgetFrame, pullOutOfSpread, type SpreadCard } from '../widgets/WidgetFrame'
+import {
+  STACK_DWELL_MS,
+  isHiddenMember,
+  spreadCols,
+  spreadRects,
+  stacksOf,
+  stackOfId,
+  withStackSiblings,
+  type Stack,
+} from '../lib/stacks'
+import { IconStack } from '../ui/icons'
 
 type ScreenRect = { x: number; y: number; w: number; h: number }
 type Corner = 'nw' | 'ne' | 'sw' | 'se'
@@ -186,6 +197,10 @@ export function Canvas() {
   // mounted). Not while it animates in: hiding every widget in the frame the
   // tilt starts made that frame slow, and the overview's backdrop covers it.
   const overview = useStore((s) => s.layerOverview === 'open')
+  const spread = useStore((s) => s.spread)
+  const stackDrop = useStore((s) => s.stackDrop)
+  // drag-to-stack: the pending "hold on the pad" timer
+  const dwellRef = useRef<{ timer: number; targetId: string } | null>(null)
 
   const [draft, setDraft] = useState<CanvasElement | null>(null)
   const [marquee, setMarquee] = useState<ScreenRect | null>(null)
@@ -245,6 +260,7 @@ export function Canvas() {
   const els = activeLayerElements(ws)
   const layered = hasLayers(ws)
   const curLayer = activeLayerId(ws)
+  const stacks = stacksOf(ws.elements)
 
   const getPt = (e: { clientX: number; clientY: number }): Point => {
     const r = rootRef.current!.getBoundingClientRect()
@@ -263,8 +279,17 @@ export function Canvas() {
         t.closest('.xterm') != null
       if (typing) return
       // a focused widget wants the space for itself; the overview owns it while up
-      if (useStore.getState().activeWidgetId || useStore.getState().layerOverview) return
+      const st0 = useStore.getState()
+      if (st0.activeWidgetId || st0.spread || st0.layerOverview) return
       e.preventDefault()
+      // a selected stack opens its spread instead
+      if (st0.selection.length === 1) {
+        const stk = stackOfId(selectActive(st0).elements, st0.selection[0])
+        if (stk) {
+          st0.openSpread(stk.id)
+          return
+        }
+      }
       const r = rootRef.current?.getBoundingClientRect()
       const fallback = r ? { x: r.width / 2, y: r.height / 2 } : { x: 0, y: 0 }
       setInsertAt(mouseRef.current ?? fallback)
@@ -273,11 +298,47 @@ export function Canvas() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // ---- spread view: keys (capture, so nothing else sees them while it's open) ----
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const st = useStore.getState()
+      const sp = st.spread
+      if (!sp || sp.closing || e.metaKey || e.ctrlKey) return
+      const stk = stacksOf(selectActive(st).elements).get(sp.stackId)
+      if (!stk) return
+      const n = stk.members.length
+      const cols = spreadCols(n, rootRef.current?.clientWidth ?? window.innerWidth)
+      const move = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: cols, ArrowUp: -cols }[e.key]
+      if (/^[1-9]$/.test(e.key) && Number(e.key) <= n) st.closeSpread(stk.members[Number(e.key) - 1].id)
+      else if (move) st.setSpreadHi(clamp(sp.hi + move, 0, n - 1))
+      else if (e.key === 'Enter' || e.key === ' ') st.closeSpread(stk.members[sp.hi]?.id ?? null)
+      else if (e.key === 'Escape') st.closeSpread(null)
+      else if (e.key === 'x' || e.key === 'X') pullOutOfSpread(stk.members[sp.hi].id)
+      else return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
+
+  // a spread whose stack vanished (undo, delete) just closes
+  const spreadGone = !!spread && !stacksOf(ws.elements).has(spread.stackId)
+  useEffect(() => {
+    if (spreadGone) useStore.setState({ spread: null })
+  }, [spreadGone])
+
   // ---- native wheel (non-passive): smooth zoom + pan ----
   useEffect(() => {
     const node = rootRef.current
     if (!node) return
     const onWheel = (e: WheelEvent) => {
+      // the spread view holds the camera still
+      if (useStore.getState().spread) {
+        e.preventDefault()
+        e.stopPropagation()
+        return
+      }
       const zoomGesture = e.ctrlKey || e.metaKey
       const widgetNode = (e.target as HTMLElement | null)?.closest?.('.widget') as HTMLElement | null
       const overWidget = !!widgetNode
@@ -328,6 +389,7 @@ export function Canvas() {
     const tol = 6 / cam.zoom
     let best: CanvasElement | null = null
     for (const el of els) {
+      if (isHiddenMember(el, stacks)) continue
       const hit =
         el.type === 'widget' ||
         el.type === 'frame' ||
@@ -399,6 +461,31 @@ export function Canvas() {
         label: 'Fork into terminal',
         onClick: () => void forkIntoTerminal(mirror),
       })
+      items.push({ separator: true })
+    }
+    // stacks
+    const selWidgets = selEls.filter((e): e is WidgetElement => e.type === 'widget')
+    const loneStack = lone?.type === 'widget' ? stacks.get((lone as WidgetElement).stackId ?? '') : undefined
+    if (loneStack) {
+      items.push({ label: 'Spread stack', hint: 'Space', onClick: () => s().openSpread(loneStack.id) })
+      items.push({
+        label: 'Take out of stack',
+        onClick: () => {
+          s().beginHistory()
+          s().unstackWidget(lone!.id)
+        },
+      })
+      items.push({
+        label: 'Unstack all',
+        hint: 'U',
+        onClick: () => {
+          s().beginHistory()
+          s().unstackAll(loneStack.id)
+        },
+      })
+      items.push({ separator: true })
+    } else if (selWidgets.length >= 2 && !anyLocked) {
+      items.push({ label: 'Stack', hint: 'S', onClick: () => s().stackSelection() })
       items.push({ separator: true })
     }
     items.push({ label: 'Duplicate', hint: '⌘D', onClick: () => s().duplicateSelection() })
@@ -512,7 +599,7 @@ export function Canvas() {
     const margin = 12 / cam.zoom
     let target: CanvasElement | null = null
     for (const el of els) {
-      if (el.id === excludeId || !BINDABLE.has(el.type)) continue
+      if (el.id === excludeId || !BINDABLE.has(el.type) || isHiddenMember(el, stacks)) continue
       const b = elementBounds(el)
       const exp = { x: b.x - margin, y: b.y - margin, w: b.w + margin * 2, h: b.h + margin * 2 }
       if (pointInRect(world, exp) && (!target || el.z > target.z)) target = el
@@ -802,8 +889,9 @@ export function Canvas() {
         }
         let dx = world.x - drag.last.x
         let dy = world.y - drag.last.y
-        // alignment-guide snapping against non-moving elements
-        const movingIds = new Set(useStore.getState().selection)
+        // alignment-guide snapping against non-moving elements (a stack
+        // moves as one, so its hidden members aren't snap targets)
+        const movingIds = withStackSiblings(ws.elements, useStore.getState().selection)
         const moving = els.filter((el) => movingIds.has(el.id))
         if (moving.length) {
           const mb = unionBounds(moving)
@@ -818,6 +906,7 @@ export function Canvas() {
         }
         moveSelection(dx, dy)
         drag.last = { x: drag.last.x + dx, y: drag.last.y + dy }
+        updateStackDrop(world, e.altKey)
         break
       }
       case 'resizeEl': {
@@ -917,8 +1006,77 @@ export function Canvas() {
     }
   }
 
+  // ---- drag-to-stack ----
+  // Dragging one widget (or one stack) over another shows a pad in the
+  // target's middle. Resting on it for STACK_DWELL_MS (or holding ⌥) arms it;
+  // releasing then stacks. Plain overlap stays plain overlap.
+  const clearDwell = () => {
+    if (dwellRef.current) window.clearTimeout(dwellRef.current.timer)
+    dwellRef.current = null
+  }
+  const clearStackDrop = () => {
+    clearDwell()
+    useStore.getState().setStackDrop(null)
+  }
+  const updateStackDrop = (world: Point, alt: boolean) => {
+    const st = useStore.getState()
+    const els = selectActive(st).elements
+    const moving = withStackSiblings(els, st.selection)
+    const movingEls = els.filter((el) => moving.has(el.id))
+    const units = new Set(movingEls.map((el) => (el.type === 'widget' && el.stackId) || el.id))
+    // only a single widget or a single stack can be dropped into a stack
+    if (!movingEls.length || units.size !== 1 || movingEls.some((el) => el.type !== 'widget' || el.locked))
+      return clearStackDrop()
+    const stks = stacksOf(els)
+    let target: WidgetElement | null = null
+    for (const el of els)
+      if (
+        el.type === 'widget' &&
+        !moving.has(el.id) &&
+        !isHiddenMember(el, stks) &&
+        pointInRect(world, el) &&
+        (!target || el.z > target.z)
+      )
+        target = el
+    if (!target || target.locked) return clearStackDrop()
+    // the visible one first, so it stays in front after stacking
+    const sourceIds = [...movingEls]
+      .sort((a, b) => (isHiddenMember(a, stks) ? 1 : 0) - (isHiddenMember(b, stks) ? 1 : 0))
+      .map((el) => el.id)
+    const onPad = alt || pointInRect(world, stackPadRect(target))
+    const targetId = target.id
+    const armedNow = st.stackDrop?.armed && st.stackDrop.targetId === targetId
+    if (!onPad) {
+      clearDwell()
+      st.setStackDrop({ sourceIds, targetId, onPad: false, armed: false })
+      return
+    }
+    if (armedNow) return
+    if (alt) {
+      clearDwell()
+      st.setStackDrop({ sourceIds, targetId, onPad: true, armed: true })
+      return
+    }
+    if (dwellRef.current?.targetId !== targetId) {
+      clearDwell()
+      dwellRef.current = {
+        targetId,
+        timer: window.setTimeout(() => {
+          const cur = useStore.getState().stackDrop
+          if (cur?.targetId === targetId && cur.onPad) useStore.getState().setStackDrop({ ...cur, armed: true })
+        }, STACK_DWELL_MS),
+      }
+    }
+    st.setStackDrop({ sourceIds, targetId, onPad: true, armed: false })
+  }
+
   const onPointerUp = (e: React.PointerEvent) => {
     const drag = dragRef.current
+    const drop = useStore.getState().stackDrop
+    clearStackDrop()
+    // released on an armed drop pad → stack (the move already took the undo snapshot)
+    if (drag?.kind === 'move' && drop?.armed)
+      useStore.getState().stackWidgets(drop.sourceIds, drop.targetId)
     setPanning(false)
     setSnapGuides(null)
     endFrameDrag()
@@ -1084,6 +1242,32 @@ export function Canvas() {
     .filter((el) => el.type === 'text' || el.type === 'image')
     .sort((a, b) => a.z - b.z)
   const frameEls = els.filter((el): el is FrameElement => el.type === 'frame')
+
+  // ---- stacks: spread view + drop pad ----
+  const viewW = rootRef.current?.clientWidth ?? window.innerWidth
+  const viewH = rootRef.current?.clientHeight ?? window.innerHeight
+  const spreadStack: Stack | undefined = spread ? stacks.get(spread.stackId) : undefined
+  const spreadCards = new Map<string, SpreadCard>()
+  if (spread && spreadStack) {
+    const f = spreadStack.front
+    const rects = spreadRects(spreadStack.members.length, viewW, viewH, f.w / Math.max(1, f.h))
+    spreadStack.members.forEach((m, i) => {
+      const r = rects[i]
+      spreadCards.set(m.id, {
+        tx: (r.x - cam.x) / cam.zoom - m.x,
+        ty: (r.y - cam.y) / cam.zoom - m.y,
+        k: r.w / cam.zoom / m.w,
+        index: i,
+        hi: i === spread.hi,
+        closing: spread.closing,
+        front: m.id === f.id,
+      })
+    })
+  }
+  const dropTarget =
+    stackDrop && byId.get(stackDrop.targetId)?.type === 'widget'
+      ? (byId.get(stackDrop.targetId) as WidgetElement)
+      : null
   const draftFrame = draft?.type === 'frame' ? draft : null
 
   return (
@@ -1153,6 +1337,7 @@ export function Canvas() {
         // kept in creation order and stacked with z-index (WidgetFrame), not
         // sorted by z: re-sorting would move a clicked widget's DOM node to the
         // end, which resets every scroll position inside it and reloads iframes
+        const tabStacks = isActiveTab ? stacks : stacksOf(tab.elements)
         const tabWidgets = tab.elements.filter((e): e is WidgetElement => e.type === 'widget')
         if (!tabWidgets.length) return null
         const tabLayer = activeLayerId(tab)
@@ -1180,15 +1365,75 @@ export function Canvas() {
                   onStartMove={shown ? onWidgetStartMove : NOOP}
                   visible={shown}
                   tabShown={isActiveTab}
+                  stack={el.stackId ? tabStacks.get(el.stackId) : undefined}
+                  spreadCard={shown ? spreadCards.get(el.id) : undefined}
                 />
               )
             })}
+            {isActiveTab && spreadStack && (
+              <div
+                className={`stack-scrim${spread?.closing ? ' stack-scrim--closing' : ''}`}
+                style={{
+                  left: -cam.x / cam.zoom,
+                  top: -cam.y / cam.zoom,
+                  width: viewW / cam.zoom,
+                  height: viewH / cam.zoom,
+                }}
+                onPointerDown={(e) => {
+                  e.stopPropagation()
+                  useStore.getState().closeSpread(null)
+                }}
+                onWheel={(e) => e.stopPropagation()}
+              />
+            )}
           </div>
         )
       })}
 
       {/* selection + marquee + handles + snap guides (screen space) */}
       <div className="overlay">
+        {dropTarget && (() => {
+          const t = screenRectOf(dropTarget)
+          const p = screenRectOf(stackPadRect(dropTarget))
+          const inStack = !!stacks.get(dropTarget.stackId ?? '')
+          return (
+            <>
+              <div className="stack-drop-target" style={{ left: t.x - 4, top: t.y - 4, width: t.w + 8, height: t.h + 8 }} />
+              <div
+                className={`stack-pad${stackDrop!.onPad ? ' stack-pad--dwell' : ''}${stackDrop!.armed ? ' stack-pad--armed' : ''}`}
+                style={{ left: p.x, top: p.y, width: p.w, height: p.h, '--dwell': `${STACK_DWELL_MS}ms` } as React.CSSProperties}
+              >
+                <span className="stack-pad__icon">
+                  <IconStack />
+                </span>
+                <span className="stack-pad__label">
+                  {stackDrop!.armed
+                    ? inStack ? 'Release to add' : 'Release to stack'
+                    : inStack ? 'Hold to add' : 'Hold to stack'}
+                </span>
+                <span className="stack-pad__fill" />
+              </div>
+            </>
+          )
+        })()}
+        {spreadStack && (
+          <div className={`spread-head${spread?.closing ? ' spread-head--closing' : ''}`}>
+            <span className="spread-head__name">
+              <span className="spread-head__icon">
+                <IconStack />
+              </span>
+              {spreadStack.title}
+              <small>{spreadStack.members.length} widgets</small>
+            </span>
+            <span className="spread-head__keys">
+              <span><kbd>1</kbd>–<kbd>{Math.min(9, spreadStack.members.length)}</kbd> focus</span>
+              <span><kbd>←</kbd><kbd>→</kbd> move</span>
+              <span><kbd>↵</kbd> open</span>
+              <span><kbd>X</kbd> pull out</span>
+              <span><kbd>esc</kbd> close</span>
+            </span>
+          </div>
+        )}
         {guides?.vx != null && (
           <div className="snap-guide snap-guide--v" style={{ left: worldToScreen({ x: guides.vx, y: 0 }, cam).x }} />
         )}
@@ -1302,6 +1547,15 @@ export function Canvas() {
 }
 
 // union bounds of a set of elements (avoids importing boundsOfMany here)
+/** The drop pad in the middle of a widget's body (world units). */
+function stackPadRect(w: { x: number; y: number; w: number; h: number }): Rect {
+  const bar = 30
+  const bodyH = Math.max(40, w.h - bar)
+  const pw = Math.min(w.w * 0.56, 260)
+  const ph = Math.min(bodyH * 0.5, 130)
+  return { x: w.x + (w.w - pw) / 2, y: w.y + bar + (bodyH - ph) / 2, w: pw, h: ph }
+}
+
 function unionBounds(els: CanvasElement[]): Rect {
   let minX = Infinity
   let minY = Infinity

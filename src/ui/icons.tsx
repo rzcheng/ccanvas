@@ -307,6 +307,33 @@ export const IconLayers = (p: P) => (
   </S>
 )
 
+/** a stack of widgets: one card in front, one peeking behind */
+export const IconStack = (p: P) => (
+  <S {...p}>
+    <rect x="3.5" y="8.5" width="13" height="11" rx="2" />
+    <path d="M7.5 5h10a2 2 0 012 2v9" />
+  </S>
+)
+
+/** spread a stack out into a grid */
+export const IconSpread = (p: P) => (
+  <S {...p}>
+    <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+    <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
+    <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
+    <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
+  </S>
+)
+
+/** take something out of its container */
+export const IconPullOut = (p: P) => (
+  <S {...p}>
+    <path d="M14 4h6v6" />
+    <path d="M20 4l-8.5 8.5" />
+    <path d="M17 14v4.5a1.5 1.5 0 01-1.5 1.5h-10A1.5 1.5 0 014 18.5v-10A1.5 1.5 0 015.5 7H10" />
+  </S>
+)
+
 export const IconSendBack = (p: P) => (
   <S {...p}>
     <rect x="4" y="4" width="11" height="11" rx="1.5" />

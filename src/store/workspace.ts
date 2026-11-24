@@ -56,6 +56,13 @@ import {
   normalizeLayers,
 } from '../lib/layers'
 import { markOpenRequest } from '../lib/layersPerf'
+import {
+  normalizeStacks,
+  stacksOf,
+  stackOfId,
+  stripStack,
+  withStackSiblings,
+} from '../lib/stacks'
 
 let zCounter = 1
 const nextZ = () => zCounter++
@@ -264,6 +271,27 @@ export type AgentWizardCtx = {
   agentPrompt?: string
 }
 
+/** The stack spread view: a stack's members laid out over the dimmed canvas. */
+export type SpreadState = {
+  stackId: string
+  /** highlighted card (index into the stack's members) */
+  hi: number
+  /** true while the cards fly back into the stack before the view closes */
+  closing: boolean
+}
+
+/** Drag-to-stack feedback while a widget (or stack) is dragged over another. */
+export type StackDrop = {
+  /** widgets being dragged (a dragged stack contributes every member) */
+  sourceIds: string[]
+  /** the widget under the pointer (the front, if it is a stack) */
+  targetId: string
+  /** the pointer is on the target's drop pad (or ⌥ is held) */
+  onPad: boolean
+  /** the pointer has rested on the pad long enough — releasing stacks */
+  armed: boolean
+}
+
 /** Side panels that share the right-hand dock (only one open at a time). */
 export type SidePanel = 'roster' | 'desktop' | 'prompts' | 'checkpoints' | 'memory' | 'settings'
 
@@ -311,6 +339,10 @@ export type Store = {
    *  and the live canvas is hidden (still mounted); 'closing': the live
    *  canvas shows again under the overview's last fade. Not saved. */
   layerOverview: false | 'entering' | 'open' | 'closing'
+  /** the open stack spread view, if any */
+  spread: SpreadState | null
+  /** drag-to-stack drop target while dragging */
+  stackDrop: StackDrop | null
 
   // ----- derived -----
   active: () => Workspace | null
@@ -457,6 +489,30 @@ export type Store = {
    *  the bottom one). Never closes anything. The base layer stays. Returns
    *  the id of the layer the widgets went to. */
   removeLayer: (id: string) => string | null
+  // ----- stacks -----
+  /** apply fn to a copy of each listed element in one update */
+  mutateElements: (ids: string[], fn: (el: CanvasElement) => void) => void
+  /** stack `ids` (and the stacks they belong to) onto `targetId`'s spot.
+   *  `front` picks the visible member (default: the first of ids). Callers
+   *  take the history snapshot. Returns the stack id. */
+  stackWidgets: (ids: string[], targetId: string, front?: string) => string | null
+  /** stack the current selection onto its first widget */
+  stackSelection: () => void
+  /** show this member in front of its stack */
+  setStackFront: (id: string) => void
+  /** bring the next/previous member of this widget's stack to the front */
+  cycleStack: (id: string, dir: 1 | -1) => void
+  /** take one widget out of its stack, at `at` (world, top-left) or beside it */
+  unstackWidget: (id: string, at?: { x: number; y: number }) => void
+  /** dissolve a stack, laying its members out in a row */
+  unstackAll: (stackId: string) => void
+  reorderStack: (stackId: string, ids: string[]) => void
+  renameStack: (stackId: string, title: string) => void
+  openSpread: (stackId: string) => void
+  /** close the spread, optionally bringing `focusId` to the front and into focus */
+  closeSpread: (focusId?: string | null) => void
+  setSpreadHi: (i: number) => void
+  setStackDrop: (d: StackDrop | null) => void
 
   // ----- history -----
   beginHistory: () => void
@@ -464,11 +520,38 @@ export type Store = {
   redo: () => void
 }
 
+/** If `id` is a stacked widget hidden behind another, bring it to the front. */
+function frontIfHidden(get: () => Store, _set: unknown, id: string) {
+  const ws = get().active()
+  if (!ws) return
+  const el = ws.elements.find((e) => e.id === id)
+  if (!el || el.type !== 'widget' || !el.stackId || el.stackFront) return
+  const st = stackOfId(ws.elements, id)
+  if (st && st.front.id !== id) get().setStackFront(id)
+}
+
+/** Set by view.ts: focuses a widget once the spread has closed (avoids an
+ *  import cycle between the store and the view helpers). */
+let spreadFocus: ((id: string) => void) | null = null
+export function setSpreadFocusHandler(fn: (id: string) => void) {
+  spreadFocus = fn
+}
+
 function patchActive(
   state: Store,
   fn: (ws: Workspace) => Workspace,
 ): Partial<Store> {
-  const tabs = state.tabs.map((t) => (t.id === state.activeTabId ? fn(t) : t))
+  const tabs = state.tabs.map((t) => {
+    if (t.id !== state.activeTabId) return t
+    const next = fn(t)
+    // whatever moved or resized a stack member (align, tidy, arrange…), every
+    // member follows the front's box; returns the same array when in sync
+    if (next.elements !== t.elements) {
+      const fixed = normalizeStacks(next.elements)
+      if (fixed !== next.elements) return { ...next, elements: fixed }
+    }
+    return next
+  })
   return { tabs }
 }
 
@@ -497,6 +580,8 @@ export const useStore = create<Store>((set, get) => ({
   presenting: false,
   flowsEnabled: false, // connector flows were removed from the UI
   layerOverview: false,
+  spread: null,
+  stackDrop: null,
 
   active: () => {
     const s = get()
@@ -870,7 +955,8 @@ export const useStore = create<Store>((set, get) => ({
     set((s) =>
       patchActive(s, (w) => ({
         ...w,
-        elements: w.elements.filter((e) => !set_.has(e.id)),
+        // a stack that lost members picks a new front, or dissolves at one
+        elements: normalizeStacks(w.elements.filter((e) => !set_.has(e.id))),
         dirty: true,
       })),
     )
@@ -994,7 +1080,12 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   // ---------- selection ----------
-  setSelection: (ids) => set({ selection: ids }),
+  setSelection: (ids) => {
+    // picking one stacked widget (a tab click, the roster, search, ⌘1–9…)
+    // brings it to the front of its stack
+    if (ids.length === 1) frontIfHidden(get, set, ids[0])
+    set({ selection: ids })
+  },
   selectWithGroups: (ids) => {
     const ws = get().active()
     set({ selection: ws ? withGroupSiblings(ws.elements, ids) : ids })
@@ -1016,9 +1107,12 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   moveSelection: (dx, dy) => {
-    const base = new Set(get().selection)
+    let base = new Set(get().selection)
     if (frameDragChildren) for (const id of frameDragChildren) base.add(id)
     if (!base.size) return
+    // a stack moves as one
+    const ws0 = get().active()
+    if (ws0) base = withStackSiblings(ws0.elements, base)
     set((s) =>
       patchActive(s, (ws) => ({
         ...ws,
@@ -1101,13 +1195,15 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   // A widget on another layer of this tab is brought into view first, so a
-  // jump (roster, search, attention) never focuses something you can't see.
+  // jump (roster, search, attention) never focuses something you can't see;
+  // a widget stacked behind another is brought to the front of its stack.
   setActiveWidget: (id) => {
     const ws = get().active()
     if (id && ws && hasLayers(ws)) {
       const el = ws.elements.find((e) => e.id === id)
       if (el && layerOf(el) !== activeLayerId(ws)) get().setActiveLayer(layerOf(el))
     }
+    if (id) frontIfHidden(get, set, id)
     set({ activeWidgetId: id })
   },
   setEditingText: (id) => set({ editingTextId: id }),
@@ -1118,7 +1214,8 @@ export const useStore = create<Store>((set, get) => ({
   copySelection: () => {
     const ws = get().active()
     if (!ws) return
-    const sel = new Set(get().selection)
+    // a stack is copied whole
+    const sel = withStackSiblings(ws.elements, get().selection)
     clipboard = ws.elements.filter((e) => sel.has(e.id)).map((e) => ({ ...e }))
   },
 
@@ -1140,13 +1237,18 @@ export const useStore = create<Store>((set, get) => ({
     // remap ids + group ids so copies are independent
     const idMap = new Map<string, string>()
     const groupMap = new Map<string, string>()
-    const copies = clipboard.map((e) => {
+    const stackMap = new Map<string, string>()
+    let copies = clipboard.map((e) => {
       const ne = translated({ ...e }, dx, dy)
       ne.id = newId()
       idMap.set(e.id, ne.id)
       if (e.groupId) {
         if (!groupMap.has(e.groupId)) groupMap.set(e.groupId, newId())
         ne.groupId = groupMap.get(e.groupId)
+      }
+      if (ne.type === 'widget' && ne.stackId) {
+        if (!stackMap.has(ne.stackId)) stackMap.set(ne.stackId, newId())
+        ne.stackId = stackMap.get(ne.stackId)
       }
       // fresh agent sessions for pasted agents
       if (ne.type === 'widget' && ne.kind === 'agent') {
@@ -1162,6 +1264,8 @@ export const useStore = create<Store>((set, get) => ({
         if (c.to && idMap.has(c.to.id)) c.to = { id: idMap.get(c.to.id)! }
       }
     }
+    // a partial copy of a stack becomes a smaller stack, or plain widgets
+    copies = normalizeStacks(copies)
     get().beginHistory()
     get().addElements(copies)
     set({ selection: copies.map((c) => c.id) })
@@ -1356,7 +1460,8 @@ export const useStore = create<Store>((set, get) => ({
     if (!ws) return
     const isTerm = (e: CanvasElement): e is WidgetElement =>
       e.type === 'widget' && (e.kind === 'terminal' || e.kind === 'agent') && !e.locked
-    const all = ws.elements.filter(isTerm)
+    const stacks = stacksOf(ws.elements)
+    const all = ws.elements.filter(isTerm).filter((e) => !e.stackId || !stacks.has(e.stackId) || stacks.get(e.stackId)!.front.id === e.id)
     const picked = all.filter((e) => get().selection.includes(e.id))
     const terms = picked.length >= 2 ? picked : all
     if (!terms.length) return
@@ -1571,7 +1676,7 @@ export const useStore = create<Store>((set, get) => ({
       markOpenRequest()
       // nothing typed while the stack is up may reach a widget
       blurFocus()
-      set({ layerOverview: 'entering', activeWidgetId: null, editingTextId: null })
+      set({ layerOverview: 'entering', activeWidgetId: null, editingTextId: null, spread: null, stackDrop: null })
     } else set({ layerOverview: open })
   },
 
@@ -1653,7 +1758,15 @@ export const useStore = create<Store>((set, get) => ({
     if (!ws) return
     // the focus-leak rule: whatever happens next, nothing keeps keyboard focus
     blurFocus()
-    set({ selection: [], activeWidgetId: null, editingTextId: null, labelingWidgetId: null })
+    // a stack spread or a pending drag-to-stack belongs to the layer being left
+    set({
+      selection: [],
+      activeWidgetId: null,
+      editingTextId: null,
+      labelingWidgetId: null,
+      spread: null,
+      stackDrop: null,
+    })
     if (!hasLayers(ws) || !findLayer(ws, id)) return
     const cur = activeLayerId(ws)
     if (cur === id && !cam) return
@@ -1677,7 +1790,8 @@ export const useStore = create<Store>((set, get) => ({
   moveToLayer: (ids, layerId) => {
     const ws = get().active()
     if (!ws || !findLayer(ws, layerId) || !ids.length) return
-    const moving = new Set(withGroupSiblings(ws.elements, ids))
+    // a stack moves whole: its members share one spot, so they share a layer
+    const moving = withStackSiblings(ws.elements, withGroupSiblings(ws.elements, ids))
     // label boxes travel with the widget they wrap
     for (const e of ws.elements) if (e.labelFor && moving.has(e.labelFor)) moving.add(e.id)
     // arrows go along when both of their ends do
@@ -1755,6 +1869,262 @@ export const useStore = create<Store>((set, get) => ({
       }),
     )
     return into
+  },
+
+  // ---------- stacks ----------
+  mutateElements: (ids, fn) => {
+    const set_ = new Set(ids)
+    set((s) =>
+      patchActive(s, (ws) => ({
+        ...ws,
+        elements: ws.elements.map((e) => {
+          if (!set_.has(e.id)) return e
+          const copy = { ...e } as CanvasElement
+          fn(copy)
+          return copy
+        }),
+        dirty: true,
+      })),
+    )
+  },
+
+  stackWidgets: (ids, targetId, front) => {
+    const ws = get().active()
+    if (!ws) return null
+    const byId = new Map(ws.elements.map((e) => [e.id, e]))
+    const target = byId.get(targetId)
+    if (!target || target.type !== 'widget' || target.locked) return null
+    const stacks = stacksOf(ws.elements)
+    const targetStack = target.stackId ? stacks.get(target.stackId) : undefined
+    // incoming widgets: the given ids plus every member of a stack they're in,
+    // keeping each dragged stack's tab order
+    const incoming: WidgetElement[] = []
+    const seen = new Set<string>(targetStack ? targetStack.members.map((m) => m.id) : [targetId])
+    let incomingTitle: string | undefined
+    for (const id of ids) {
+      const el = byId.get(id)
+      if (!el || el.type !== 'widget' || el.locked || seen.has(id)) continue
+      const st = el.stackId ? stacks.get(el.stackId) : undefined
+      const group = st ? st.members : [el]
+      if (st && !incomingTitle) incomingTitle = st.title
+      for (const m of group)
+        if (!seen.has(m.id) && !m.locked) {
+          seen.add(m.id)
+          incoming.push(m)
+        }
+    }
+    if (!incoming.length) return null
+    const base: WidgetElement[] = targetStack ? targetStack.members : [target]
+    const all = [...base, ...incoming]
+    const sid = targetStack?.id ?? newId()
+    const title = targetStack?.title ?? incomingTitle ?? target.title
+    // the dragged widget (or the dragged stack's front) shows
+    const firstIn = byId.get(ids[0]) as WidgetElement | undefined
+    const draggedFront =
+      firstIn?.stackId && stacks.get(firstIn.stackId) ? stacks.get(firstIn.stackId)!.front.id : incoming[0].id
+    const frontId = front ?? draggedFront
+    const box = { x: target.x, y: target.y, w: target.w, h: target.h }
+    const update = new Map<string, WidgetElement>()
+    all.forEach((m, i) => {
+      update.set(m.id, {
+        ...m,
+        stackId: sid,
+        stackOrder: i,
+        stackFront: m.id === frontId || undefined,
+        stackTitle: title,
+        stackRestore: m.stackRestore ?? { w: m.w, h: m.h },
+        ...box,
+      })
+    })
+    const z = nextZ()
+    set((s) =>
+      patchActive(s, (w) => ({
+        ...w,
+        dirty: true,
+        elements: normalizeStacks(
+          w.elements.map((e) => {
+            const u = update.get(e.id)
+            return u ? { ...u, z } : e
+          }),
+        ),
+      })),
+    )
+    set({ selection: [frontId], activeWidgetId: null })
+    return sid
+  },
+
+  stackSelection: () => {
+    const ws = get().active()
+    if (!ws) return
+    const sel = get().selection
+    const widgets = sel
+      .map((id) => ws.elements.find((e) => e.id === id))
+      .filter((e): e is WidgetElement => !!e && e.type === 'widget' && !e.locked)
+    if (widgets.length < 2) return
+    const [target, ...rest] = widgets
+    get().beginHistory()
+    get().stackWidgets(
+      rest.map((w) => w.id),
+      target.id,
+      target.stackId ? (stackOfId(ws.elements, target.id)?.front.id ?? target.id) : target.id,
+    )
+  },
+
+  setStackFront: (id) => {
+    const ws = get().active()
+    if (!ws) return
+    const st = stackOfId(ws.elements, id)
+    if (!st || st.front.id === id) return
+    const ids = new Set(st.members.map((m) => m.id))
+    set((s) =>
+      patchActive(s, (w) => ({
+        ...w,
+        dirty: true,
+        elements: w.elements.map((e) =>
+          ids.has(e.id) && e.type === 'widget' ? { ...e, stackFront: e.id === id || undefined } : e,
+        ),
+      })),
+    )
+  },
+
+  cycleStack: (id, dir) => {
+    const ws = get().active()
+    if (!ws) return
+    const st = stackOfId(ws.elements, id)
+    if (!st) return
+    const i = st.members.findIndex((m) => m.id === st.front.id)
+    const next = st.members[(i + dir + st.members.length) % st.members.length]
+    get().setStackFront(next.id)
+    const wasActive = get().activeWidgetId != null
+    set({ selection: [next.id], activeWidgetId: wasActive ? next.id : null })
+  },
+
+  unstackWidget: (id, at) => {
+    const ws = get().active()
+    if (!ws) return
+    const st = stackOfId(ws.elements, id)
+    if (!st) return
+    const el = st.members.find((m) => m.id === id)!
+    const size = el.stackRestore ?? { w: el.w, h: el.h }
+    const pos = at ?? { x: st.front.x + st.front.w + 40, y: st.front.y }
+    const wasFront = st.front.id === id
+    const i = st.members.findIndex((m) => m.id === id)
+    const nextFront = wasFront ? st.members[i > 0 ? i - 1 : 1].id : null
+    const z = nextZ()
+    set((s) =>
+      patchActive(s, (w) => ({
+        ...w,
+        dirty: true,
+        elements: normalizeStacks(
+          w.elements.map((e) => {
+            if (e.id === id && e.type === 'widget') return { ...stripStack(e), ...size, ...pos, z }
+            if (nextFront && e.id === nextFront && e.type === 'widget') return { ...e, stackFront: true }
+            return e
+          }),
+        ),
+      })),
+    )
+  },
+
+  unstackAll: (stackId) => {
+    const ws = get().active()
+    if (!ws) return
+    const st = stacksOf(ws.elements).get(stackId)
+    if (!st) return
+    const placed = new Map<string, { x: number; y: number; w: number; h: number }>()
+    let x = st.front.x
+    for (const m of st.members) {
+      const size = m.stackRestore ?? { w: m.w, h: m.h }
+      placed.set(m.id, { x, y: st.front.y, ...size })
+      x += size.w + 32
+    }
+    set((s) =>
+      patchActive(s, (w) => ({
+        ...w,
+        dirty: true,
+        elements: w.elements.map((e) => {
+          const p = placed.get(e.id)
+          return p && e.type === 'widget' ? { ...stripStack(e), ...p } : e
+        }),
+      })),
+    )
+    set({ selection: st.members.map((m) => m.id) })
+  },
+
+  reorderStack: (stackId, ids) => {
+    const order = new Map(ids.map((id, i) => [id, i]))
+    set((s) =>
+      patchActive(s, (w) => ({
+        ...w,
+        dirty: true,
+        elements: w.elements.map((e) =>
+          e.type === 'widget' && e.stackId === stackId && order.has(e.id)
+            ? { ...e, stackOrder: order.get(e.id) }
+            : e,
+        ),
+      })),
+    )
+  },
+
+  renameStack: (stackId, title) => {
+    const t = title.trim()
+    if (!t) return
+    get().beginHistory()
+    set((s) =>
+      patchActive(s, (w) => ({
+        ...w,
+        dirty: true,
+        elements: w.elements.map((e) =>
+          e.type === 'widget' && e.stackId === stackId ? { ...e, stackTitle: t } : e,
+        ),
+      })),
+    )
+  },
+
+  openSpread: (stackId) => {
+    const ws = get().active()
+    if (!ws) return
+    const st = stacksOf(ws.elements).get(stackId)
+    if (!st) return
+    set({
+      spread: { stackId, hi: st.members.findIndex((m) => m.id === st.front.id), closing: false },
+      activeWidgetId: null,
+      selection: [st.front.id],
+    })
+  },
+
+  closeSpread: (focusId) => {
+    const sp = get().spread
+    if (!sp || sp.closing) return
+    if (focusId) get().setStackFront(focusId)
+    set({ spread: { ...sp, closing: true } })
+    const finish = () => {
+      if (get().spread?.stackId !== sp.stackId) return
+      set({ spread: null })
+      if (focusId) spreadFocus?.(focusId)
+    }
+    const reduce = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    setTimeout(finish, reduce ? 0 : 300)
+  },
+
+  setSpreadHi: (i) => {
+    const sp = get().spread
+    if (sp && sp.hi !== i) set({ spread: { ...sp, hi: i } })
+  },
+
+  setStackDrop: (d) => {
+    const cur = get().stackDrop
+    if (
+      cur === d ||
+      (cur &&
+        d &&
+        cur.targetId === d.targetId &&
+        cur.armed === d.armed &&
+        cur.onPad === d.onPad &&
+        cur.sourceIds.join() === d.sourceIds.join())
+    )
+      return
+    set({ stackDrop: d })
   },
 
   // ---------- history ----------

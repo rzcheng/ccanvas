@@ -2,7 +2,7 @@
 // shortcuts, and the canvas. The canvas fills `.app__main`, so its size is
 // read from the DOM instead of hard-coding the chrome height everywhere.
 
-import { useStore, selectActive } from '../store/workspace'
+import { useStore, selectActive, setSpreadFocusHandler } from '../store/workspace'
 import { clamp } from './geometry'
 import type { CanvasElement, WidgetElement } from './types'
 import { activeLayerElements, activeLayerId, hasLayers, layerOf } from './layers'
@@ -103,6 +103,10 @@ export function revealLayerOf(id: string): boolean {
   st.setActiveLayer(layerOf(el))
   return true
 }
+
+// picking a card in a stack's spread view focuses that widget once the
+// cards have flown back
+setSpreadFocusHandler((id) => focusWidget(id))
 
 /** Step the active terminal forward/back through reading order (wraps). */
 export function cycleTerminal(dir: 1 | -1) {

@@ -4,7 +4,7 @@ import { WIDGET_ACCENT } from '../lib/types'
 import { useAgents, useDisplayStatus } from '../lib/agents'
 import { useAgentContext } from '../lib/context'
 import { baseName } from '../lib/backend'
-import { KIND_ICON } from '../widgets/WidgetFrame'
+import { KIND_ICON } from '../widgets/widgetIcons'
 import { IconDesktop } from './icons'
 import { widgetGlyph, widgetType } from '../lib/layers'
 

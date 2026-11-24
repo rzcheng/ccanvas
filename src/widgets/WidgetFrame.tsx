@@ -1,35 +1,10 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import type { WidgetElement, WidgetKind } from '../lib/types'
+import type { WidgetElement } from '../lib/types'
 import { WIDGET_ACCENT, AGENT_COLORS, claudeColorName } from '../lib/types'
 import { useStore, selectActive } from '../store/workspace'
 import { elementBounds, edgeLines, snapValue } from '../lib/geometry'
-import {
-  IconClose,
-  IconNote,
-  IconTerminal,
-  IconWeb,
-  IconAgent,
-  IconFiles,
-  IconDiff,
-  IconEditor,
-  IconDoc,
-  IconLog,
-  IconLock,
-  IconTag,
-  IconSettings,
-  IconExternal,
-  IconPr,
-  IconRun,
-  IconIssue,
-  IconChecks,
-  IconDatabase,
-  IconData,
-  IconPlot,
-  IconChat,
-  IconVideo,
-  IconClaude,
-  IconInfo,
-} from '../ui/icons'
+import { IconClose, IconLock, IconTag, IconSettings, IconPullOut, IconExternal } from '../ui/icons'
+import { KIND_ICON, AgentDot } from './widgetIcons'
 import { useAgents, useDisplayStatus, sendTo, sendPrompt, isLive as isSessionLive, type AgentMetrics } from '../lib/agents'
 import { useAgentContext } from '../lib/context'
 import { useSyncSessionTitle } from '../lib/sessionTitle'
@@ -57,30 +32,26 @@ import { ClaudeBody } from './ClaudeBody'
 import { MirrorAsk, MirrorWaitChip } from './MirrorStatus'
 import { openInClaude } from '../lib/desktopSessions'
 import { WidgetErrorBoundary } from '../ui/WidgetErrorBoundary'
+import type { Stack } from '../lib/stacks'
+import { StackRail, StackEdges } from './StackRail'
 
-export const KIND_ICON: Record<WidgetKind, (p: { className?: string; size?: number }) => JSX.Element> = {
-  terminal: IconTerminal,
-  agent: IconAgent,
-  web: IconWeb,
-  note: IconNote,
-  files: IconFiles,
-  diff: IconDiff,
-  editor: IconEditor,
-  vscode: IconEditor,
-  doc: IconDoc,
-  log: IconLog,
-  pr: IconPr,
-  issues: IconIssue,
-  runs: IconChecks,
-  runner: IconRun,
-  sql: IconDatabase,
-  data: IconData,
-  plot: IconPlot,
-  transcript: IconChat,
-  video: IconVideo,
-  mediainfo: IconInfo,
-  claude: IconClaude,
+/** Where a stack member sits while its stack is spread out (world units). */
+export type SpreadCard = {
+  /** translate from the member's own box to its card */
+  tx: number
+  ty: number
+  /** uniform scale from the member's box to its card */
+  k: number
+  /** 0-based position in the spread (shown as 1-based) */
+  index: number
+  /** the highlighted card */
+  hi: boolean
+  /** cards are flying back into the stack */
+  closing: boolean
+  /** this member will be the front once the spread closes */
+  front: boolean
 }
+
 
 const MIN_W = 220
 const MIN_H = 150
@@ -94,6 +65,8 @@ export const WidgetFrame = memo(function WidgetFrame({
   onStartMove,
   visible = true,
   tabShown = visible,
+  stack,
+  spreadCard,
 }: {
   el: WidgetElement
   selected: boolean
@@ -104,6 +77,10 @@ export const WidgetFrame = memo(function WidgetFrame({
   visible?: boolean
   /** is its tab shown? (terminals on a hidden layer of it still connect) */
   tabShown?: boolean
+  /** the stack this widget sits in (only stacks of two or more) */
+  stack?: Stack
+  /** set while this widget's stack is spread out */
+  spreadCard?: SpreadCard
 }) {
   const tool = useStore((s) => s.tool)
   const activeWidgetId = useStore((s) => s.activeWidgetId)
@@ -124,6 +101,9 @@ export const WidgetFrame = memo(function WidgetFrame({
 
   const active = activeWidgetId === el.id
   const Icon = KIND_ICON[el.kind]
+  const stackFront = !!stack && stack.front.id === el.id
+  // stacked behind another member: stays mounted (live) but out of sight
+  const stackHidden = !!stack && !stackFront && !spreadCard
   // untagged terminals/agents follow the palette's accent
   const accent =
     el.color ?? (el.kind === 'terminal' || el.kind === 'agent' ? 'var(--accent)' : WIDGET_ACCENT[el.kind])
@@ -326,7 +306,7 @@ export const WidgetFrame = memo(function WidgetFrame({
     // snap the dragged right/bottom edges to other elements' edges/centers
     const st = useStore.getState()
     const others = selectActive(st)
-      .elements.filter((o) => o.id !== el.id)
+      .elements.filter((o) => o.id !== el.id && !(stack && (o as WidgetElement).stackId === stack.id))
       .map(elementBounds)
     const { xs, ys } = edgeLines(others)
     const tol = 6 / r.zoom
@@ -335,7 +315,8 @@ export const WidgetFrame = memo(function WidgetFrame({
     if (sx != null) w = Math.max(MIN_W, sx - el.x)
     if (sy != null) h = Math.max(MIN_H, sy - el.y)
     st.setSnapGuides({ vx: sx, hy: sy })
-    mutateElement(el.id, (wd) => {
+    // every member of a stack shares one box
+    st.mutateElements(stack ? stack.members.map((m) => m.id) : [el.id], (wd) => {
       const ww = wd as WidgetElement
       ww.w = w
       ww.h = h
@@ -351,14 +332,38 @@ export const WidgetFrame = memo(function WidgetFrame({
     }
   }
 
+  const dropState = useStore((s) =>
+    s.stackDrop?.onPad && s.stackDrop.sourceIds.includes(el.id)
+      ? s.stackDrop.armed
+        ? 'armed'
+        : 'over'
+      : null,
+  )
+  const focusCard = () => useStore.getState().closeSpread(el.id)
+  const spreadStyle: React.CSSProperties = spreadCard
+    ? {
+        transform: spreadCard.closing
+          ? undefined
+          : `translate(${spreadCard.tx}px, ${spreadCard.ty}px) scale(${spreadCard.k})`,
+        zIndex: 10001 + (spreadCard.closing && spreadCard.front ? 100 : spreadCard.index),
+      }
+    : {}
+
   return (
+    <>
+    {stackFront && !spreadCard && visible && <StackEdges el={el} stack={stack!} />}
     <div
-      className={`widget${selected ? ' widget--selected' : ''}${
+      className={`widget${selected && !spreadCard ? ' widget--selected' : ''}${
         active ? ' widget--active' : ''
       }${tagged ? ' widget--tagged' : ''}${isTerminal ? ' widget--term' : ''}${
         dimmed ? ' widget--dimmed' : ''
-      }${visible ? '' : ' widget--offlayer'}`}
+      }${visible ? '' : ' widget--offlayer'}${stackFront && !spreadCard ? ' widget--stack-front' : ''}${
+        stackHidden ? ' widget--stack-hidden' : ''
+      }${spreadCard ? ' widget--spread' : ''}${spreadCard?.hi && !spreadCard.closing ? ' widget--spread-hi' : ''}${
+        dropState ? ` widget--drop-${dropState}` : ''
+      }`}
       data-widget-id={el.id}
+      aria-hidden={stackHidden || undefined}
       style={
         {
           left: el.x,
@@ -367,9 +372,39 @@ export const WidgetFrame = memo(function WidgetFrame({
           height: el.h,
           zIndex: el.z,
           '--k': accent,
+          ...spreadStyle,
         } as React.CSSProperties
       }
     >
+      {spreadCard ? (
+        <div
+          className="widget__bar spread-bar"
+          onPointerDown={(e) => {
+            e.stopPropagation()
+            if (e.button === 0) focusCard()
+          }}
+        >
+          <span className="spread-bar__num">{spreadCard.index + 1}</span>
+          <span className="widget__icon">
+            <Icon />
+          </span>
+          {isTerminal && <AgentDot id={el.id} />}
+          <span className="widget__title">{el.title}</span>
+          {folder && <span className="widget__cwd">{folder}</span>}
+          <span className="widget__bar-spacer" />
+          {spreadCard.front && <span className="spread-bar__front">front</span>}
+          <button
+            className="widget__btn"
+            title="Pull out of the stack (X)"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => pullOutOfSpread(el.id)}
+          >
+            <IconPullOut />
+          </button>
+        </div>
+      ) : stackFront ? (
+        <StackRail stack={stack!} onGrab={grab} />
+      ) : (
       <div className="widget__bar" onPointerDown={grab}>
         <span className="widget__icon">
           <Icon />
@@ -481,6 +516,7 @@ export const WidgetFrame = memo(function WidgetFrame({
           </button>
         </div>
       </div>
+      )}
       {labeling && <LabelPopover el={el} onClose={() => setLabelingWidget(null)} />}
 
       <div
@@ -505,7 +541,9 @@ export const WidgetFrame = memo(function WidgetFrame({
           {el.kind === 'video' && <VideoBody el={el} active={active} />}
           {el.kind === 'mediainfo' && <MediaInfoBody el={el} />}
           {el.kind === 'claude' && <ClaudeBody el={el} />}
-          {isTerminal && <TerminalBody el={el} active={active} visible={visible} tabShown={tabShown} />}
+          {isTerminal && (
+            <TerminalBody el={el} active={active} visible={visible} tabShown={tabShown} hidden={stackHidden} />
+          )}
           {isTerminal && far && visible && <TermCard el={el} />}
           {el.kind === 'files' && <FilesBody el={el} />}
           {el.kind === 'diff' && <DiffBody el={el} />}
@@ -523,7 +561,17 @@ export const WidgetFrame = memo(function WidgetFrame({
           {el.kind === 'transcript' && <TranscriptBody el={el} />}
         </WidgetErrorBoundary>
 
-        {shielded && (
+        {spreadCard && (
+          <div
+            className="widget__spread-hit"
+            onPointerDown={(e) => {
+              e.stopPropagation()
+              if (e.button === 0) focusCard()
+            }}
+            onPointerEnter={() => useStore.getState().setSpreadHi(spreadCard.index)}
+          />
+        )}
+        {shielded && !spreadCard && (
           <div
             className="widget__shield"
             onPointerDown={grab}
@@ -540,7 +588,7 @@ export const WidgetFrame = memo(function WidgetFrame({
 
       {el.mirrorOf === 'desktop' && <MirrorAsk el={el} />}
 
-      {!el.locked && (
+      {!el.locked && !spreadCard && (
         <div
           className="widget__resize"
           title="Resize"
@@ -551,11 +599,23 @@ export const WidgetFrame = memo(function WidgetFrame({
         />
       )}
     </div>
+    </>
   )
 })
 
-// Activity dot for terminal/agent widgets: reflects whether the session is
-// idle, streaming output, or appears to be waiting on a prompt.
+/** Take a member out of a spread stack; the spread stays open while 2+ remain. */
+export function pullOutOfSpread(id: string) {
+  const st = useStore.getState()
+  const sp = st.spread
+  st.beginHistory()
+  st.unstackWidget(id)
+  const left = sp ? selectActive(useStore.getState()).elements.filter(
+    (e) => e.type === 'widget' && e.stackId === sp.stackId,
+  ).length : 0
+  if (sp && left < 2) useStore.setState({ spread: null })
+  else if (sp) st.setSpreadHi(Math.max(0, Math.min(sp.hi, left - 1)))
+}
+
 // Label popover: name + colour tag for a terminal/agent. Colour applies live;
 // the name commits on Enter / click-away and reverts on Escape. A live claude
 // agent is told its new name and colour, same as the agent wizard does.
@@ -708,21 +768,6 @@ function CardContext({ el }: { el: WidgetElement }) {
   )
 }
 
-function AgentDot({ id }: { id: string }) {
-  const status = useDisplayStatus(id)
-  if (!status || status === 'off') return null
-  const title =
-    status === 'working'
-      ? 'working…'
-      : status === 'waiting'
-        ? 'waiting for input'
-        : status === 'connecting'
-          ? 'connecting…'
-          : status === 'done'
-            ? 'just finished'
-            : 'idle'
-  return <span className={`agent-dot agent-dot--${status}`} title={title} />
-}
 
 // Context meter: a short fill bar + % of the context window, with a one-click
 // /compact once the conversation is getting full.

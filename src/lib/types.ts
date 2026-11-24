@@ -211,6 +211,20 @@ export type WidgetElement = Base & {
   /** terminal widget: shell command typed once when the shell first opens,
    *  then cleared (used by "Fork into terminal"). */
   startCmd?: string
+  // ---- stacks ----
+  // Widgets sharing a stackId occupy one spot on the canvas: every member keeps
+  // the same box, only the front one shows, and the rest stay mounted (live)
+  // behind it. The stack has no element of its own; see lib/stacks.ts.
+  /** the stack this widget belongs to */
+  stackId?: string
+  /** tab order within the stack (ascending) */
+  stackOrder?: number
+  /** the visible member; exactly one per stack (normalizeStacks enforces it) */
+  stackFront?: boolean
+  /** the stack's name, kept identical on every member */
+  stackTitle?: string
+  /** the widget's own size before it joined, restored when it leaves */
+  stackRestore?: { w: number; h: number }
 }
 
 export type CanvasElement =

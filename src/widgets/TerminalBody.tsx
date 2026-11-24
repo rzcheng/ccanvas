@@ -68,6 +68,7 @@ export function TerminalBody({
   active,
   visible = true,
   tabShown = visible,
+  hidden = false,
 }: {
   el: WidgetElement
   active: boolean
@@ -76,6 +77,8 @@ export function TerminalBody({
   /** is its tab shown? A terminal on a hidden layer of the shown tab still
    *  connects, so a project's agents resume at launch without a visit first */
   tabShown?: boolean
+  /** stacked behind another widget: keeps running, but isn't painted */
+  hidden?: boolean
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
@@ -783,11 +786,12 @@ export function TerminalBody({
     return () => cancelAnimationFrame(raf)
   }, [k, armed, textScale])
 
-  // when our tab becomes visible, force xterm to re-fit + repaint — it was
-  // opened/written while hidden (kept mounted across tabs) and its renderer
-  // won't paint on a visibility change on its own
+  // when our tab becomes visible (or we come to the front of a stack), force
+  // xterm to re-fit + repaint — it was opened/written while hidden (kept
+  // mounted) and its renderer won't paint on a visibility change on its own
+  const onScreen = visible && !hidden
   useEffect(() => {
-    if (!visible) return
+    if (!onScreen) return
     const term = termRef.current
     if (!term) return
     const raf = requestAnimationFrame(() => {
@@ -800,7 +804,7 @@ export function TerminalBody({
       }
     })
     return () => cancelAnimationFrame(raf)
-  }, [visible])
+  }, [onScreen])
 
   const label =
     status === 'pty'
