@@ -22,6 +22,7 @@ import { watchPath, baseName, openExternal } from '../lib/backend'
 import { renderMarkdown } from '../lib/markdown'
 import { IconReload } from '../ui/icons'
 import { useTextScale } from '../lib/settings'
+import { useMirrorStatusSync } from '../lib/desktopSessions'
 import '../styles/agent-tools.css'
 
 // Renders an agent's real conversation, read from its session JSONL transcript —
@@ -480,6 +481,8 @@ export function TranscriptBody({ el }: { el: WidgetElement }) {
   const mirror = el.mirrorOf === 'desktop'
   const cwd = mirror ? el.cwd : (agent?.cwd ?? el.cwd)
   const sessionId = mirror ? el.sessionId : agent?.sessionId
+  // a mirror's working / needs-you / done status, for every place that shows one
+  useMirrorStatusSync(mirror ? el : null)
 
   const [path, setPath] = useState<string | null>(null)
   const [q, setQ] = useState('')

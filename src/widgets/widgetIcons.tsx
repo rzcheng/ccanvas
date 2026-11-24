@@ -1,7 +1,7 @@
 // Icons per widget kind and the activity dot for terminals/agents — shared by
 // the widget title bar and the stack tab rail.
 
-import type { WidgetKind } from '../lib/types'
+import type { WidgetElement, WidgetKind } from '../lib/types'
 import { useDisplayStatus, type AgentStatus } from '../lib/agents'
 import {
   IconNote,
@@ -51,7 +51,7 @@ export const KIND_ICON: Record<WidgetKind, (p: { className?: string; size?: numb
 }
 
 // ---- status icons ----
-// A terminal or agent shows its status in the icon slot instead of a blinking
+// A terminal, agent or desktop mirror shows its status in the icon slot instead of a blinking
 // dot next to it: a spinning arc while it works, a steady amber dot when it
 // needs you (it pings once as that starts, then stays still), a check for a
 // couple of minutes after it finishes, and its ordinary kind icon when idle.
@@ -113,7 +113,12 @@ export function StatusGlyph({
   )
 }
 
-/** A live terminal/agent's status in its icon slot. */
+/** Widgets with a live status: terminals, agents, and desktop-app mirrors
+ *  (whose status is read from their transcript, see useMirrorStatusSync). */
+export const showsStatus = (w: WidgetElement): boolean =>
+  w.kind === 'terminal' || w.kind === 'agent' || w.mirrorOf === 'desktop'
+
+/** A live terminal/agent's (or desktop mirror's) status in its icon slot. */
 export function StatusIcon({ id, kind, className }: { id: string; kind: WidgetKind; className?: string }) {
   const status = useDisplayStatus(id)
   const Icon = KIND_ICON[kind]

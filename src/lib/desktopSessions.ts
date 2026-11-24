@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { isTauri, openExternal } from './backend'
 import { watchTranscriptSummary, type TranscriptSummary } from './transcript'
+import { useAgents, type AgentStatus } from './agents'
 import { useStore, selectActive } from '../store/workspace'
 import { viewCenter, viewport } from './view'
 import { activeLayerId, landingCamera, layerForPath } from './layers'
@@ -164,6 +165,49 @@ export function mirrorWaiting(s: TranscriptSummary | null, now = Date.now()): Mi
   if (p.question) return { kind: 'ask', question: p.question, options: p.options }
   const since = s.modified ?? now
   return now - since >= STALL_MS ? { kind: 'stalled', tool: p.tool, sinceMs: now - since } : null
+}
+
+export type MirrorStatus = Extract<AgentStatus, 'off' | 'idle' | 'working' | 'waiting'>
+
+/** A mirror's activity, read off its transcript: waiting while Claude asks
+ *  something or a tool call has stalled, working while the file is being
+ *  written, else idle ('off' when there's no transcript to read). */
+export function mirrorStatus(s: TranscriptSummary | null, now = Date.now()): MirrorStatus {
+  if (!s) return 'off'
+  if (mirrorWaiting(s, now)) return 'waiting'
+  return isRunningNow(s.modified, now) ? 'working' : 'idle'
+}
+
+/**
+ * Publish a mirror's status to the agents store, under the widget's id, so it
+ * shows wherever a terminal's does (icon slot, stack tabs and edges, focus
+ * strip, attention bar, layer chip) with no per-place code. Called once per
+ * mirror widget (from its body). Rides the shared transcript poll, which calls
+ * back every few seconds even when nothing changed: that is what ages
+ * 'working' into idle and a quiet tool call into 'waiting'. Going from working
+ * to idle stamps the turn as finished, so the icon shows 'done' for a while.
+ */
+export function useMirrorStatusSync(el: WidgetElement | null) {
+  const id = el?.id
+  const cwd = el?.cwd
+  const sessionId = el?.sessionId
+  useEffect(() => {
+    if (!id) return
+    let prev: MirrorStatus | null = null
+    const publish = (s: TranscriptSummary | null) => {
+      const next = mirrorStatus(s)
+      const agents = useAgents.getState()
+      agents.setStatus(id, next)
+      if (prev === 'working' && next === 'idle') agents.markFinished(id)
+      prev = next
+    }
+    publish(null)
+    const off = watchTranscriptSummary(cwd, sessionId, publish)
+    return () => {
+      off()
+      useAgents.getState().clear(id)
+    }
+  }, [id, cwd, sessionId])
 }
 
 /** What a mirror's session is waiting on, re-checked every few seconds while a

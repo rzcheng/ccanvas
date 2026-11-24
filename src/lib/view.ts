@@ -40,10 +40,23 @@ export function passesLabelFilter(el: WidgetElement, filter: string[] | null): b
  * row's first member count as the same row. Respects the label filter.
  */
 export function orderedTerminals(): WidgetElement[] {
-  const st = useStore.getState()
   // the active layer only: ⌘1–9 means "the Nth terminal I can see"
+  return inReadingOrder(isTermWidget)
+}
+
+const isMirrorWidget = (e: CanvasElement): e is WidgetElement =>
+  e.type === 'widget' && e.kind === 'transcript' && e.mirrorOf === 'desktop'
+
+/** The active layer's desktop-app mirrors in reading order (label filter
+ *  respected). Not part of ⌘1–9: those are for terminals you type into. */
+export function orderedMirrors(): WidgetElement[] {
+  return inReadingOrder(isMirrorWidget)
+}
+
+function inReadingOrder(pick: (e: CanvasElement) => e is WidgetElement): WidgetElement[] {
+  const st = useStore.getState()
   const terms = activeLayerElements(selectActive(st))
-    .filter(isTermWidget)
+    .filter(pick)
     .filter((t) => passesLabelFilter(t, st.labelFilter))
   const byY = [...terms].sort((a, b) => a.y + a.h / 2 - (b.y + b.h / 2))
   const rows: WidgetElement[][] = []

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { viewCenter, revealLayerOf } from '../lib/view'
 import { useStore, selectActive } from '../store/workspace'
-import { useAgents, sendPrompt } from '../lib/agents'
+import { useAgents, useDisplayStatus, sendPrompt } from '../lib/agents'
 import { watchTranscriptSummary, type TranscriptSummary } from '../lib/transcript'
 import { useAgentContext } from '../lib/context'
-import { isDesktopMirror, isRunningNow, mirrorWaiting, openInClaude } from '../lib/desktopSessions'
+import { isDesktopMirror, mirrorWaiting, openInClaude } from '../lib/desktopSessions'
 import { waitingTitle } from '../widgets/MirrorStatus'
 import type { WidgetElement, Workspace } from '../lib/types'
 import { IconClose, IconBroadcast, IconAgent } from './icons'
@@ -23,8 +23,10 @@ function firstLine(reply: string | null | undefined): string | undefined {
     ?.slice(0, 160)
 }
 
-/** A desktop-app mirror: read-only, so its status comes from how recently the
- *  transcript was written rather than from a live terminal. */
+/** A desktop-app mirror: read-only, so its status comes from its transcript
+ *  rather than a live terminal. The status itself is the one the mirror widget
+ *  publishes (useMirrorStatusSync), so it matches its icon everywhere else; the
+ *  summary here adds what it's waiting on and its last reply. */
 function MirrorRow({ row, onFocus }: { row: Row; onFocus: () => void }) {
   const { agent: el, tab } = row
   const activeTabId = useStore((s) => s.activeTabId)
@@ -47,13 +49,7 @@ function MirrorRow({ row, onFocus }: { row: Row; onFocus: () => void }) {
     return () => clearInterval(t)
   }, [open])
   const waiting = mirrorWaiting(summary, now)
-  const st = !summary
-    ? 'off'
-    : waiting
-      ? 'waiting'
-      : isRunningNow(summary.modified, now)
-        ? 'working'
-        : 'idle'
+  const st = useDisplayStatus(el.id) ?? 'off'
   const last = waiting?.kind === 'ask' ? waiting.question : firstLine(summary?.lastReply)
   return (
     <div className="roster__row" onClick={onFocus}>
@@ -65,9 +61,11 @@ function MirrorRow({ row, onFocus }: { row: Row; onFocus: () => void }) {
             ? waitingTitle(waiting)
             : st === 'working'
               ? 'running now'
-              : st === 'idle'
-                ? 'idle'
-                : 'no transcript'
+              : st === 'done'
+                ? 'just finished'
+                : st === 'idle'
+                  ? 'idle'
+                  : 'no transcript'
         }
       />
       <div className="roster__main">

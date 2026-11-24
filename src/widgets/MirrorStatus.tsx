@@ -15,10 +15,13 @@ export function waitingTitle(w: MirrorWaiting): string {
     : `${w.tool} has had no result for ${secs(w.sinceMs)}: it may need your approval, or it's still running.\nClick to open it in the Claude app.`
 }
 
-/** Header chip: "Needs you" for a question, "<Tool>?" for a call that stalled. */
+/** Header chip "<Tool>?" for a tool call that stalled. The icon slot already
+ *  turns amber for any wait; this names the tool and says it's a guess
+ *  (approval, or just slow). A question needs no chip: the icon says it, and
+ *  the strip under the transcript (MirrorAsk) shows it with its answer button. */
 export function MirrorWaitChip({ el }: { el: WidgetElement }) {
   const w = useMirrorWaiting(el)
-  if (!w) return null
+  if (w?.kind !== 'stalled') return null
   return (
     <button
       className={`dsk-wait dsk-wait--${w.kind}`}
@@ -29,7 +32,7 @@ export function MirrorWaitChip({ el }: { el: WidgetElement }) {
         openInClaude(el)
       }}
     >
-      {w.kind === 'ask' ? 'Needs you' : `${w.tool}?`}
+      {`${w.tool}?`}
     </button>
   )
 }

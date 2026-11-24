@@ -6263,6 +6263,10 @@ body.is-panning * {
   background: var(--accent);
   border-color: var(--accent);
 }
+/* a desktop-app mirror's jack: no ⌘ number, so its icon leads */
+.focus-jack--mirror {
+  padding-left: 7px;
+}
 .focus-jack--attn {
   color: var(--led-waiting);
   border-color: color-mix(in srgb, var(--led-waiting) 60%, var(--line));

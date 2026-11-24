@@ -6,7 +6,7 @@ import { elementBounds, edgeLines, snapValue } from '../lib/geometry'
 import { IconClose, IconLock, IconTag, IconSettings, IconPullOut, IconExternal, IconFocus, IconUnfocus } from '../ui/icons'
 import { flyFocus, cancelFlight } from '../lib/focusMotion'
 import { toggleFocus } from '../lib/view'
-import { KIND_ICON, StatusGlyph, StatusIcon } from './widgetIcons'
+import { KIND_ICON, StatusGlyph, StatusIcon, showsStatus } from './widgetIcons'
 import { useAgents, useDisplayStatus, sendTo, sendPrompt, isLive as isSessionLive, type AgentMetrics } from '../lib/agents'
 import { useAgentContext } from '../lib/context'
 import { useSyncSessionTitle } from '../lib/sessionTitle'
@@ -554,7 +554,7 @@ export const WidgetFrame = memo(function WidgetFrame({
         >
           <span className="spread-bar__num">{spreadCard.index + 1}</span>
           <span className="widget__icon">
-            {isTerminal ? <StatusIcon id={el.id} kind={el.kind} /> : <Icon />}
+            {showsStatus(el) ? <StatusIcon id={el.id} kind={el.kind} /> : <Icon />}
           </span>
           <span className="widget__title">{el.title}</span>
           {folder && <span className="widget__cwd">{folder}</span>}
@@ -586,7 +586,7 @@ export const WidgetFrame = memo(function WidgetFrame({
         }}
       >
         <span className="widget__icon">
-          {isTerminal ? <StatusIcon id={el.id} kind={el.kind} /> : <Icon />}
+          {showsStatus(el) ? <StatusIcon id={el.id} kind={el.kind} /> : <Icon />}
         </span>
         {renaming ? (
           <input
