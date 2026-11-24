@@ -280,11 +280,20 @@ impl Tracked {
         let cc = &u["cache_creation"];
         // the 5m / 1h split when given; otherwise all writes are 5m ones
         let (w5, w1) = if cc.is_object() {
-            (n(&cc["ephemeral_5m_input_tokens"]), n(&cc["ephemeral_1h_input_tokens"]))
+            (
+                n(&cc["ephemeral_5m_input_tokens"]),
+                n(&cc["ephemeral_1h_input_tokens"]),
+            )
         } else {
             (write, 0)
         };
-        let now = [n(&u["input_tokens"]), n(&u["output_tokens"]), n(&u["cache_read_input_tokens"]), w5, w1];
+        let now = [
+            n(&u["input_tokens"]),
+            n(&u["output_tokens"]),
+            n(&u["cache_read_input_tokens"]),
+            w5,
+            w1,
+        ];
         let id = msg["id"].as_str().unwrap_or("").to_string();
         if let Some((last, at, prev)) = &self.last_usage {
             if !id.is_empty() && *last == id {
@@ -311,8 +320,13 @@ impl Tracked {
 
     /// Remember the files a reply's Edit / Write calls change.
     fn add_files(&mut self, b: &Value) {
-        let Some(tool) = b["name"].as_str() else { return };
-        if !matches!(tool, "Edit" | "MultiEdit" | "Write" | "Create" | "NotebookEdit") {
+        let Some(tool) = b["name"].as_str() else {
+            return;
+        };
+        if !matches!(
+            tool,
+            "Edit" | "MultiEdit" | "Write" | "Create" | "NotebookEdit"
+        ) {
             return;
         }
         let input = &b["input"];
@@ -646,17 +660,28 @@ mod tests {
         assert_eq!(s.tokens.len(), 2);
         let o = &s.tokens[0];
         assert_eq!(
-            (o.input, o.output, o.cache_read, o.cache_write_5m, o.cache_write_1h),
+            (
+                o.input,
+                o.output,
+                o.cache_read,
+                o.cache_write_5m,
+                o.cache_write_1h
+            ),
             (2, 30, 100, 0, 50)
         );
         let h = &s.tokens[1];
-        assert_eq!((h.model.as_str(), h.input, h.cache_write_5m), ("claude-haiku-5-5", 5, 7));
+        assert_eq!(
+            (h.model.as_str(), h.input, h.cache_write_5m),
+            ("claude-haiku-5-5", 5, 7)
+        );
     }
 
     #[test]
     fn files_track_edits_most_recent_last() {
         let edit = |id: &str, tool: &str, path: &str| {
-            format!(r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"{id}","name":"{tool}","input":{{"file_path":"{path}"}}}}]}}}}"#)
+            format!(
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"{id}","name":"{tool}","input":{{"file_path":"{path}"}}}}]}}}}"#
+            )
         };
         let lines = [
             edit("1", "Edit", "/a.ts"),
@@ -669,7 +694,11 @@ mod tests {
             t.apply(l);
         }
         assert_eq!(t.summary().file_count, 2);
-        let got: Vec<_> = t.files.iter().map(|f| (f.path.as_str(), f.edits, f.tool.as_str())).collect();
+        let got: Vec<_> = t
+            .files
+            .iter()
+            .map(|f| (f.path.as_str(), f.edits, f.tool.as_str()))
+            .collect();
         assert_eq!(got, [("/b.ts", 1, "Write"), ("/a.ts", 2, "Edit")]);
     }
 
