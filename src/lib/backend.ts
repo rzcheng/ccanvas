@@ -14,6 +14,13 @@ export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
+/** Can this build mirror Claude desktop-app sessions? That reads the Claude
+ *  app's own session files at a macOS path (src-tauri/src/desktop_sessions.rs),
+ *  so the Desktop sessions panel is offered only in the desktop app on macOS. */
+export function desktopMirrorsSupported(): boolean {
+  return isTauri() && typeof navigator !== 'undefined' && /Mac/i.test(navigator.userAgent)
+}
+
 async function httpGet<T>(path: string, timeoutMs?: number): Promise<T> {
   const ctrl = timeoutMs ? new AbortController() : null
   const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null

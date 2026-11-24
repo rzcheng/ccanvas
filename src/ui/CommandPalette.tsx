@@ -4,7 +4,7 @@ import { useStore, selectActive } from '../store/workspace'
 import { screenToWorld } from '../lib/geometry'
 import { elementBounds } from '../lib/geometry'
 import { downloadPng, downloadSvg } from '../lib/export'
-import { runCommand, joinPath } from '../lib/backend'
+import { desktopMirrorsSupported, runCommand, joinPath } from '../lib/backend'
 import { sendPrompt, isLive } from '../lib/agents'
 import type { CanvasElement, WidgetKind } from '../lib/types'
 import { AGENT_COLORS } from '../lib/types'
@@ -285,13 +285,17 @@ export function CommandPalette() {
         group: 'Panels',
         run: () => s.setOpenPanel('roster'),
       },
-      {
-        id: 'panel-desktop',
-        label: 'Desktop sessions',
-        hint: 'mirror Claude desktop-app chats',
-        group: 'Panels',
-        run: () => s.setOpenPanel('desktop'),
-      },
+      ...(desktopMirrorsSupported()
+        ? [
+            {
+              id: 'panel-desktop',
+              label: 'Desktop sessions',
+              hint: 'mirror Claude desktop-app chats',
+              group: 'Panels',
+              run: () => s.setOpenPanel('desktop'),
+            },
+          ]
+        : []),
       {
         id: 'panel-prompts',
         label: 'Prompt library',

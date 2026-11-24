@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { viewport, viewCenter, orderedTerminals, focusWidget, cycleTerminal, exitTerminal, toggleFocus } from './lib/view'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { isTauri } from './lib/backend'
+import { desktopMirrorsSupported, isTauri } from './lib/backend'
 import { useStore, selectActive } from './store/workspace'
 import { stackOfId } from './lib/stacks'
 import { zoomAt, screenToWorld } from './lib/geometry'
@@ -513,7 +513,7 @@ export default function App() {
         <Presentation />
         {layerOverview && <LayerOverview />}
         {openPanel === 'roster' && <Roster />}
-        {openPanel === 'desktop' && <DesktopSessions />}
+        {openPanel === 'desktop' && desktopMirrorsSupported() && <DesktopSessions />}
         {openPanel === 'prompts' && <PromptLibrary />}
         {openPanel === 'checkpoints' && <Checkpoints />}
         {openPanel === 'memory' && <MemoryPanel />}

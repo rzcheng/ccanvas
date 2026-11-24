@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore, selectActive, type SidePanel } from '../store/workspace'
-import { baseName, isTauri } from '../lib/backend'
+import { baseName, desktopMirrorsSupported, isTauri } from '../lib/backend'
 import { AGENT_COLORS, type WidgetElement } from '../lib/types'
 import { isTermWidget } from '../lib/view'
 import {
@@ -374,7 +374,7 @@ function LabelFilter() {
   )
 }
 
-const PANELS: { id: SidePanel; label: string; title: string; icon: React.ReactNode }[] = [
+const ALL_PANELS: { id: SidePanel; label: string; title: string; icon: React.ReactNode }[] = [
   { id: 'roster', label: 'Agents', title: 'Agents: every agent across your tabs, with status and a composer', icon: <IconAgent /> },
   { id: 'desktop', label: 'Desktop sessions', title: 'Desktop sessions: mirror chats from the Claude desktop app onto this canvas', icon: <IconDesktop /> },
   { id: 'prompts', label: 'Prompts', title: 'Prompts: saved prompts you can send to any agent', icon: <IconChat /> },
@@ -382,6 +382,9 @@ const PANELS: { id: SidePanel; label: string; title: string; icon: React.ReactNo
   { id: 'memory', label: 'Memory', title: "Memory: Claude's memory for this project, as a linked graph", icon: <IconClaude /> },
   { id: 'settings', label: 'Settings', title: 'Settings: shortcuts and colour palette', icon: <IconSettings /> },
 ]
+// Desktop sessions only where mirroring works: the desktop app on macOS.
+const PANELS = ALL_PANELS.filter((p) => p.id !== 'desktop' || desktopMirrorsSupported())
+const PANELS_TITLE = `Panels: ${PANELS.map((p) => p.label.toLowerCase()).join(', ')}`
 
 // The panel buttons. When the window is narrow the stylesheet hides them and
 // shows a single ⋯ button instead, which lists every panel in a menu.
@@ -425,7 +428,7 @@ function Tools() {
       ))}
       <button
         className={`${on(openPanel !== null)} tb-more`}
-        title="Panels: agents, desktop sessions, prompts, checkpoints, memory, settings"
+        title={PANELS_TITLE}
         onClick={moreMenu}
       >
         <IconMore />
