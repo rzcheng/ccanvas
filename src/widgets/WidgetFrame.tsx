@@ -114,11 +114,11 @@ export const WidgetFrame = memo(function WidgetFrame({
   // untagged terminals/agents follow the palette's accent
   const accent =
     el.color ?? (el.kind === 'terminal' || el.kind === 'agent' ? 'var(--accent)' : WIDGET_ACCENT[el.kind])
-  // terminals/agents are live — interact on a single click, drag by the title bar
+  // terminals/agents are live: drag the block, click to enter (see pressBlock)
   const isTerminal = el.kind === 'terminal' || el.kind === 'agent'
   // a user-chosen colour tints the whole faceplate so it reads when zoomed out
   const tagged = isTerminal && !!el.color
-  // app-like panels also interact on a single click (no double-click shield)
+  // app-like panels work the same way, without a shield over their content
   const isLive =
     isTerminal ||
     el.kind === 'files' ||
@@ -200,48 +200,48 @@ export const WidgetFrame = memo(function WidgetFrame({
     if (tool === 'select') e.stopPropagation()
   }
 
-  // Terminals you haven't clicked into don't take the pointer: dragging across
-  // one moves the canvas, and a click (no drag) enters it. Once entered it gets
-  // every event — text selection, scrollback, typing — until you click
-  // somewhere else (the canvas, another widget, another terminal).
-  const onTerminalBodyCapture = (e: React.PointerEvent) => {
-    if (tool !== 'select') return
-    if (active || e.button !== 0) return onLiveBodyCapture()
-    // keep xterm from seeing this press (preventDefault also suppresses the
-    // compatibility mousedown/move/up it selects with)
-    e.preventDefault()
-    e.stopPropagation()
+  // A widget you haven't clicked into is a block: pressing its body and
+  // dragging moves it, and a click (no drag) enters it. Once entered it gets
+  // every event (text selection, scrolling, typing, its own buttons) until
+  // you click somewhere else (the canvas, another widget).
+  const pressBlock = (e: React.PointerEvent) => {
+    grab(e)
+    if (tool !== 'select' || e.button !== 0) return
     const start = { x: e.clientX, y: e.clientY }
-    const cam0 = selectActive(useStore.getState()).camera
-    let panning = false
+    let moved = false
     const onMove = (ev: PointerEvent) => {
-      if (ev.pointerId !== e.pointerId) return
-      const dx = ev.clientX - start.x
-      const dy = ev.clientY - start.y
-      if (!panning && Math.hypot(dx, dy) < 4) return
-      panning = true
-      document.body.classList.add('is-panning')
-      useStore.getState().setCamera({ ...cam0, x: cam0.x + dx, y: cam0.y + dy })
+      if (ev.pointerId === e.pointerId && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) >= 4) moved = true
     }
     const onUp = (ev: PointerEvent) => {
       if (ev.pointerId !== e.pointerId) return
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
-      document.body.classList.remove('is-panning')
-      if (panning || ev.type !== 'pointerup') return
-      // from far out, a click flies in to the terminal instead of typing blind
-      if (selectActive(useStore.getState()).camera.zoom < FAR_ZOOM) focusWidget(el.id)
+      if (moved || ev.type !== 'pointerup') return
+      // from far out, a click on a terminal flies in to it instead of typing blind
+      if (isTerminal && selectActive(useStore.getState()).camera.zoom < FAR_ZOOM) focusWidget(el.id)
       else onLiveBodyCapture()
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)
   }
+  // live bodies (terminals, agents, app-like panels) render their content
+  // under the pointer, so the block press is taken in the capture phase,
+  // before the content sees it
+  const onBlockCapture = (e: React.PointerEvent) => {
+    if (tool !== 'select') return
+    if (active || spreadCard || e.button !== 0) return onLiveBodyCapture()
+    // keep the content from seeing this press (preventDefault also suppresses
+    // the compatibility mousedown it would start a text selection with)
+    e.preventDefault()
+    e.stopPropagation()
+    pressBlock(e)
+  }
   // belt-and-braces for engines that still fire mousedown after a prevented
-  // pointerdown: an inactive terminal must not start a text selection
-  const onTerminalMouseCapture = (e: React.MouseEvent) => {
-    if (tool === 'select' && !active && e.button === 0) {
+  // pointerdown: a block you haven't entered must not start a text selection
+  const onBlockMouseCapture = (e: React.MouseEvent) => {
+    if (tool === 'select' && !active && !spreadCard && e.button === 0) {
       e.preventDefault()
       e.stopPropagation()
     }
@@ -725,10 +725,8 @@ export const WidgetFrame = memo(function WidgetFrame({
             ? { pointerEvents: tool === 'select' ? 'auto' : 'none' }
             : undefined
         }
-        onPointerDownCapture={
-          isTerminal ? onTerminalBodyCapture : isLive ? onLiveBodyCapture : undefined
-        }
-        onMouseDownCapture={isTerminal ? onTerminalMouseCapture : undefined}
+        onPointerDownCapture={isLive ? onBlockCapture : undefined}
+        onMouseDownCapture={isLive ? onBlockMouseCapture : undefined}
         onPointerDown={isLive ? onLiveBodyDown : undefined}
         data-drop-term={isTerminal ? '' : undefined}
         onDragOver={isTerminal ? onBodyDragOver : undefined}
@@ -775,14 +773,9 @@ export const WidgetFrame = memo(function WidgetFrame({
         {shielded && !spreadCard && (
           <div
             className="widget__shield"
-            onPointerDown={grab}
-            onDoubleClick={(e) => {
-              e.stopPropagation()
-              select()
-              setActiveWidget(el.id)
-            }}
+            onPointerDown={pressBlock}
           >
-            <span className="widget__shield-hint">double-click to interact</span>
+            <span className="widget__shield-hint">click to interact</span>
           </div>
         )}
       </div>

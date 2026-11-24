@@ -402,7 +402,7 @@ terminal untouched; on Windows and Linux they use Ctrl.
 | `\` | zoom to the selection, or fit everything |
 | `Delete` / `Backspace` | delete selection |
 | `Esc` | clear the selection |
-| click | use a terminal, agent, editor, or other live widget |
+| drag · click | move a widget you haven't clicked into · click into it to use it |
 | double-click | rename a widget or tab · edit text |
 
 ## Stack
