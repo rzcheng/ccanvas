@@ -139,6 +139,12 @@
 .lo--frost .lo-layer.is-focus .lo-glass {
   background: color-mix(in srgb, var(--bg) 97%, transparent);
 }
+/* solid glass: the sheets behind the focused one fade their content too
+   (this used to be a separate dim overlay per sheet, one more composited
+   layer each) */
+.lo-layer:not(.is-focus) .lo-world {
+  opacity: 0.5;
+}
 .lo--frost .lo-layer:not(.is-focus) .lo-world {
   /* opacity only: the prototype's sub-pixel blur() + saturate() filter here
      re-rasterized every back sheet at the start of each dive and the end of

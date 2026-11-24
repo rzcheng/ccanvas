@@ -86,7 +86,6 @@ type Rec = {
   sheet?: HTMLDivElement | null
   glass?: HTMLDivElement | null
   world?: HTMLDivElement | null
-  dim?: HTMLDivElement | null
   item?: HTMLDivElement | null
   lead?: HTMLDivElement | null
 }
@@ -264,8 +263,6 @@ export function LayerOverview() {
       if (r.el) r.el.style.transform = `translate3d(0, 0, ${ovZ(g, i)}px)`
       trans(r.sheet, ['opacity'], kind === 'grow' ? 240 : 0, 'ease')
       if (r.sheet) r.sheet.style.opacity = '1'
-      trans(r.dim, ['opacity'], dur, 'ease')
-      if (r.dim) r.dim.style.opacity = i === g.focus ? '0' : '1'
       trans(r.glass, ['opacity'], 0, 'ease')
       if (r.glass) {
         r.glass.style.opacity = '1'
@@ -295,8 +292,6 @@ export function LayerOverview() {
         r.el.style.transform = `translate3d(0, 0, ${me || others === 'collapse' ? 0 : i > j ? OV.FAR : -OV.FAR}px)`
       trans(r.sheet, ['opacity'], me ? 0 : Math.min(dur, 200), 'ease')
       if (r.sheet) r.sheet.style.opacity = me ? '1' : '0'
-      trans(r.dim, ['opacity'], dur ? 120 : 0, 'ease')
-      if (r.dim) r.dim.style.opacity = '0'
       trans(r.glass, ['opacity'], dur ? Math.round(dur * 0.6) : 0, 'ease', dur ? Math.round(dur * 0.4) : 0)
       if (r.glass) r.glass.style.opacity = '0'
       if (me) {
@@ -340,8 +335,6 @@ export function LayerOverview() {
         r.glass.style.opacity = '1'
         r.glass.style.background = me ? '' : 'transparent'
       }
-      trans(r.dim, ['opacity'], 0, 'ease')
-      if (r.dim) r.dim.style.opacity = '0'
       if (r.world) {
         r.world.style.transition = me ? `transform ${wT}ms ${EASE_OUT}, opacity 160ms ease` : 'opacity 160ms ease'
         r.world.style.transform = camT(C.current.fits[i])
@@ -368,8 +361,6 @@ export function LayerOverview() {
         r.world.style.transition = `transform ${wT}ms ${EASE_OUT}, opacity 260ms ease ${150 + delay}ms`
         r.world.style.opacity = ''
       }
-      trans(r.dim, ['opacity'], 260, 'ease', 150 + delay)
-      if (r.dim) r.dim.style.opacity = i === g.focus ? '0' : '1'
       placeRail(i, 300, EASE_OUT, 90 + delay)
     }
   }
@@ -629,7 +620,6 @@ export function LayerOverview() {
     measure()
     const g = c.g
     const r = rec(n - 1)
-    for (const node of [r.el, r.sheet, r.world, r.item, r.lead, r.dim]) trans(node, ['transform'], 0, 'ease')
     if (r.el) r.el.style.transform = `translate3d(0, 0, ${ovZ(g, n - 1) + 420}px)`
     if (r.sheet) r.sheet.style.opacity = '0'
     if (r.world) r.world.style.transform = camT(c.fits[n - 1])
@@ -910,7 +900,6 @@ export function LayerOverview() {
                     />
                   )}
                 </div>
-                <div className="lo-dim" ref={(node) => void (rec(i).dim = node)} />
               </div>
             </div>
           ))}
