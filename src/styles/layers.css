@@ -66,9 +66,12 @@
   transform-style: preserve-3d;
   pointer-events: none;
 }
+/* only the stage, the sheets and the one world whose transform animates
+   (LayerOverview's busy()) are promoted, and only while moving: a promoted
+   world is a full-size texture, and every sheet had one */
 .lo--moving .lo-stage,
 .lo--moving .lo-layer,
-.lo--moving .lo-world {
+.lo--moving .lo-world.is-moving {
   will-change: transform, opacity;
 }
 
@@ -735,4 +738,99 @@
   color: var(--ink-faint);
   text-align: right;
   pointer-events: none;
+}
+
+/* ---------- map tiles: a widget as its type glyph and status ----------
+   Lighter than the text cards (a handful of nodes, no text body), and sized
+   for the screen through --fs so they read at any fit. Names and captions
+   show on the focused sheet only. Nothing animates. */
+.pt {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--k2) 8%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--k2) 26%, var(--line));
+  --k2: var(--accent);
+}
+.pt__mark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(5px / var(--fs, 1));
+  max-width: 88%;
+  transform: scaleY(var(--uy, 1));
+}
+.pt__icon {
+  display: grid;
+  place-items: center;
+  color: var(--k2);
+}
+.pt__icon svg {
+  width: calc(24px / var(--fs, 1));
+  height: calc(24px / var(--fs, 1));
+}
+.pt__name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-label);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: calc(11px * var(--ts) / var(--fs, 1));
+  color: var(--ink);
+}
+.pt__type {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: calc(9.5px * var(--ts) / var(--fs, 1));
+  color: var(--ink-faint);
+}
+.lo-layer:not(.is-focus) .pt__name,
+.lo-layer:not(.is-focus) .pt__type {
+  visibility: hidden;
+}
+.pt__led {
+  position: absolute;
+  top: calc(9px / var(--fs, 1));
+  right: calc(9px / var(--fs, 1));
+  width: calc(8px / var(--fs, 1));
+  height: calc(8px / var(--fs, 1));
+}
+/* a terminal's state tints its tile: working = accent edge, waiting = amber */
+.pt:has(.pt__led--working) {
+  border-color: color-mix(in srgb, var(--led-working) 60%, var(--line));
+}
+.pt:has(.pt__led--waiting) {
+  border-color: var(--led-waiting);
+  background: color-mix(in srgb, var(--led-waiting) 10%, var(--panel));
+}
+.pt.pc--hint {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 calc(5px / var(--fs, 1)) var(--accent-line);
+}
+
+/* rail: widget counts by type, as small glyphs */
+.lr__kinds {
+  display: inline-flex;
+  gap: 8px;
+}
+.lr__kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.lr__kind svg {
+  width: calc(10px * var(--ts));
+  height: calc(10px * var(--ts));
+  color: var(--ink-ghost);
+}
+.lr.is-focus .lr__kind svg {
+  color: var(--ink-faint);
 }

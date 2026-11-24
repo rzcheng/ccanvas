@@ -19,15 +19,26 @@ import {
   ovStageY,
   ovZ,
   ovZBase,
+  glyphCounts,
   pathWithin,
   shortPath,
+  type Glyph,
   type LedStatus,
   type OvGeom,
 } from '../lib/layers'
 import { baseName } from '../lib/backend'
-import { IconLayers } from './icons'
+import {
+  IconAgent,
+  IconDesktop,
+  IconDiff,
+  IconEditor,
+  IconLayers,
+  IconNote,
+  IconTerminal,
+  IconWeb,
+} from './icons'
 import { layersPerf, sampleTransition, setPerfOn, subscribePerf, type PerfRun } from '../lib/layersPerf'
-import { LayerProxy } from './LayerProxy'
+import { LayerProxy, type ProxyMode } from './LayerProxy'
 import '../styles/layers.css'
 
 // The layers overview: the canvas tilts back into a card file of every layer
@@ -56,6 +67,7 @@ const EASE_SPRING = 'cubic-bezier(0.34, 1.3, 0.64, 1)' // a small overshoot, the
 const PROXY_CAP = 60 // per sheet; past this, coloured boxes only
 const RAIL_W0 = 236
 const GLASS_KEY = 'ccanvas:layers:glass'
+const VIEW_KEY = 'ccanvas:layers:view'
 const WORD: Record<string, string> = { working: 'working', waiting: 'needs you', idle: 'idle', done: 'done' }
 
 type Rec = {
@@ -110,6 +122,14 @@ export function LayerOverview() {
 
   const [focus, setFocusState] = useState(curIdx)
   const [frost, setFrost] = useState(() => localStorage.getItem(GLASS_KEY) !== 'solid')
+  // 'map': every sheet shows type tiles; 'detail': the focused sheet shows
+  // text cards (the others stay tiles, blurred behind it anyway)
+  const [view, setView] = useState<ProxyMode>(() =>
+    localStorage.getItem(VIEW_KEY) === 'detail' ? 'detail' : 'map',
+  )
+  // The other layers' sheets are bare outlines for the first part of the open,
+  // so their content is built a couple of frames in, not in the first frame.
+  const [ready, setReady] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
 
   // the first render's timestamp, for the perf readout (P)
@@ -172,12 +192,19 @@ export function LayerOverview() {
     })
   }
 
-  const busy = (cls: string, ms: number) => {
+  /** Mark a transition: pointer input pauses, and `will-change` goes on the
+   *  stage, the sheets and the one world whose transform animates (`w`). */
+  const busy = (cls: string, ms: number, w?: number) => {
     const root = rootRef.current
     if (!root) return
     root.classList.add('lo--moving', 'lo--busy', cls)
+    const world = w == null ? null : rec(w).world
+    world?.classList.add('is-moving')
     window.clearTimeout(C.current.busyTimer)
-    C.current.busyTimer = window.setTimeout(() => root.classList.remove('lo--moving', 'lo--busy', cls), ms)
+    C.current.busyTimer = window.setTimeout(() => {
+      root.classList.remove('lo--moving', 'lo--busy', cls)
+      world?.classList.remove('is-moving')
+    }, ms)
   }
   const chrome = (on: boolean, dur: number, delay = 0) => {
     for (const node of [bgRef.current, headRef.current, footRef.current]) {
@@ -250,12 +277,18 @@ export function LayerOverview() {
       if (r.dim) r.dim.style.opacity = '0'
       trans(r.glass, ['opacity'], dur ? Math.round(dur * 0.6) : 0, 'ease', dur ? Math.round(dur * 0.4) : 0)
       if (r.glass) r.glass.style.opacity = '0'
-      if (me || others === 'collapse') {
+      if (me) {
         trans(r.world, ['transform', 'opacity'], dur, ease)
         if (r.world) {
           r.world.style.transform = camT(cam)
-          r.world.style.opacity = me ? '1' : ''
+          r.world.style.opacity = '1'
         }
+      } else if (others === 'collapse' && r.world) {
+        // hidden until the fan-out: park it at its own fit now, so only your
+        // sheet's world animates (and gets a compositing layer) on the way in
+        trans(r.world, ['transform'], 0, 'linear')
+        r.world.style.transform = camT(C.current.fits[i])
+        r.world.style.opacity = '0'
       }
       trans(r.item, ['opacity'], dur ? 110 : 0, 'ease')
       if (r.item) r.item.style.opacity = '0'
@@ -288,7 +321,7 @@ export function LayerOverview() {
       trans(r.dim, ['opacity'], 0, 'ease')
       if (r.dim) r.dim.style.opacity = '0'
       if (r.world) {
-        r.world.style.transition = `transform ${wT}ms ${EASE_OUT}, opacity 160ms ease`
+        r.world.style.transition = me ? `transform ${wT}ms ${EASE_OUT}, opacity 160ms ease` : 'opacity 160ms ease'
         r.world.style.transform = camT(C.current.fits[i])
         r.world.style.opacity = me ? '' : '0'
       }
@@ -387,7 +420,7 @@ export function LayerOverview() {
       close()
     }
     if (c.reduced) return finish()
-    busy('lo--diving', T.dive)
+    busy('lo--diving', T.dive, j)
     sampleTransition('dive', T.dive)
     applyFlat(j, cam, 'fly', T.dive, EASE_DIVE)
     chrome(false, 140, T.dive - 140)
@@ -398,6 +431,13 @@ export function LayerOverview() {
     if (C.current.state !== 'open' || n >= MAX_LAYERS) return
     void useStore.getState().newLayerWithPicker()
   }
+
+  const toggleView = () =>
+    setView((v) => {
+      const next = v === 'map' ? 'detail' : 'map'
+      localStorage.setItem(VIEW_KEY, next)
+      return next
+    })
 
   const toggleGlass = () =>
     setFrost((f) => {
@@ -423,6 +463,7 @@ export function LayerOverview() {
     measure()
     if (c.reduced) {
       // reduced motion: an opacity crossfade to a static stack, no tilt or spread
+      setReady(true)
       applyOpen('layout')
       chrome(true, 0)
       root.style.opacity = '0'
@@ -431,6 +472,7 @@ export function LayerOverview() {
       root.style.opacity = '1'
       c.state = 'open'
       root.classList.add('lo--open')
+      useStore.getState().setLayerOverview('open')
       sampleTransition('open', T.fade, { render: renderAt.current, commit: commitAt, effectEnd: performance.now() })
       return
     }
@@ -450,14 +492,22 @@ export function LayerOverview() {
     void stageRef.current!.offsetWidth // commit the start values
     root.classList.remove('lo--entering-start')
     const total = T.exDelay + T.expand + T.exStagger * (n - 1)
-    busy('lo--entering', total)
+    busy('lo--entering', total, curIdx)
     applySlab(curIdx)
+    // build the other sheets' content once the open is under way
+    requestAnimationFrame(() => requestAnimationFrame(() => setReady(true)))
     chrome(true, 220)
+    // the backdrop is the canvas itself (same colour and grid), so it can
+    // cover the live canvas at once; the live widgets are hidden only once
+    // the open has settled (see Canvas), off the animation's critical path
+    trans(bgRef.current, ['opacity'], 0, 'linear')
+    if (bgRef.current) bgRef.current.style.opacity = '1'
     later(() => C.current.state === 'opening' && applyExpand(curIdx), T.exDelay)
     later(() => {
       if (C.current.state !== 'opening') return
       C.current.state = 'open'
       root.classList.add('lo--open')
+      useStore.getState().setLayerOverview('open')
     }, total)
     sampleTransition('open', total, { render: renderAt.current, commit: commitAt, effectEnd: performance.now() })
     return () => {
@@ -495,8 +545,8 @@ export function LayerOverview() {
   }, [n])
 
   // ---------- input: keys, wheel, pointer, resize ----------
-  const live = useRef({ dive, setFocus, newLayer, toggleGlass, focus, curIdx, n, setRenaming, layers })
-  live.current = { dive, setFocus, newLayer, toggleGlass, focus, curIdx, n, setRenaming, layers }
+  const live = useRef({ dive, setFocus, newLayer, toggleGlass, toggleView, focus, curIdx, n, setRenaming, layers })
+  live.current = { dive, setFocus, newLayer, toggleGlass, toggleView, focus, curIdx, n, setRenaming, layers }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -523,6 +573,7 @@ export function LayerOverview() {
       if (k === 'n' || k === 'N') return done(), L.newLayer()
       if (k === 'g' || k === 'G') return done(), L.toggleGlass()
       if (k === 'p' || k === 'P') return done(), setPerfOn(!layersPerf.on)
+      if (k === 'v' || k === 'V') return done(), L.toggleView()
       if ((k === 'r' || k === 'R') && c.state === 'open') return done(), L.setRenaming(L.layers[c.g?.focus ?? 0]?.id ?? null)
       // every other bare key stops here: nothing reaches the canvas underneath
       done()
@@ -593,7 +644,7 @@ export function LayerOverview() {
     // while elementsFromPoint has the card first, so resolve from the full list
     const card = document
       .elementsFromPoint(e.clientX, e.clientY)
-      .find((n) => n instanceof HTMLElement && n.classList.contains('pc') && n.dataset.pid) as
+      .find((n) => n instanceof HTMLElement && !!n.dataset.pid) as
       | HTMLElement
       | undefined
     dive(i, card?.dataset.pid)
@@ -635,7 +686,12 @@ export function LayerOverview() {
               >
                 <div className="lo-glass" ref={(node) => void (rec(i).glass = node)} />
                 <div className="lo-world" ref={(node) => void (rec(i).world = node)}>
-                  <SheetContent els={byLayer.get(l.id) ?? []} />
+                  {(ready || i === curIdx) && (
+                    <SheetContent
+                      els={byLayer.get(l.id) ?? []}
+                      mode={view === 'detail' && i === focus ? 'detail' : 'map'}
+                    />
+                  )}
                 </div>
                 <div className="lo-dim" ref={(node) => void (rec(i).dim = node)} />
               </div>
@@ -702,7 +758,7 @@ export function LayerOverview() {
                   </div>
                   <div className="lr__meta">
                     {dir && <span className="lr__dir">{"\u200e" + shortPath(dir)}</span>}
-                    <span>{st.count ? `${st.count} widget${st.count > 1 ? 's' : ''}` : 'empty'}</span>
+                    {st.count ? <GlyphCounts els={byLayer.get(l.id) ?? []} /> : <span>empty</span>}
                     {st.working > 0 && <span className="m m--working">{st.working}</span>}
                     {st.waiting > 0 && <span className="m m--waiting">{st.waiting} needs you</span>}
                     {st.done > 0 && <span className="m m--done">{st.done}</span>}
@@ -765,6 +821,15 @@ export function LayerOverview() {
         >
           glass: {frost ? 'frosted' : 'solid'} <span className="kbd">G</span>
         </button>
+        <button
+          className="lo-btn"
+          onClick={(e) => {
+            e.stopPropagation()
+            toggleView()
+          }}
+        >
+          view: {view} <span className="kbd">V</span>
+        </button>
       </div>
       <PerfReadout />
       <div className="lo-foot" ref={footRef}>
@@ -780,6 +845,9 @@ export function LayerOverview() {
             <span className="kbd">1</span>–<span className="kbd">9</span> · jump
           </span>
           <span>
+            <span className="kbd">V</span> · map / detail
+          </span>
+          <span>
             <span className="kbd">R</span> · rename
           </span>
           <span>
@@ -793,13 +861,13 @@ export function LayerOverview() {
 
 /** One sheet's proxies. Memoised on the layer's element list, so a focus change
  *  (which re-renders the overview) never touches them. */
-const SheetContent = memo(function SheetContent({ els }: { els: CanvasElement[] }) {
+const SheetContent = memo(function SheetContent({ els, mode }: { els: CanvasElement[]; mode: ProxyMode }) {
   let widgets = 0
   return (
     <>
       {els.map((e) => {
         const capped = e.type === 'widget' && ++widgets > PROXY_CAP
-        return <LayerProxy key={e.id} el={e} rect={capped} />
+        return <LayerProxy key={e.id} el={e} rect={capped} mode={mode} />
       })}
     </>
   )
@@ -838,5 +906,41 @@ function PerfReadout() {
       <div className="lo-perf__row">perf (P to hide) · ms · {document.hidden ? 'HIDDEN: throttled' : 'visible'}</div>
       {layersPerf.runs.map(row)}
     </div>
+  )
+}
+
+const GLYPH_ICON: Record<Glyph, (p: { className?: string }) => JSX.Element> = {
+  agent: IconAgent,
+  mirror: IconDesktop,
+  shell: IconTerminal,
+  code: IconEditor,
+  git: IconDiff,
+  web: IconWeb,
+  note: IconNote,
+}
+const GLYPH_NAME: Record<Glyph, string> = {
+  agent: 'Claude',
+  mirror: 'desktop mirror',
+  shell: 'terminal',
+  code: 'file / editor',
+  git: 'git',
+  web: 'web / VS Code',
+  note: 'note',
+}
+
+/** What's on a layer, by type: one small glyph and a count per kind. */
+function GlyphCounts({ els }: { els: CanvasElement[] }) {
+  return (
+    <span className="lr__kinds">
+      {glyphCounts(els).map(([g, n]) => {
+        const Icon = GLYPH_ICON[g]
+        return (
+          <span key={g} className="lr__kind" title={`${n} ${GLYPH_NAME[g]}`}>
+            <Icon />
+            {n}
+          </span>
+        )
+      })}
+    </span>
   )
 }

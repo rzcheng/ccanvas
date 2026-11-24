@@ -182,7 +182,9 @@ export function Canvas() {
   const openAgentWizard = useStore((s) => s.openAgentWizard)
   const setSnapGuides = useStore((s) => s.setSnapGuides)
   const guides = useStore((s) => s.snapGuides)
-  // while the layers overview is up, the live canvas is hidden (still mounted)
+  // once the layers overview has settled, the live canvas is hidden (still
+  // mounted). Not while it animates in: hiding every widget in the frame the
+  // tilt starts made that frame slow, and the overview's backdrop covers it.
   const overview = useStore((s) => s.layerOverview === 'open')
 
   const [draft, setDraft] = useState<CanvasElement | null>(null)

@@ -133,6 +133,74 @@ export function landingCamera(ws: Workspace, id: string, vw: number, vh: number)
   return { zoom, x: vw / 2 - (b.x + b.w / 2) * zoom, y: vh / 2 - (b.y + b.h / 2) * zoom }
 }
 
+// ---------- what a widget is, at a glance ----------
+
+/** The handful of kinds the overview tells apart, each with its own glyph. */
+export type Glyph = 'agent' | 'mirror' | 'shell' | 'code' | 'git' | 'web' | 'note'
+
+export function widgetGlyph(el: CanvasElement): Glyph | null {
+  if (el.type !== 'widget') return null
+  if (el.mirrorOf === 'desktop') return 'mirror'
+  switch (el.kind) {
+    case 'agent':
+    case 'transcript':
+    case 'claude':
+      return 'agent'
+    case 'terminal':
+    case 'runner':
+      return 'shell'
+    case 'diff':
+    case 'pr':
+    case 'issues':
+    case 'runs':
+      return 'git'
+    case 'web':
+    case 'vscode':
+    case 'video':
+      return 'web'
+    case 'note':
+      return 'note'
+    default:
+      return 'code'
+  }
+}
+
+/** A short type caption: "claude", "shell", "App.tsx", "git", "localhost:5173". */
+export function widgetType(el: CanvasElement): string {
+  if (el.type !== 'widget') return el.type
+  if (el.mirrorOf === 'desktop') return 'desktop'
+  switch (el.kind) {
+    case 'agent':
+      return 'claude'
+    case 'terminal':
+      return 'shell'
+    case 'diff':
+      return 'git'
+    case 'vscode':
+      return 'vs code'
+    case 'web': {
+      const u = (el.url ?? '').replace(/^\w+:\/\//, '').split('/')[0]
+      return u || 'web'
+    }
+    default: {
+      const p = el.path ? el.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() : ''
+      return p || el.kind
+    }
+  }
+}
+
+const GLYPH_ORDER: Glyph[] = ['agent', 'mirror', 'shell', 'code', 'git', 'web', 'note']
+
+/** Widget counts by glyph, in a fixed order, for the overview's rail. */
+export function glyphCounts(els: CanvasElement[]): Array<[Glyph, number]> {
+  const n = new Map<Glyph, number>()
+  for (const e of els) {
+    const g = widgetGlyph(e)
+    if (g) n.set(g, (n.get(g) ?? 0) + 1)
+  }
+  return GLYPH_ORDER.filter((g) => n.has(g)).map((g) => [g, n.get(g)!])
+}
+
 // ---------- status roll-up ----------
 
 export type LedStatus = AgentStatus | 'done'

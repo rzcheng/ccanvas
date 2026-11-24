@@ -285,9 +285,11 @@ export type Store = {
   presenting: boolean
   /** master switch for arrow orchestration (flow edges between agents) */
   flowsEnabled: boolean
-  /** the layers overview (the tilted stack): 'open' hides the live canvas;
-   *  'closing' shows it again under the overview's last fade. Not saved. */
-  layerOverview: false | 'open' | 'closing'
+  /** the layers overview (the tilted stack). 'entering': it's animating in
+   *  over the live canvas (covered by its opaque backdrop); 'open': settled,
+   *  and the live canvas is hidden (still mounted); 'closing': the live
+   *  canvas shows again under the overview's last fade. Not saved. */
+  layerOverview: false | 'entering' | 'open' | 'closing'
 
   // ----- derived -----
   active: () => Workspace | null
@@ -409,7 +411,7 @@ export type Store = {
   setFlowsEnabled: (on: boolean) => void
 
   // ----- layers -----
-  setLayerOverview: (open: boolean | 'closing') => void
+  setLayerOverview: (open: boolean | 'open' | 'closing') => void
   /** add a layer on top of the stack (the first call also materialises the
    *  base layer); returns its id, or null at the nine-layer cap */
   addLayer: (opts?: { name?: string; dir?: string; activate?: boolean }) => string | null
@@ -428,6 +430,12 @@ export type Store = {
   /** move elements to another layer, keeping x/y. Carries group siblings,
    *  label boxes and arrows whose two ends both move. Undoable. */
   moveToLayer: (ids: string[], layerId: string) => void
+  /** move a layer to `toIndex` in the stack (0 = bottom) */
+  moveLayer: (id: string, toIndex: number) => void
+  /** remove a layer, merging its widgets into the layer below it (above, for
+   *  the bottom one). Never closes anything. The base layer stays. Returns
+   *  the id of the layer the widgets went to. */
+  removeLayer: (id: string) => string | null
 
   // ----- history -----
   beginHistory: () => void
@@ -1542,7 +1550,7 @@ export const useStore = create<Store>((set, get) => ({
       markOpenRequest()
       // nothing typed while the stack is up may reach a widget
       ;(document.activeElement as HTMLElement | null)?.blur?.()
-      set({ layerOverview: 'open', activeWidgetId: null, editingTextId: null })
+      set({ layerOverview: 'entering', activeWidgetId: null, editingTextId: null })
     } else set({ layerOverview: open })
   },
 
@@ -1683,6 +1691,50 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
+  moveLayer: (id, toIndex) =>
+    set((s) =>
+      patchActive(s, (w) => {
+        if (!hasLayers(w)) return w
+        const from = w.layers!.findIndex((l) => l.id === id)
+        const to = clamp(toIndex, 0, w.layers!.length - 1)
+        if (from < 0 || from === to) return w
+        const layers = w.layers!.slice()
+        const [l] = layers.splice(from, 1)
+        layers.splice(to, 0, l)
+        return { ...w, layers, dirty: true }
+      }),
+    ),
+
+  removeLayer: (id) => {
+    const ws = get().active()
+    if (!ws || !hasLayers(ws) || id === BASE_LAYER_ID) return null
+    const ls = ws.layers!
+    const i = ls.findIndex((l) => l.id === id)
+    if (i < 0) return null
+    const into = ls[i > 0 ? i - 1 : 1].id
+    // leaving the layer you're on: go to where its widgets are going
+    if (activeLayerId(ws) === id) get().setActiveLayer(into)
+    set((s) =>
+      patchActive(s, (w) => {
+        const elements = w.elements.map((e) => {
+          if (layerOf(e) !== id) return e
+          const copy = { ...e } as CanvasElement
+          if (into === BASE_LAYER_ID) delete copy.layer
+          else copy.layer = into
+          return copy
+        })
+        // back to one layer: the tab saves exactly as a single-layer canvas
+        return normalizeLayers({
+          ...w,
+          elements,
+          layers: w.layers!.filter((l) => l.id !== id),
+          dirty: true,
+        })
+      }),
+    )
+    return into
+  },
+
   // ---------- history ----------
   beginHistory: () => {
     const ws = get().active()
@@ -1700,7 +1752,8 @@ export const useStore = create<Store>((set, get) => ({
     const prev = h.past.pop()
     if (!prev) return
     h.future.push(ws.elements.map((e) => ({ ...e })))
-    set((s) => patchActive(s, (w) => ({ ...w, elements: prev, dirty: true })))
+    // a snapshot may name a layer removed since: normalizing gives it an entry back
+    set((s) => patchActive(s, (w) => normalizeLayers({ ...w, elements: prev, dirty: true })))
     set({ selection: [] })
   },
 
@@ -1711,7 +1764,7 @@ export const useStore = create<Store>((set, get) => ({
     const next = h.future.pop()
     if (!next) return
     h.past.push(ws.elements.map((e) => ({ ...e })))
-    set((s) => patchActive(s, (w) => ({ ...w, elements: next, dirty: true })))
+    set((s) => patchActive(s, (w) => normalizeLayers({ ...w, elements: next, dirty: true })))
     set({ selection: [] })
   },
 }))

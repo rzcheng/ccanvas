@@ -5,6 +5,8 @@ import { useAgents, useDisplayStatus } from '../lib/agents'
 import { useAgentContext } from '../lib/context'
 import { baseName } from '../lib/backend'
 import { KIND_ICON } from '../widgets/WidgetFrame'
+import { IconDesktop } from './icons'
+import { widgetGlyph, widgetType } from '../lib/layers'
 
 // A static stand-in for one element on an overview sheet. Text only, a few
 // dozen nodes at most: no xterm, Monaco or iframe, and nothing animates (an
@@ -22,15 +24,22 @@ const STATUS_WORD: Record<string, string> = {
 const accentOf = (el: WidgetElement) =>
   el.color ?? (el.kind === 'terminal' || el.kind === 'agent' ? 'var(--accent)' : WIDGET_ACCENT[el.kind])
 
+export type ProxyMode = 'map' | 'detail'
+
 export const LayerProxy = memo(function LayerProxy({
   el,
   rect,
+  mode = 'map',
 }: {
   el: CanvasElement
   /** past the per-sheet cap, draw a coloured box only */
   rect?: boolean
+  /** 'map': a type glyph and status per widget (light, reads at any size);
+   *  'detail': a faceplate with the title bar and a few lines of text */
+  mode?: ProxyMode
 }) {
-  if (el.type === 'widget') return rect ? <ProxyRect el={el} /> : <WidgetProxy el={el} />
+  if (el.type === 'widget')
+    return rect ? <ProxyRect el={el} /> : mode === 'map' ? <WidgetTile el={el} /> : <WidgetProxy el={el} />
   if (el.type === 'frame')
     return (
       <div
@@ -90,6 +99,40 @@ function WidgetProxy({ el }: { el: WidgetElement }) {
       </div>
     </div>
   )
+}
+
+/** Glyph component for a widget: the desktop mirror gets its own. */
+function glyphFor(el: WidgetElement) {
+  return widgetGlyph(el) === 'mirror' ? IconDesktop : KIND_ICON[el.kind]
+}
+
+/** Map mode: a tinted tile with the widget's type glyph and status, sized
+ *  for the screen (counter-scaled by --fs) so it reads at any zoom. */
+function WidgetTile({ el }: { el: WidgetElement }) {
+  const isTerm = el.kind === 'terminal' || el.kind === 'agent'
+  const Icon = glyphFor(el)
+  return (
+    <div
+      className="pt"
+      data-pid={el.id}
+      style={{ left: el.x, top: el.y, width: el.w, height: el.h, ['--k2' as string]: accentOf(el) }}
+    >
+      {isTerm ? <TileStatus id={el.id} /> : null}
+      <div className="pt__mark">
+        <span className="pt__icon">
+          <Icon />
+        </span>
+        <span className="pt__name">{el.title}</span>
+        <span className="pt__type">{widgetType(el)}</span>
+      </div>
+    </div>
+  )
+}
+
+/** A terminal's status as the tile's state class (border tint) and LED. */
+function TileStatus({ id }: { id: string }) {
+  const s = useDisplayStatus(id) ?? 'off'
+  return <span className={`pt__led pc__led pc__led--${s} pt__led--${s}`} />
 }
 
 function ProxyLed({ id }: { id: string }) {
