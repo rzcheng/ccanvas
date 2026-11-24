@@ -43,6 +43,11 @@ npm run build      # type-check + bundle the web app into dist/
 npm run app:build  # produce native installers in src-tauri/target/release/bundle
 ```
 
+A release build checks for new official releases and offers to install them.
+If you build the desktop app from a fork or a branch for your own use, turn
+that off so it isn't replaced: put `VITE_NO_UPDATE_CHECK=1` in a `.env.local`
+at the repo root (gitignored), or set it in the environment for the build.
+
 ## Project layout
 
 | Path                     | What lives there                                                |
