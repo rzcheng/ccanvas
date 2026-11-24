@@ -745,6 +745,9 @@ export function LayerOverview() {
   // ---------- drag a card onto another sheet (or its rail label) ----------
   const ghostRef = useRef<HTMLDivElement>(null)
   const dragEndedAt = useRef(0)
+  // a drag in progress when the overview unmounts must not leave listeners
+  const dragCleanup = useRef<(() => void) | null>(null)
+  useEffect(() => () => dragCleanup.current?.(), [])
   const cardAt = (x: number, y: number) =>
     // inside a preserve-3d tree elementFromPoint can report the sheet's glass
     // while elementsFromPoint has the card first, so resolve from the full list
@@ -790,10 +793,14 @@ export function LayerOverview() {
         if (over >= 0) live.current.setFocus(over)
       }
     }
-    const up = () => {
+    const detach = () => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', up)
+      dragCleanup.current = null
+    }
+    const up = () => {
+      detach()
       if (!on) return // a plain click: the sheet's click handler dives
       dragEndedAt.current = performance.now()
       card.classList.remove('is-lifted')
@@ -802,6 +809,8 @@ export function LayerOverview() {
       const ls = live.current.layers
       if (over >= 0 && over !== i) useStore.getState().moveToLayer([id], ls[over].id)
     }
+    dragCleanup.current?.()
+    dragCleanup.current = detach
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', up)

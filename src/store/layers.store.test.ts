@@ -157,3 +157,22 @@ describe('moveLayer and removeLayer', () => {
     expect(ws().elements.every((e) => e.layer === undefined)).toBe(true)
   })
 })
+
+describe('history and the focus-leak rule', () => {
+  it('redo that moves the active widget off the shown layer drops it', () => {
+    useStore.getState().moveToLayer(['w9'], 'L-a') // undoable
+    useStore.getState().undo() // w9 back on base, where you are
+    useStore.setState({ activeWidgetId: 'w9' }) // you click into it
+    useStore.getState().redo() // it leaves the layer again
+    expect(el('w9').layer).toBe('L-a')
+    expect(useStore.getState().activeWidgetId).toBeNull()
+  })
+  it('undo after removing a layer brings its widgets back to a real layer', () => {
+    useStore.getState().moveToLayer(['w9'], 'L-b')
+    useStore.getState().moveToLayer(['w9'], 'L-b') // its history snapshot has w9 on L-b
+    useStore.getState().removeLayer('L-b') // w9 merges into L-a
+    useStore.getState().undo() // restores a snapshot where w9 is on L-b
+    const w = ws()
+    expect(w.layers!.some((l) => l.id === el('w9').layer)).toBe(true)
+  })
+})

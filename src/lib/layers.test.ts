@@ -291,3 +291,25 @@ describe('labelSpots', () => {
     expect(s.get('a')).toBeNull()
   })
 })
+
+describe('loading odd layer lists', () => {
+  it('keeps the first of duplicate ids and names unnamed layers', () => {
+    const n = normalizeLayers(
+      ws({
+        layers: [{ id: 'base', name: 'base' }, { id: 'L-a', name: 'a' }, { id: 'L-a', name: 'dup' }, { id: 'L-b' } as never],
+        elements: [note('x', 'L-a')],
+      }),
+    )
+    expect(n.layers!.map((l) => [l.id, l.name])).toEqual([
+      ['base', 'base'],
+      ['L-a', 'a'],
+      ['L-b', 'layer 3'],
+    ])
+  })
+  it('an unknown active layer falls back to the bottom; an empty layer survives a round trip', () => {
+    const f = toFile(ws({ layers: [{ id: 'base', name: 'base' }, { id: 'L-e', name: 'empty' }], activeLayerId: 'L-e' }))
+    const back = fromFile({ ...JSON.parse(JSON.stringify(f)), activeLayer: 'gone' }, 'x')
+    expect(back.layers!.map((l) => l.id)).toEqual(['base', 'L-e'])
+    expect(back.activeLayerId).toBe('base')
+  })
+})

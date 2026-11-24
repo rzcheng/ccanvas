@@ -88,7 +88,14 @@ export function layerForPath(ws: Workspace, cwd: string | undefined): string | n
 export function normalizeLayers(ws: Workspace): Workspace {
   const used = new Set<string>()
   for (const e of ws.elements) if (e.layer) used.add(e.layer)
-  const have = ws.layers?.filter((l) => l && typeof l.id === 'string') ?? []
+  // well-formed entries only, first of any duplicate id, every one named
+  const seen = new Set<string>()
+  const have: Layer[] = []
+  for (const l of ws.layers ?? []) {
+    if (!l || typeof l.id !== 'string' || seen.has(l.id)) continue
+    seen.add(l.id)
+    have.push(typeof l.name === 'string' && l.name.trim() ? l : { ...l, name: l.id === BASE_LAYER_ID ? 'base' : `layer ${have.length + 1}` })
+  }
   if (!have.length && ![...used].some((id) => id !== BASE_LAYER_ID)) {
     if (ws.layers === undefined && ws.activeLayerId === undefined) return ws
     const { layers: _l, activeLayerId: _a, ...rest } = ws

@@ -176,6 +176,13 @@ function focusedWidgetId(): string | null {
   )
 }
 
+/**
+ * After an undo or redo moved widgets between layers: nothing that isn't on
+ * the layer being shown may stay the active widget or keep keyboard focus
+ * (the focus-leak rule, for history). Defined below the store.
+ */
+let dropHiddenFocus = () => {}
+
 /** Put a new element on the active layer unless it names one. Base-layer
  *  elements carry no `layer` field, so a single-layer canvas saves as before. */
 function stampLayer(ws: Workspace, el: CanvasElement): CanvasElement {
@@ -1767,6 +1774,7 @@ export const useStore = create<Store>((set, get) => ({
     // a snapshot may name a layer removed since: normalizing gives it an entry back
     set((s) => patchActive(s, (w) => normalizeLayers({ ...w, elements: prev, dirty: true })))
     set({ selection: [] })
+    dropHiddenFocus()
   },
 
   redo: () => {
@@ -1778,6 +1786,7 @@ export const useStore = create<Store>((set, get) => ({
     h.past.push(ws.elements.map((e) => ({ ...e })))
     set((s) => patchActive(s, (w) => normalizeLayers({ ...w, elements: next, dirty: true })))
     set({ selection: [] })
+    dropHiddenFocus()
   },
 }))
 
@@ -1786,6 +1795,19 @@ export const useStore = create<Store>((set, get) => ({
  * one tab exists, and closeTab refuses to drop the last one, so this always
  * resolves to a real workspace once the app has started.
  */
+dropHiddenFocus = () => {
+  const st = useStore.getState()
+  const ws = st.active()
+  if (!ws || !hasLayers(ws)) return
+  const here = activeLayerId(ws)
+  const hidden = (id: string | null) => {
+    const el = id ? ws.elements.find((e) => e.id === id) : undefined
+    return !!el && layerOf(el) !== here
+  }
+  if (hidden(focusedWidgetId())) blurFocus()
+  if (hidden(st.activeWidgetId)) useStore.setState({ activeWidgetId: null })
+}
+
 export const selectActive = (s: Store): Workspace =>
   s.tabs.find((t) => t.id === s.activeTabId) ?? s.tabs[0]
 
