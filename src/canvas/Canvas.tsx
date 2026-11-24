@@ -65,6 +65,7 @@ import {
   type Stack,
 } from '../lib/stacks'
 import { trackSnap } from '../lib/snapMotion'
+import { inEmacs } from '../lib/terminal'
 import { IconStack } from '../ui/icons'
 
 type ScreenRect = { x: number; y: number; w: number; h: number }
@@ -271,35 +272,75 @@ export function Canvas() {
     return { x: e.clientX - r.left, y: e.clientY - r.top }
   }
 
-  // ---- Space → quick insert (text or /command widget) ----
+  // ---- Space → spread a selected stack, else quick insert ----
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.code !== 'Space') return
-      const t = e.target as HTMLElement
-      const typing =
+    // the stack to spread: the selected widget's, or the active one's. A
+    // selection that is all one stack (a box-select picks up hidden members) counts.
+    const stackToSpread = () => {
+      const st = useStore.getState()
+      const ids = st.selection.length ? st.selection : st.activeWidgetId ? [st.activeWidgetId] : []
+      if (!ids.length) return null
+      const stk = stackOfId(selectActive(st).elements, ids[0])
+      if (!stk) return null
+      const members = new Set(stk.members.map((m) => m.id))
+      return ids.every((id) => members.has(id)) ? stk : null
+    }
+    // Is this keypress going to something you're typing in? Focus can linger in
+    // a terminal or editor you've already clicked out of (its widget is no
+    // longer active); that stale focus is dropped instead of eating the key.
+    const typingIn = (t: HTMLElement, activeId: string | null) => {
+      const editable =
         t.isContentEditable ||
         t.tagName === 'INPUT' ||
         t.tagName === 'TEXTAREA' ||
         t.closest('.xterm') != null
-      if (typing) return
-      // a focused widget wants the space for itself; the overview owns it while up
-      const st0 = useStore.getState()
-      if (st0.activeWidgetId || st0.spread || st0.layerOverview) return
-      e.preventDefault()
-      // a selected stack opens its spread instead
-      if (st0.selection.length === 1) {
-        const stk = stackOfId(selectActive(st0).elements, st0.selection[0])
-        if (stk) {
-          st0.openSpread(stk.id)
-          return
-        }
+      if (!editable) return false
+      // only terminals and code editors hold on to focus after you click away;
+      // any other field you're in is real typing
+      const sticky = t.closest('.xterm, .monaco-editor') != null
+      const host = t.closest<HTMLElement>('[data-widget-id]')
+      if (sticky && host && host.dataset.widgetId !== activeId) {
+        t.blur()
+        return false
       }
+      return true
+    }
+    // ⌥Space spreads the stack you're in even while typing in it (capture, so
+    // it beats the terminal); a terminal running emacs keeps the key
+    const onAltSpace = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || !e.altKey || e.metaKey || e.ctrlKey) return
+      const st = useStore.getState()
+      if (st.spread || st.layerOverview || inEmacs(e.target)) return
+      const stk = stackToSpread()
+      if (!stk) return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      st.openSpread(stk.id)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || e.altKey || e.metaKey || e.ctrlKey) return
+      const st0 = useStore.getState()
+      if (st0.spread || st0.layerOverview) return
+      if (typingIn(e.target as HTMLElement, st0.activeWidgetId)) return
+      const stk = stackToSpread()
+      if (stk) {
+        e.preventDefault()
+        st0.openSpread(stk.id)
+        return
+      }
+      // a focused widget wants the space for itself
+      if (st0.activeWidgetId) return
+      e.preventDefault()
       const r = rootRef.current?.getBoundingClientRect()
       const fallback = r ? { x: r.width / 2, y: r.height / 2 } : { x: 0, y: 0 }
       setInsertAt(mouseRef.current ?? fallback)
     }
+    window.addEventListener('keydown', onAltSpace, true)
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onAltSpace, true)
+      window.removeEventListener('keydown', onKey)
+    }
   }, [])
 
   // ---- spread view: keys (capture, so nothing else sees them while it's open) ----

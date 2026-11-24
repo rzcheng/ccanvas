@@ -16,9 +16,9 @@ export const SNAP_NEAR = 0.2
 /** overlap at which the dragged widget snaps onto the target */
 export const SNAP_ENTER = 0.55
 /** a snapped widget only lets go below this (hysteresis, so it doesn't flicker) */
-export const SNAP_EXIT = 0.35
+export const SNAP_EXIT = 0.42
 /** how far a snapped widget still leans toward the pointer (0 = pinned) */
-export const SNAP_HOLD = 0.12
+export const SNAP_HOLD = 0.16
 
 type Box = { x: number; y: number; w: number; h: number }
 

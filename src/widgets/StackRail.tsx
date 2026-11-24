@@ -13,6 +13,15 @@ import { KIND_ICON, AgentDot } from './widgetIcons'
 const accentOf = (w: WidgetElement) =>
   w.color ?? (w.kind === 'terminal' || w.kind === 'agent' ? 'var(--accent)' : WIDGET_ACCENT[w.kind])
 
+/** Stop typing into any member of this stack: drop it as the active widget and
+ *  take keyboard focus out of its terminal/editor. */
+function leaveWidgetFocus(stack: Stack) {
+  const st = useStore.getState()
+  if (st.activeWidgetId && stack.members.some((m) => m.id === st.activeWidgetId)) st.setActiveWidget(null)
+  const focused = document.activeElement as HTMLElement | null
+  if (focused?.closest('.widget')) focused.blur()
+}
+
 /** How many of these widgets are waiting on the user right now. */
 function useWaitingCount(ids: string[]): number {
   return useAgents((s) => ids.reduce((n, id) => n + (s.status[id] === 'waiting' ? 1 : 0), 0))
@@ -44,7 +53,12 @@ export function StackRail({
     <div
       ref={railRef}
       className="widget__bar stack-rail"
-      onPointerDown={onGrab}
+      onPointerDown={(e) => {
+        // the rail selects the stack: clicking it stops typing into the front
+        // widget, so Space spreads the stack instead of landing in a terminal
+        leaveWidgetFocus(stack)
+        onGrab(e)
+      }}
       onDoubleClick={(e) => {
         if ((e.target as Element).closest('.stack-rail__tab, .stack-rail__name, button, input')) return
         useStore.getState().openSpread(stack.id)
@@ -192,6 +206,7 @@ function StackTab({
       document.body.classList.remove('is-panning')
       if (mode === 'click' && ev.type === 'pointerup') {
         const s = useStore.getState()
+        leaveWidgetFocus(stack)
         s.setActiveWidget(null)
         s.setSelection([m.id])
       }
