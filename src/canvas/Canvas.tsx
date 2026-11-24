@@ -358,7 +358,18 @@ export function Canvas() {
       const cols = spreadCols(n, rootRef.current?.clientWidth ?? window.innerWidth)
       const move = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: cols, ArrowUp: -cols }[e.key]
       if (/^[1-9]$/.test(e.key) && Number(e.key) <= n) st.closeSpread(stk.members[Number(e.key) - 1].id)
-      else if (move) st.setSpreadHi(clamp(sp.hi + move, 0, n - 1))
+      else if (move && e.shiftKey) {
+        // ⇧ + arrow carries the highlighted card to a new spot in the stack
+        const to = clamp(sp.hi + move, 0, n - 1)
+        if (to !== sp.hi) {
+          const ids = stk.members.map((m) => m.id)
+          const [id] = ids.splice(sp.hi, 1)
+          ids.splice(to, 0, id)
+          st.beginHistory()
+          st.reorderStack(stk.id, ids)
+          st.setSpreadHi(to)
+        }
+      } else if (move) st.setSpreadHi(clamp(sp.hi + move, 0, n - 1))
       else if (e.key === 'Enter' || e.key === ' ') st.closeSpread(stk.members[sp.hi]?.id ?? null)
       else if (e.key === 'Escape') st.closeSpread(null)
       else if (e.key === 'x' || e.key === 'X') pullOutOfSpread(stk.members[sp.hi].id)
@@ -1557,6 +1568,7 @@ export function Canvas() {
             <span className="spread-head__keys">
               <span><kbd>1</kbd>–<kbd>{Math.min(9, spreadStack.members.length)}</kbd> focus</span>
               <span><kbd>←</kbd><kbd>→</kbd> move</span>
+              <span>drag or <kbd>⇧</kbd><kbd>←</kbd><kbd>→</kbd> reorder</span>
               <span><kbd>↵</kbd> open</span>
               <span><kbd>X</kbd> pull out</span>
               <span><kbd>esc</kbd> close</span>
