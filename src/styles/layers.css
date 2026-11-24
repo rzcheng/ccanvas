@@ -474,10 +474,6 @@
 .lo-rail .m--waiting {
   color: var(--led-waiting);
 }
-/* the rail is flat, so the attention LED may pulse here */
-.lo-rail .m--waiting::before {
-  animation: pulse 0.7s ease-in-out infinite;
-}
 .lo-rail .m--done {
   color: var(--led-done);
 }
@@ -880,7 +876,6 @@
   border-radius: 50%;
   background: var(--led-waiting);
   box-shadow: 0 0 0 2px var(--panel), 0 0 6px var(--led-waiting);
-  animation: pulse 0.7s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
   .tb-layer__led {

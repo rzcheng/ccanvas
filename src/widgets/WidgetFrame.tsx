@@ -4,7 +4,7 @@ import { WIDGET_ACCENT, AGENT_COLORS, claudeColorName } from '../lib/types'
 import { useStore, selectActive } from '../store/workspace'
 import { elementBounds, edgeLines, snapValue } from '../lib/geometry'
 import { IconClose, IconLock, IconTag, IconSettings, IconPullOut, IconExternal } from '../ui/icons'
-import { KIND_ICON, AgentDot } from './widgetIcons'
+import { KIND_ICON, StatusGlyph, StatusIcon } from './widgetIcons'
 import { useAgents, useDisplayStatus, sendTo, sendPrompt, isLive as isSessionLive, type AgentMetrics } from '../lib/agents'
 import { useAgentContext } from '../lib/context'
 import { useSyncSessionTitle } from '../lib/sessionTitle'
@@ -415,9 +415,8 @@ export const WidgetFrame = memo(function WidgetFrame({
         >
           <span className="spread-bar__num">{spreadCard.index + 1}</span>
           <span className="widget__icon">
-            <Icon />
+            {isTerminal ? <StatusIcon id={el.id} kind={el.kind} /> : <Icon />}
           </span>
-          {isTerminal && <AgentDot id={el.id} />}
           <span className="widget__title">{el.title}</span>
           {folder && <span className="widget__cwd">{folder}</span>}
           <span className="widget__bar-spacer" />
@@ -438,9 +437,8 @@ export const WidgetFrame = memo(function WidgetFrame({
       ) : (
       <div className="widget__bar" onPointerDown={grab}>
         <span className="widget__icon">
-          <Icon />
+          {isTerminal ? <StatusIcon id={el.id} kind={el.kind} /> : <Icon />}
         </span>
-        {isTerminal && <AgentDot id={el.id} />}
         {renaming ? (
           <input
             ref={titleRef}
@@ -778,7 +776,7 @@ function TermCard({ el }: { el: WidgetElement }) {
       <div className="term-card__name">{el.title}</div>
       <div className="term-card__meta">
         <span className="term-card__status">
-          <span className="term-card__dot" />
+          <StatusGlyph status={status} icon={<KindIcon kind={el.kind} />} className="term-card__icon" />
           {STATUS_LABEL[status] ?? status}
         </span>
         {el.kind === 'agent' && <CardContext el={el} />}
@@ -787,6 +785,10 @@ function TermCard({ el }: { el: WidgetElement }) {
       {lastLine && <div className="term-card__line">{lastLine}</div>}
     </div>
   )
+}
+function KindIcon({ kind }: { kind: WidgetElement['kind'] }) {
+  const I = KIND_ICON[kind]
+  return <I />
 }
 function CardContext({ el }: { el: WidgetElement }) {
   const ctx = useAgentContext(el.cwd, el.sessionId, el.model)

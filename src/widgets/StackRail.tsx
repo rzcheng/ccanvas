@@ -8,7 +8,7 @@ import { useStore, selectActive } from '../store/workspace'
 import { useAgents, useDisplayStatus } from '../lib/agents'
 import { stacksOf, type Stack } from '../lib/stacks'
 import { IconStack, IconSpread } from '../ui/icons'
-import { KIND_ICON, AgentDot } from './widgetIcons'
+import { KIND_ICON, StatusIcon } from './widgetIcons'
 
 const accentOf = (w: WidgetElement) =>
   w.color ?? (w.kind === 'terminal' || w.kind === 'agent' ? 'var(--accent)' : WIDGET_ACCENT[w.kind])
@@ -41,8 +41,6 @@ export function StackRail({
   const railRef = useRef<HTMLDivElement>(null)
   const [renaming, setRenaming] = useState(false)
   const [name, setName] = useState(stack.title)
-  const hiddenIds = stack.members.filter((m) => m.id !== stack.front.id).map((m) => m.id)
-  const waiting = useWaitingCount(hiddenIds)
 
   const commit = () => {
     if (name.trim() && name.trim() !== stack.title) useStore.getState().renameStack(stack.id, name)
@@ -94,6 +92,7 @@ export function StackRail({
         ) : (
           <span className="stack-rail__title">{stack.title}</span>
         )}
+        <span className="stack-rail__count">{stack.members.length}</span>
       </span>
       <div className="stack-rail__tabs">
         {stack.members.map((m) => (
@@ -107,7 +106,6 @@ export function StackRail({
           />
         ))}
       </div>
-      {waiting > 0 && <span className="stack-rail__attn">{waiting} needs you</span>}
       <button
         className="stack-rail__spread"
         title="Spread the stack (Space)"
@@ -115,7 +113,6 @@ export function StackRail({
         onClick={() => useStore.getState().openSpread(stack.id)}
       >
         <IconSpread />
-        <span>{stack.members.length}</span>
       </button>
     </div>
   )
@@ -225,11 +222,8 @@ function StackTab({
       title={m.title}
       onPointerDown={onPointerDown}
     >
-      <span className="stack-rail__tab-icon">
-        <Icon />
-      </span>
+      <span className="stack-rail__tab-icon">{isTerm ? <StatusIcon id={m.id} kind={m.kind} /> : <Icon />}</span>
       <span className="stack-rail__tab-title">{m.title}</span>
-      {isTerm && <AgentDot id={m.id} />}
     </div>
   )
 }

@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { viewCenter, revealLayerOf } from '../lib/view'
 import { useStore, selectActive } from '../store/workspace'
-import { useAgents, useDisplayStatus, sendPrompt } from '../lib/agents'
+import { useAgents, sendPrompt } from '../lib/agents'
 import { watchTranscriptSummary, type TranscriptSummary } from '../lib/transcript'
 import { useAgentContext } from '../lib/context'
 import { isDesktopMirror, isRunningNow, mirrorWaiting, openInClaude } from '../lib/desktopSessions'
 import { waitingTitle } from '../widgets/MirrorStatus'
 import type { WidgetElement, Workspace } from '../lib/types'
-import { IconClose, IconBroadcast } from './icons'
+import { IconClose, IconBroadcast, IconAgent } from './icons'
+import { StatusGlyph, StatusIcon } from '../widgets/widgetIcons'
 import '../styles/agent-tools.css'
 
 
@@ -56,8 +57,9 @@ function MirrorRow({ row, onFocus }: { row: Row; onFocus: () => void }) {
   const last = waiting?.kind === 'ask' ? waiting.question : firstLine(summary?.lastReply)
   return (
     <div className="roster__row" onClick={onFocus}>
-      <span
-        className={`agent-dot agent-dot--${st}`}
+      <StatusGlyph
+        status={st}
+        icon={<IconAgent />}
         title={
           waiting
             ? waitingTitle(waiting)
@@ -126,13 +128,7 @@ function useLastMessages(rows: Row[]): Record<string, string> {
 // all. The spatial canvas is great for layout but poor at "is anything stuck?" —
 // this is the at-scale answer.
 function RosterDot({ id }: { id: string }) {
-  const st = useDisplayStatus(id) ?? 'off'
-  return (
-    <span
-      className={`agent-dot agent-dot--${st}`}
-      title={st === 'done' ? 'just finished' : st}
-    />
-  )
+  return <StatusIcon id={id} kind="agent" />
 }
 
 export function Roster() {

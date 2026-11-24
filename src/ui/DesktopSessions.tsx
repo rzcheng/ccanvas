@@ -9,6 +9,7 @@ import {
   type DesktopSession,
 } from '../lib/desktopSessions'
 import { IconClose, IconReload } from './icons'
+import { StatusGlyph } from '../widgets/widgetIcons'
 import '../styles/agent-tools.css'
 
 // Picker for the Claude desktop app's Code-tab sessions. Pick some and each
@@ -153,8 +154,8 @@ export function DesktopSessions() {
                   checked={on || picked.has(d.cliSessionId)}
                   onChange={() => toggle(d.cliSessionId)}
                 />
-                <span
-                  className={`agent-dot${live ? ' agent-dot--working' : ''}`}
+                <StatusGlyph
+                  status={live ? 'working' : 'idle'}
                   title={live ? 'running now' : 'not running'}
                 />
                 <div className="roster__main">

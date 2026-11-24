@@ -3,6 +3,7 @@ import { viewCenter, revealLayerOf } from '../lib/view'
 import { useStore, selectActive } from '../store/workspace'
 import { useAgents, sendTo } from '../lib/agents'
 import type { WidgetElement } from '../lib/types'
+import { StatusGlyph } from '../widgets/widgetIcons'
 
 // Global "agents need you" inbox. Lists agents currently waiting on input
 // (detected from their output); clicking one jumps to it. Quick yes/enter
@@ -44,7 +45,7 @@ export function AttentionBar() {
         onClick={() => setOpen((o) => !o)}
         title="Agents waiting on input"
       >
-        <span className="attn__dot" />
+        <StatusGlyph status="waiting" className="attn__icon" />
         {waiting.length} waiting
       </button>
       {open && (

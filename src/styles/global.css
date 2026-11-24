@@ -937,13 +937,7 @@ body.is-panning * {
   border-color: var(--k);
 }
 .widget.widget--tagged .widget__bar {
-  background: linear-gradient(
-    color-mix(in srgb, var(--k) 34%, var(--panel-hi)),
-    color-mix(in srgb, var(--k) 22%, var(--panel-2)) 85%
-  );
-}
-.widget--tagged .widget__bar::before {
-  opacity: 1;
+  background: color-mix(in srgb, var(--k) 24%, var(--panel-2));
 }
 .widget--tagged .widget__title {
   color: color-mix(in srgb, var(--k) 25%, var(--ink));
@@ -1020,26 +1014,6 @@ body.is-panning * {
   flex-shrink: 0;
   position: relative;
 }
-.widget__bar {
-  background: linear-gradient(var(--panel-hi), var(--panel-2) 85%);
-  border-bottom-color: var(--line);
-}
-/* thin kind-coloured signal line along the top edge of the faceplate */
-.widget__bar::before {
-  content: '';
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  top: 0;
-  height: 1.5px;
-  border-radius: 0 0 2px 2px;
-  background: var(--k);
-  opacity: 0.55;
-}
-.widget--selected .widget__bar::before,
-.widget--active .widget__bar::before {
-  opacity: 1;
-}
 .widget__bar:active {
   cursor: grabbing;
 }
@@ -1053,11 +1027,9 @@ body.is-panning * {
   height: 13px;
 }
 .widget__title {
-  font-family: var(--font-label);
-  font-size: calc(12px * var(--ts));
+  font-family: var(--font-sans);
+  font-size: calc(13px * var(--ts));
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--ink-dim);
   flex: 0 1 auto;
   max-width: 55%;
@@ -1074,7 +1046,7 @@ body.is-panning * {
 .widget__cwd {
   font-family: var(--font-mono);
   font-size: calc(10.5px * var(--ts));
-  color: var(--ink-faint);
+  color: var(--ink-ghost);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1093,6 +1065,15 @@ body.is-panning * {
 .widget__actions {
   display: flex;
   gap: 1px;
+  /* quiet until you're on the widget */
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.widget:hover .widget__actions,
+.widget--selected .widget__actions,
+.widget--active .widget__actions,
+.widget__actions:focus-within {
+  opacity: 1;
 }
 .widget__btn {
   width: 20px;
@@ -2981,40 +2962,90 @@ body.is-panning * {
 }
 
 /* ============================================================
-   Agent status dot (widget bar)
+   Status icon — a terminal/agent's status drawn in its icon slot
+   (widgets/widgetIcons.tsx). Motion only while working; "needs you"
+   is a steady amber dot that pings once as it starts.
    ============================================================ */
-.agent-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+.status-icon {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
   flex-shrink: 0;
-  background: var(--ink-ghost);
-  box-shadow: inset 0 -1px 1px rgba(0, 0, 0, 0.35);
+  color: inherit;
 }
-.agent-dot--idle {
-  background: var(--led-idle);
-  box-shadow: 0 0 5px rgba(127, 181, 138, 0.5);
+.status-icon svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  display: block;
 }
-.agent-dot--done {
-  background: var(--led-done);
-  box-shadow: 0 0 6px rgba(167, 139, 250, 0.55);
+.status-icon__track {
+  stroke: color-mix(in srgb, var(--ink) 18%, transparent);
 }
-.agent-dot--working {
-  background: var(--led-working);
-  box-shadow: 0 0 8px var(--led-working);
-  animation: pulse 1s ease-in-out infinite;
+.status-icon__arc {
+  stroke: var(--accent);
 }
-.agent-dot--waiting {
-  background: var(--led-waiting);
-  box-shadow: 0 0 8px var(--led-waiting);
-  animation: pulse 0.7s ease-in-out infinite;
+.status-icon--working svg,
+.status-icon--connecting svg {
+  animation: status-spin 0.9s linear infinite;
 }
-.agent-dot--connecting {
-  background: var(--ink-faint);
-  animation: pulse 1.4s ease-in-out infinite;
+.status-icon--connecting .status-icon__arc {
+  stroke: var(--ink-faint);
+}
+@keyframes status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.status-icon--waiting .status-icon__fill {
+  fill: var(--led-waiting);
+}
+.status-icon--waiting .status-icon__halo {
+  stroke: var(--led-waiting);
+  stroke-opacity: 0.35;
+}
+/* one ping as it starts waiting, then still */
+.status-icon--waiting::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  border-radius: 50%;
+  border: 1.5px solid var(--led-waiting);
+  pointer-events: none;
+  animation: status-ping 0.9s ease-out 1 both;
+}
+@keyframes status-ping {
+  from {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(2.1);
+    opacity: 0;
+  }
+}
+.status-icon--done {
+  color: var(--led-done);
+}
+.status-icon--idle .status-icon__fill {
+  fill: var(--led-idle);
+}
+.status-icon--off {
+  opacity: 0.5;
+}
+.status-icon--off .status-icon__fill {
+  fill: var(--ink-ghost);
 }
 @media (prefers-reduced-motion: reduce) {
-  .agent-dot { animation: none !important; }
+  .status-icon svg {
+    animation: none !important;
+  }
+  .status-icon--waiting::after {
+    animation: none;
+    opacity: 0;
+  }
 }
 @keyframes pulse {
   0%, 100% { opacity: 1; }
@@ -4672,13 +4703,9 @@ body.is-panning * {
   font-size: calc(11.5px * var(--ts));
   box-shadow: var(--shadow-panel);
 }
-.attn__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 7px var(--accent);
-  animation: pulse 0.8s ease-in-out infinite;
+.attn__icon {
+  width: 12px;
+  height: 12px;
 }
 .attn__list {
   display: flex;
@@ -5335,28 +5362,9 @@ body.is-panning * {
   gap: 0.45em;
   color: var(--ink-dim);
 }
-.term-card__dot {
-  width: 0.7em;
-  height: 0.7em;
-  border-radius: 50%;
-  background: var(--ink-ghost);
-}
-.term-card--idle .term-card__dot {
-  background: var(--led-idle);
-}
-.term-card--done .term-card__dot {
-  background: var(--led-done);
-  box-shadow: 0 0 0.5em var(--led-done);
-}
-.term-card--working .term-card__dot {
-  background: var(--led-working);
-  box-shadow: 0 0 0.6em var(--led-working);
-  animation: pulse 1.1s ease-in-out infinite;
-}
-.term-card--waiting .term-card__dot {
-  background: var(--led-waiting);
-  box-shadow: 0 0 0.6em var(--led-waiting);
-  animation: pulse 0.8s ease-in-out infinite;
+.term-card__icon {
+  width: 0.9em;
+  height: 0.9em;
 }
 .term-card--waiting .term-card__status {
   color: var(--led-waiting);
@@ -5645,23 +5653,19 @@ body.is-panning * {
 
 /* the tab rail that replaces the front widget's title bar */
 .widget__bar.stack-rail {
-  padding: 0;
+  padding: 0 4px 0 2px;
   gap: 0;
   align-items: stretch;
-}
-.widget__bar.stack-rail::before {
-  display: none;
 }
 .stack-rail__name {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 10px 0 9px;
-  border-right: 1px solid var(--line-soft);
-  color: var(--accent);
+  gap: 7px;
+  padding: 0 10px 0 8px;
+  color: var(--ink-faint);
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 32%;
+  max-width: 40%;
 }
 .stack-rail__icon {
   display: grid;
@@ -5673,24 +5677,25 @@ body.is-panning * {
   height: 13px;
 }
 .stack-rail__title {
-  font-family: var(--font-label);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: calc(13px * var(--ts, 1));
+  font-weight: 600;
+  color: var(--ink-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.stack-rail__count {
+  font: 500 11px var(--font-mono);
+  color: var(--ink-ghost);
+  flex-shrink: 0;
+}
 .stack-rail__input {
   width: 100%;
   min-width: 60px;
-  font-family: var(--font-label);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
   color: var(--ink);
   background: var(--bg);
   border: 1px solid var(--accent-line);
@@ -5700,59 +5705,67 @@ body.is-panning * {
 }
 .stack-rail__tabs {
   display: flex;
+  gap: 2px;
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  padding-top: 4px;
 }
 .stack-rail__tab {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   flex: 0 1 auto;
-  min-width: 36px;
-  max-width: 180px;
-  padding: 0 9px;
-  border-right: 1px solid var(--line-soft);
+  min-width: 32px;
+  max-width: 200px;
+  padding: 0 10px;
+  border-radius: 7px 7px 0 0;
   cursor: pointer;
-  font-family: var(--font-label);
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-size: calc(13px * var(--ts, 1));
+  font-weight: 500;
   color: var(--ink-faint);
+  transition: color 0.15s, background 0.15s;
 }
 .stack-rail__tab:hover {
   color: var(--ink-dim);
   background: color-mix(in srgb, var(--ink) 4%, transparent);
 }
+/* the front tab is cut from the body: same colour, no line under it, and it
+   keeps its full name when the rail runs out of room */
 .stack-rail__tab--front {
-  background: var(--panel);
+  background: var(--bg);
   color: var(--ink);
+  flex-shrink: 0;
 }
-.stack-rail__tab--front::before {
+.stack-rail__tab--front::after {
   content: '';
   position: absolute;
-  left: 8px;
-  right: 8px;
-  top: 0;
-  height: 2px;
-  border-radius: 0 0 2px 2px;
-  background: var(--k);
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: var(--bg);
+}
+.stack-rail__tab--front:hover {
+  background: var(--bg);
 }
 .stack-rail__tab--attn {
   color: var(--led-waiting);
-  background: color-mix(in srgb, var(--led-waiting) 10%, transparent);
 }
 .stack-rail__tab-icon {
   display: grid;
   place-items: center;
-  color: var(--k);
+  color: var(--ink-ghost);
   flex-shrink: 0;
 }
+.stack-rail__tab--front .stack-rail__tab-icon {
+  color: var(--k);
+}
 .stack-rail__tab-icon svg {
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
 }
 .stack-rail__tab-title {
   min-width: 0;
@@ -5760,46 +5773,28 @@ body.is-panning * {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.stack-rail__tab .agent-dot {
-  flex-shrink: 0;
-}
-.stack-rail__attn {
-  align-self: center;
-  margin: 0 4px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: var(--led-waiting);
-  color: var(--bg);
-  font-family: var(--font-label);
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
 .stack-rail__spread {
   align-self: center;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin: 0 6px 0 4px;
-  padding: 3px 7px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--panel);
-  color: var(--ink-dim);
-  font: 500 11px var(--font-mono);
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-faint);
   cursor: pointer;
   flex-shrink: 0;
 }
 .stack-rail__spread:hover {
   color: var(--ink);
-  border-color: var(--accent-line);
+  background: var(--panel-hi);
 }
 .stack-rail__spread svg {
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
 }
 
 /* snap-to-stack: corner brackets that close in on the target and lock on */
