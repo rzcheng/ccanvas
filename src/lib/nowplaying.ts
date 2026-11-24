@@ -555,7 +555,6 @@ export type Command =
   | { do: 'shuffle'; on: boolean }
   | { do: 'repeat'; mode: Repeat }
   | { do: 'like'; on: boolean }
-  | { do: 'open' }
 
 /** The AppleScript statement for a command, or null where the app has none. */
 function verb(source: Source, c: Command): string | null {
@@ -584,8 +583,6 @@ function verb(source: Source, c: Command): string | null {
       return spotify ? `set repeating to ${c.mode !== 'off'}` : `set song repeat to ${c.mode}`
     case 'like':
       return spotify ? null : `set «class pLov» of current track to ${c.on}`
-    case 'open':
-      return 'activate'
   }
 }
 

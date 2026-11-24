@@ -29,7 +29,6 @@ import {
   IconRepeatOne,
   IconHeart,
   IconVolume,
-  IconExternal,
 } from '../ui/icons'
 
 // Now playing: the track Spotify or Music is on, with its transport, a seek
@@ -174,12 +173,9 @@ function Player({ t, others, active }: { t: Track; others: Source[]; active: boo
     >
       <div className="np__grid">
         <div className="np__art-slot">
-          <button className="np__art" title={`Open ${label}`} onClick={() => send({ do: 'open' })}>
+          <div className="np__art">
             <Artwork src={t.artwork} onTint={setTint} />
-            <span className="np__art-open">
-              <IconExternal />
-            </span>
-          </button>
+          </div>
         </div>
         <div className="np__meta">
           <div className="np__swap" key={`${t.source}:${t.id || t.title}`}>

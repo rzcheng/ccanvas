@@ -213,7 +213,7 @@ describe('commands', () => {
     const all: Command[] = [
       { do: 'playpause' }, { do: 'next' }, { do: 'previous' }, { do: 'seek', ms: 1000 },
       { do: 'volume', value: 40 }, { do: 'mute', on: true }, { do: 'shuffle', on: true },
-      { do: 'repeat', mode: 'one' }, { do: 'like', on: true }, { do: 'open' },
+      { do: 'repeat', mode: 'one' }, { do: 'like', on: true },
     ]
     for (const source of ['spotify', 'music'] as const)
       for (const c of all) {

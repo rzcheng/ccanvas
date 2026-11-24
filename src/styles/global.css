@@ -5447,6 +5447,8 @@ body.is-panning * {
   position: absolute;
   inset: 0;
   overflow: hidden;
+  /* everything but the controls moves the widget (WidgetFrame's handleBody) */
+  cursor: grab;
   container: np / size;
   outline: none;
   --np-btn: 26px;
@@ -5506,9 +5508,6 @@ body.is-panning * {
   box-shadow: inset 0 0 0 1px var(--line-soft);
   color: var(--ink-ghost);
 }
-button.np__art {
-  cursor: pointer;
-}
 .np__art > svg {
   width: 34%;
   height: 34%;
@@ -5537,25 +5536,6 @@ button.np__art {
   to {
     opacity: 1;
   }
-}
-/* hovering the artwork offers to open the app */
-.np__art-open {
-  position: absolute;
-  right: 5px;
-  bottom: 5px;
-  width: 20px;
-  height: 20px;
-  padding: 4px;
-  box-sizing: border-box;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--bg) 72%, transparent);
-  color: var(--ink);
-  opacity: 0;
-  transition: opacity 0.14s;
-}
-.np__art:hover .np__art-open,
-.np__art:focus-visible .np__art-open {
-  opacity: 1;
 }
 
 /* ---- text ---- */

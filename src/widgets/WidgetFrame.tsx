@@ -229,9 +229,17 @@ export const WidgetFrame = memo(function WidgetFrame({
   // live bodies (terminals, agents, app-like panels) render their content
   // under the pointer, so the block press is taken in the capture phase,
   // before the content sees it
+  // Now playing is all controls and a handle: its buttons and sliders always
+  // work, and the rest of it (artwork, titles, background) always drags.
+  const handleBody = el.kind === 'nowplaying'
+  const blocks = (e: React.SyntheticEvent) => {
+    if (spreadCard) return false
+    if (handleBody) return !(e.target as Element).closest?.('button, input, select, a, [role="slider"]')
+    return !active
+  }
   const onBlockCapture = (e: React.PointerEvent) => {
     if (tool !== 'select') return
-    if (active || spreadCard || e.button !== 0) return onLiveBodyCapture()
+    if (e.button !== 0 || !blocks(e)) return onLiveBodyCapture()
     // keep the content from seeing this press (preventDefault also suppresses
     // the compatibility mousedown it would start a text selection with)
     e.preventDefault()
@@ -241,7 +249,7 @@ export const WidgetFrame = memo(function WidgetFrame({
   // belt-and-braces for engines that still fire mousedown after a prevented
   // pointerdown: a block you haven't entered must not start a text selection
   const onBlockMouseCapture = (e: React.MouseEvent) => {
-    if (tool === 'select' && !active && !spreadCard && e.button === 0) {
+    if (tool === 'select' && e.button === 0 && blocks(e)) {
       e.preventDefault()
       e.stopPropagation()
     }
