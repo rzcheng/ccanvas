@@ -25,9 +25,17 @@
 // `data-wheel="content"` on an element that scrolls without native overflow
 // (a canvas, a virtualised list, an editor) or handles the wheel itself.
 //
-// A gesture keeps the region and direction it started with until the wheel
-// rests for REST_MS, so momentum never flips between scrolling and zooming as
-// things move under the pointer.
+// A gesture keeps the region it started in, and its direction once known,
+// until it really ends: LATCH_MS without a wheel event, the pointer moving, or
+// a pinch starting or stopping. A short pause mid-pan, or the gap before
+// momentum starts, doesn't end it, so the board sliding under a still pointer
+// never turns a pan into a zoom. Pan is the safe default: a gesture holds at
+// most HOLD_MS before deciding, an unclear one pans, and a zoom whose fingers
+// drift sideways turns into a pan (never the other way).
+//
+// Prior art: browsers latch wheel gestures the same way (Chromium 500 ms and
+// 10 px of pointer movement, Firefox 1.5 s); MapLibre tells a mouse wheel from
+// a trackpad by its deltas.
 
 export type WheelRegion = 'canvas' | 'zoom' | 'content' | 'pass'
 
@@ -47,19 +55,109 @@ export type Gesture = {
   sideToCanvas: boolean
 }
 
-export const REST_MS = 150
-/** px of movement (on either axis) before a gesture's direction is decided */
-const AXIS_MIN = 8
+/** a gesture ends after this long without a wheel event */
+export const LATCH_MS = 600
+/** … or when the pointer moves this far (a trackpad scroll doesn't move it) */
+const MOVE_END = 10
+/** px of movement before a gesture's direction is decided */
+const AXIS_MIN = 16
+/** … or this long after it starts, whatever has arrived by then */
+const HOLD_MS = 60
+/** a zoom turns into a pan once it has moved this far since deciding … */
+const DRIFT_MIN = 24
+/** … with sideways movement past this share of the vertical */
+const DRIFT_RATIO = 0.4
 
-/** The direction of a gesture: 'y' within about 27° of straight up/down,
- *  'x' within about 34° of sideways, 'xy' between; null while too small to tell. */
-export function axisOf(dx: number, dy: number): Gesture['axis'] {
+/** The direction of a movement: 'y' within about 18° of straight up/down,
+ *  'x' within about 34° of sideways, 'xy' between (and for no movement). */
+export function axisOf(dx: number, dy: number): 'x' | 'y' | 'xy' {
   const ax = Math.abs(dx)
   const ay = Math.abs(dy)
-  if (ax < AXIS_MIN && ay < AXIS_MIN) return null
-  if (ay >= ax * 2) return 'y'
+  if (ay > 0 && ay >= ax * 3) return 'y'
   if (ax > ay * 1.5) return 'x'
   return 'xy'
+}
+
+/** A mouse wheel rather than a trackpad: line-mode deltas, or a purely
+ *  vertical delta that is a whole notch (Chrome on macOS sends multiples of
+ *  4.000244; most wheels send 50 or more, always whole numbers). */
+export function isMouseWheel(deltaMode: number, deltaX: number, deltaY: number): boolean {
+  if (deltaMode === 1) return true
+  if (deltaX !== 0 || deltaY === 0) return false
+  const ay = Math.abs(deltaY)
+  const notch = 4.000244140625
+  return Math.abs(ay / notch - Math.round(ay / notch)) < 1e-6 || (ay >= 50 && Number.isInteger(ay))
+}
+
+/** one wheel event, as the tracker sees it */
+export type WheelInput = {
+  /** the event's own timestamp, so a slow frame doesn't look like a pause */
+  t: number
+  x: number
+  y: number
+  dx: number
+  dy: number
+  pinch: boolean
+  mouse: boolean
+}
+
+export type Tracked = Gesture & {
+  t0: number
+  t: number
+  x: number
+  y: number
+  pinch: boolean
+  /** movement summed while the direction is undecided */
+  sx: number
+  sy: number
+  /** movement since the direction was decided, for the zoom-to-pan fallback */
+  ddx: number
+  ddy: number
+}
+
+/** Fold one event into the gesture in progress, starting a new one if the
+ *  last has ended. Pure apart from the two callbacks, which read the DOM:
+ *  `start` gives the region under the pointer, `sideScrolls` whether
+ *  something under it scrolls sideways by dx. */
+export function track(
+  prev: Tracked | null,
+  ev: WheelInput,
+  start: () => WheelRegion,
+  sideScrolls: (dx: number) => boolean,
+): Tracked {
+  const ended =
+    !prev ||
+    ev.t - prev.t > LATCH_MS ||
+    Math.hypot(ev.x - prev.x, ev.y - prev.y) > MOVE_END ||
+    ev.pinch !== prev.pinch
+  const g: Tracked = ended
+    ? {
+        region: start(),
+        axis: null,
+        sideToCanvas: false,
+        t0: ev.t,
+        t: ev.t,
+        x: ev.x,
+        y: ev.y,
+        pinch: ev.pinch,
+        sx: 0,
+        sy: 0,
+        ddx: 0,
+        ddy: 0,
+      }
+    : { ...prev, t: ev.t }
+  if (g.axis === null) {
+    g.sx += ev.dx
+    g.sy += ev.dy
+    if (ev.mouse) g.axis = 'y'
+    else if (Math.hypot(g.sx, g.sy) >= AXIS_MIN || ev.t - g.t0 >= HOLD_MS) g.axis = axisOf(g.sx, g.sy)
+    if (g.axis === 'x') g.sideToCanvas = !sideScrolls(g.sx)
+  } else if (g.axis === 'y' && !ev.mouse) {
+    g.ddx += ev.dx
+    g.ddy += ev.dy
+    if (Math.hypot(g.ddx, g.ddy) >= DRIFT_MIN && Math.abs(g.ddx) > DRIFT_RATIO * Math.abs(g.ddy)) g.axis = 'xy'
+  }
+  return g
 }
 
 /** What one wheel event does, given its gesture. Pure: no DOM, no state. */
@@ -154,29 +252,33 @@ export function regionAt(target: Element | null): { region: WheelRegion; root: E
   return { region: 'pass', root: null }
 }
 
-/** The gesture in progress: its region is decided on its first event, its
- *  direction once its first movements add up to enough to read (a diagonal
- *  swipe often starts nearly straight), and both are kept until the wheel rests. */
-let current:
-  | (Gesture & { t: number; target: Element | null; root: Element | null; sx: number; sy: number })
-  | null = null
+/** the gesture in progress, and where it started */
+let current: Tracked | null = null
+let startTarget: Element | null = null
+let startRoot: Element | null = null
 
 /** Route one wheel event: what it should do, keeping the gesture it belongs to. */
-export function routeWheel(e: WheelEvent, page: { w: number; h: number }, now = performance.now()): WheelAction {
+export function routeWheel(e: WheelEvent, page: { w: number; h: number }): WheelAction {
   const { dx, dy } = wheelDelta(e, page)
-  if (current && now - current.t > REST_MS) current = null
-  if (!current) {
-    const target = e.target as Element | null
-    const { region, root } = regionAt(target)
-    current = { region, root, target, axis: null, sideToCanvas: false, t: now, sx: 0, sy: 0 }
-  }
-  current.t = now
-  if (current.axis === null) {
-    current.sx += dx
-    current.sy += dy
-    current.axis = axisOf(current.sx, current.sy)
-    if (current.axis === 'x' && current.target && current.root)
-      current.sideToCanvas = !canScrollX(current.target, current.root, current.sx)
-  }
-  return decide(current, dx, dy, e.ctrlKey || e.metaKey)
+  const pinch = e.ctrlKey || e.metaKey
+  current = track(
+    current,
+    {
+      t: e.timeStamp,
+      x: e.clientX,
+      y: e.clientY,
+      dx,
+      dy,
+      pinch,
+      mouse: isMouseWheel(e.deltaMode, e.deltaX, e.deltaY),
+    },
+    () => {
+      startTarget = e.target as Element | null
+      const r = regionAt(startTarget)
+      startRoot = r.root
+      return r.region
+    },
+    (sx) => !!startTarget && !!startRoot && canScrollX(startTarget, startRoot, sx),
+  )
+  return decide(current, dx, dy, pinch)
 }

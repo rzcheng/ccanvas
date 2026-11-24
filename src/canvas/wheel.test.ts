@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { axisOf, decide, wheelDelta, zoomFactor, type Gesture } from './wheel'
+import {
+  axisOf,
+  decide,
+  isMouseWheel,
+  track,
+  wheelDelta,
+  zoomFactor,
+  type Gesture,
+  type Tracked,
+  type WheelInput,
+  type WheelRegion,
+} from './wheel'
 
 const g = (region: Gesture['region'], axis: Gesture['axis'], sideToCanvas = false): Gesture => ({
   region,
@@ -8,16 +19,73 @@ const g = (region: Gesture['region'], axis: Gesture['axis'], sideToCanvas = fals
 })
 
 describe('axisOf', () => {
-  it('waits until the movement is big enough to read', () => {
-    expect(axisOf(2, -3)).toBeNull()
-    expect(axisOf(5, -7)).toBeNull()
-  })
-  it('tells up/down, sideways and diagonal apart', () => {
+  it('needs a nearly straight swipe (within about 18°) to call it up/down', () => {
     expect(axisOf(0, -12)).toBe('y')
     expect(axisOf(5, 20)).toBe('y')
+    expect(axisOf(8, 20)).toBe('xy')
     expect(axisOf(30, 4)).toBe('x')
     expect(axisOf(30, 25)).toBe('xy')
-    expect(axisOf(-12, 14)).toBe('xy')
+    expect(axisOf(0, 0)).toBe('xy')
+  })
+})
+
+describe('isMouseWheel', () => {
+  it('knows a wheel notch from a trackpad', () => {
+    expect(isMouseWheel(1, 0, 3)).toBe(true)
+    expect(isMouseWheel(0, 0, 4.000244140625)).toBe(true)
+    expect(isMouseWheel(0, 0, -8.00048828125)).toBe(true)
+    expect(isMouseWheel(0, 0, 100)).toBe(true)
+    expect(isMouseWheel(0, 0, 3)).toBe(false)
+    expect(isMouseWheel(0, 2, 100)).toBe(false)
+    expect(isMouseWheel(0, 0, 57.5)).toBe(false)
+  })
+})
+
+describe('track', () => {
+  const ev = (t: number, dx: number, dy: number, o: Partial<WheelInput> = {}): WheelInput => ({
+    t, x: 100, y: 100, dx, dy, pinch: false, mouse: false, ...o,
+  })
+  const run = (evs: WheelInput[], regions: WheelRegion[] = ['zoom']) => {
+    let g: Tracked | null = null
+    let i = 0
+    const out: Tracked[] = []
+    for (const e of evs) {
+      g = track(g, e, () => regions[Math.min(i++, regions.length - 1)], () => false)
+      out.push(g)
+    }
+    return out
+  }
+  it('holds until it has moved enough to read the direction', () => {
+    const [a, b] = run([ev(0, 1, -5), ev(10, 1, -12)])
+    expect(a.axis).toBeNull()
+    expect(b.axis).toBe('y')
+  })
+  it('decides after a short wait even if the movement is tiny, and pans if unclear', () => {
+    const [, b] = run([ev(0, 2, -2), ev(70, 2, -2)])
+    expect(b.axis).toBe('xy')
+  })
+  it('reads a diagonal that starts nearly straight as a diagonal', () => {
+    const gs = run([ev(0, 1, -6), ev(8, 4, -6), ev(16, 5, -6)])
+    const g = gs[gs.length - 1]
+    expect(g.axis).toBe('xy')
+  })
+  it('keeps the gesture through a short pause, so a pan stays a pan', () => {
+    const gs = run([ev(0, 0, 20), ev(300, 0, 20)], ['canvas', 'zoom'])
+    expect(gs[1].region).toBe('canvas')
+  })
+  it('starts a new gesture after a long pause, a pointer move, or a pinch', () => {
+    expect(run([ev(0, 0, 20), ev(700, 0, 20)], ['canvas', 'zoom'])[1].region).toBe('zoom')
+    expect(run([ev(0, 0, 20), ev(20, 0, 20, { x: 140 })], ['canvas', 'zoom'])[1].region).toBe('zoom')
+    expect(run([ev(0, 0, 20), ev(20, 0, 2, { pinch: true })], ['canvas', 'zoom'])[1].region).toBe('zoom')
+  })
+  it('turns a zoom into a pan when the fingers drift sideways, never back', () => {
+    const gs = run([ev(0, 0, -20), ev(10, 8, -10), ev(20, 8, -10), ev(30, 0, -20)])
+    expect(gs[0].axis).toBe('y')
+    expect(gs[2].axis).toBe('xy')
+    expect(gs[3].axis).toBe('xy')
+  })
+  it('zooms straight away on a mouse wheel notch', () => {
+    expect(run([ev(0, 0, 4.000244140625, { mouse: true })])[0].axis).toBe('y')
   })
 })
 
