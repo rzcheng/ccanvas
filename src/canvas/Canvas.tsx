@@ -179,6 +179,31 @@ function canScroll(n: Element, dx: number, dy: number): boolean {
   return x || y
 }
 
+/** Monaco scrolls by moving its own layers, not native overflow: `.view-lines`
+ *  is as wide as the scroll width, `.lines-content` sits at -scrollLeft. */
+function monacoCanScrollX(ed: Element, dx: number): boolean {
+  const sc = ed.querySelector<HTMLElement>('.editor-scrollable')
+  const content = sc?.querySelector<HTMLElement>('.lines-content')
+  const lines = content?.querySelector<HTMLElement>('.view-lines')
+  if (!sc || !content || !lines) return false
+  const left = -parseFloat(content.style.left) || 0
+  const max = (parseFloat(lines.style.width) || 0) - sc.clientWidth
+  return dx > 0 ? left < max - 1 : left > 0
+}
+
+/** whether anything between the pointer and its widget can scroll sideways by dx */
+function canScrollX(target: Element, widget: Element, dx: number): boolean {
+  const ed = target.closest('.monaco-editor')
+  if (ed && widget.contains(ed)) return monacoCanScrollX(ed, dx)
+  for (let n: Element | null = target; n && n !== widget; n = n.parentElement) {
+    if (canScroll(n, dx, 0)) return true
+  }
+  return false
+}
+
+/** who owns the current wheel gesture over a widget, until the wheel rests for 150 ms */
+let sideLatch: { canvas: boolean; t: number } | null = null
+
 /** A spread card's hit layer sits over its body (clicks choose, drags reorder),
  *  so the wheel lands there instead of on the widget. Re-send it to what's under
  *  the pointer: widgets that scroll themselves (xterm, Monaco) cancel the copy;
@@ -497,24 +522,46 @@ export function Canvas() {
       const zoomGesture = e.ctrlKey || e.metaKey
       const widgetNode = (e.target as HTMLElement | null)?.closest?.('.widget') as HTMLElement | null
       const overWidget = !!widgetNode
+      // normalise delta across line / page wheel modes
+      let dx = e.deltaX
+      let dy = e.deltaY
+      if (e.deltaMode === 1) {
+        dx *= 16
+        dy *= 16
+      } else if (e.deltaMode === 2) {
+        dx *= node.clientWidth
+        dy *= node.clientHeight
+      }
       // plain scroll over a widget → let that widget scroll its own content,
-      // except a terminal you haven't clicked into: that scroll moves the canvas
-      if (overWidget && !zoomGesture && !isIdleTerminal(widgetNode)) return
+      // except a terminal you haven't clicked into: that scroll moves the canvas.
+      // A sideways swipe the content can't follow pans the canvas too; each
+      // gesture keeps its first decision, momentum included.
+      const now = performance.now()
+      if (sideLatch && now - sideLatch.t > 150) sideLatch = null
+      if (sideLatch) sideLatch.t = now
+      if (overWidget && !zoomGesture && !isIdleTerminal(widgetNode)) {
+        if (!sideLatch) {
+          const ax = Math.abs(dx)
+          const ay = Math.abs(dy)
+          // too small to read the direction yet: leave it undecided
+          if (ax >= 4 || ay >= 4) {
+            const side = ax >= 4 && ax > ay * 1.5
+            sideLatch = { canvas: side && !canScrollX(e.target as Element, widgetNode, dx), t: now }
+          }
+        }
+        if (!sideLatch?.canvas) return
+      }
       e.preventDefault()
-      // zooming while hovering a widget: don't also scroll the widget under it
+      // zooming or panning while hovering a widget: don't also scroll the widget under it
       if (overWidget) e.stopPropagation()
       const live = pendingCam.current ?? selectActive(useStore.getState()).camera
       const pt = getPt(e)
-      // normalise delta across line / page wheel modes
-      let dy = e.deltaY
-      if (e.deltaMode === 1) dy *= 16
-      else if (e.deltaMode === 2) dy *= node.clientHeight
       if (zoomGesture) {
         // gentle per-event step, clamped so a single notch never jumps far
         const factor = Math.exp(-clamp(dy, -100, 100) * 0.0017)
         scheduleCamera(zoomAt(live, pt, live.zoom * factor))
       } else {
-        scheduleCamera({ ...live, x: live.x - e.deltaX, y: live.y - e.deltaY })
+        scheduleCamera({ ...live, x: live.x - dx, y: live.y - dy })
       }
     }
     // capture phase so we can intercept before the widget when zooming
