@@ -782,6 +782,17 @@ export function LayerOverview() {
     dive(i, cardAt(e.clientX, e.clientY)?.dataset.pid)
   }
 
+  /** How many list rows fit above layer i's rail label: the room up to the
+   *  label above it (or the header), less the name and meta lines. */
+  const railRows = (i: number) => {
+    const g = C.current.g
+    if (!g) return 6
+    const y = ovRailTarget(g, i, C.current.railW).y
+    const above = i + 1 < n ? ovRailTarget(g, i + 1, C.current.railW).y + 6 : OV.HEAD_H + 8
+    const rowH = 21 * textScale()
+    return Math.max(2, Math.min(14, Math.floor((y - above - 62 * textScale()) / rowH)))
+  }
+
   // ---------- render ----------
   const stats = layers.map((l) => layerStatus(ws, l.id, statusOf))
   const total = stats.reduce(
@@ -852,7 +863,15 @@ export function LayerOverview() {
           const here = i === curIdx
           const isFocus = i === focus
           const dir = l.dir
-          const els = (byLayer.get(l.id) ?? []).filter((e): e is WidgetElement => e.type === 'widget')
+          // agents that need you first, then working, then the rest
+          const rank = (e: WidgetElement) => ({ waiting: 0, working: 1, done: 2 })[statusOf(e.id) as string] ?? 3
+          const els = (byLayer.get(l.id) ?? [])
+            .filter((e): e is WidgetElement => e.type === 'widget')
+            .sort((a, b) => rank(a) - rank(b))
+          // the focused layer's list grows upward into its sheet's reveal gap:
+          // show only as many rows as fit before the label above it
+          const rows = isFocus ? railRows(i) : 0
+          const shown = els.length > rows ? els.slice(0, Math.max(0, rows - 1)) : els
           return (
             <div
               key={l.id}
@@ -912,7 +931,7 @@ export function LayerOverview() {
                   </div>
                   {isFocus && els.length > 0 && (
                     <div className="lr__list" onPointerLeave={() => hint(null)}>
-                      {els.slice(0, 14).map((e) => (
+                      {shown.map((e) => (
                         <RailRow
                           key={e.id}
                           el={e}
@@ -920,7 +939,9 @@ export function LayerOverview() {
                           onHover={() => hint(e.id)}
                         />
                       ))}
-                      {els.length > 14 && <div className="lr__more">+{els.length - 14} more</div>}
+                      {shown.length < els.length && (
+                        <div className="lr__more">+{els.length - shown.length} more</div>
+                      )}
                     </div>
                   )}
                 </div>
