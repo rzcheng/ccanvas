@@ -3,6 +3,7 @@ mod desktop_sessions;
 mod editor;
 mod files;
 mod media;
+mod native_view;
 mod plan_usage;
 mod pty;
 mod term_profile;
@@ -146,6 +147,12 @@ pub fn run() {
             files::reveal_path,
             files::home_dir,
             media::media_info,
+            native_view::native_view_open,
+            native_view::native_view_bounds,
+            native_view::native_view_visible,
+            native_view::native_view_navigate,
+            native_view::native_view_go,
+            native_view::native_view_close,
             web_proxy::web_proxy_url,
             usage::claude_usage,
             transcript::transcript_summary,
