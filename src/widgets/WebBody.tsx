@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { WidgetElement } from '../lib/types'
 import { useStore } from '../store/workspace'
 import {
@@ -15,6 +16,7 @@ import {
 import { normalizeUrl, isHttpUrl, isLocalUrl, looksLikeLocalFile, hostOf } from '../lib/weburl'
 import { nativeViewSupported, useNativeView } from '../lib/nativeView'
 import { focusWidget, toggleFocus } from '../lib/view'
+import { useFocusSlot, stopCanvas } from '../ui/focusSlots'
 import { IconReload, IconWeb, IconFile, IconBack, IconForward, IconExternal } from '../ui/icons'
 
 // Web widget. Two modes, stored on the same widget (setting one clears the other):
@@ -49,6 +51,8 @@ export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) 
   const urlRef = useRef<HTMLInputElement>(null)
   const editing = useRef(false)
 
+  const toolsSlot = useFocusSlot('tools')
+  const inStrip = focused && !!toolsSlot
   const fileMode = !!el.path
   const abs = resolvePath(el.cwd, el.path ?? '')
 
@@ -209,67 +213,69 @@ export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) 
       ? "Couldn't open the browser view here, so this is the preview."
       : null
 
-  return (
-    <div className="web">
-      <div className="web__bar">
-        <button className="web__nav" title="Back" disabled={!canBack} onClick={() => step(-1)}>
-          <IconBack />
-        </button>
-        <button className="web__nav" title="Forward" disabled={!canForward} onClick={() => step(1)}>
-          <IconForward />
-        </button>
+  // in focus mode the bar moves into the focus strip, the one bar there
+  // (focusSlots.ts), and the page sits flush under it
+  const bar = (
+    <div className={`web__bar${inStrip ? ' web__bar--strip' : ''}`} {...(inStrip ? stopCanvas : {})}>
+      <button className="web__nav" title="Back" disabled={!canBack} onClick={() => step(-1)}>
+        <IconBack />
+      </button>
+      <button className="web__nav" title="Forward" disabled={!canForward} onClick={() => step(1)}>
+        <IconForward />
+      </button>
+      <button
+        className={`web__nav${loading && nativeLive ? ' web__nav--busy' : ''}`}
+        title="Reload"
+        onClick={reload}
+      >
+        <IconReload />
+      </button>
+      <input
+        ref={urlRef}
+        className="web__url"
+        value={input}
+        placeholder="Address, localhost:3000 or ./index.html"
+        spellCheck={false}
+        onFocus={(e) => {
+          editing.current = true
+          e.currentTarget.select()
+        }}
+        onBlur={() => {
+          editing.current = false
+        }}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={(e) => {
+          e.stopPropagation()
+          if (e.key === 'Enter') {
+            go(input)
+            e.currentTarget.blur()
+          } else if (e.key === 'Escape') {
+            setInput(fileMode ? (el.path ?? '') : current)
+            e.currentTarget.blur()
+          }
+        }}
+        onPointerDown={(e) => e.stopPropagation()}
+      />
+      {fileMode && (
+        <span className="web__tag web__tag--live" title="Live-reloading on file change">
+          <span className="web__live-dot" />
+          live
+        </span>
+      )}
+      {remote && !focused && (
         <button
-          className={`web__nav${loading && nativeLive ? ' web__nav--busy' : ''}`}
-          title="Reload"
-          onClick={reload}
+          className="web__tag"
+          title={
+            nativeViewSupported()
+              ? 'On the canvas this is a preview. Focus the widget (⌘⇧↵) for the full browser, with your logins.'
+              : 'On the canvas this is a preview: no logins, and some pages won’t work.'
+          }
+          onClick={() => nativeViewSupported() && toggleFocus(el.id)}
         >
-          <IconReload />
+          preview
         </button>
-        <input
-          ref={urlRef}
-          className="web__url"
-          value={input}
-          placeholder="Address, localhost:3000 or ./index.html"
-          spellCheck={false}
-          onFocus={(e) => {
-            editing.current = true
-            e.currentTarget.select()
-          }}
-          onBlur={() => {
-            editing.current = false
-          }}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            e.stopPropagation()
-            if (e.key === 'Enter') {
-              go(input)
-              e.currentTarget.blur()
-            } else if (e.key === 'Escape') {
-              setInput(fileMode ? (el.path ?? '') : current)
-              e.currentTarget.blur()
-            }
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-        />
-        {fileMode && (
-          <span className="web__tag web__tag--live" title="Live-reloading on file change">
-            <span className="web__live-dot" />
-            live
-          </span>
-        )}
-        {remote && !focused && (
-          <button
-            className="web__tag"
-            title={
-              nativeViewSupported()
-                ? 'On the canvas this is a preview. Focus the widget (⌘⇧↵) for the full browser, with your logins.'
-                : 'On the canvas this is a preview: no logins, and some pages won’t work.'
-            }
-            onClick={() => nativeViewSupported() && toggleFocus(el.id)}
-          >
-            preview
-          </button>
-        )}
+      )}
+      {!inStrip && (
         <button
           className={`web__nav${fileMode ? ' web__nav--on' : ''}`}
           title="Open a local HTML file (live-reloads on save)"
@@ -277,15 +283,21 @@ export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) 
         >
           <IconFile />
         </button>
-        <button
-          className="web__nav"
-          title="Open in your browser"
-          disabled={!externalTarget}
-          onClick={() => externalTarget && void openExternal(externalTarget)}
-        >
-          <IconExternal />
-        </button>
-      </div>
+      )}
+      <button
+        className="web__nav"
+        title="Open in your browser"
+        disabled={!externalTarget}
+        onClick={() => externalTarget && void openExternal(externalTarget)}
+      >
+        <IconExternal />
+      </button>
+    </div>
+  )
+
+  return (
+    <div className="web">
+      {inStrip ? createPortal(bar, toolsSlot!) : bar}
       {fallback && fallbackNote && <div className="web__note">{fallbackNote}</div>}
       {fileMode ? (
         fileHtml != null ? (

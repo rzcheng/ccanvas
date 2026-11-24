@@ -1,4 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useFocusSlot, stopCanvas } from '../ui/focusSlots'
 import type { WidgetElement } from '../lib/types'
 import { WIDGET_ACCENT, AGENT_COLORS, claudeColorName } from '../lib/types'
 import { useStore, selectActive } from '../store/workspace'
@@ -539,6 +541,122 @@ export const WidgetFrame = memo(function WidgetFrame({
       }
     : {}
 
+  // the title bar's parts: in the bar on the canvas, in the focus strip while
+  // focused (FocusHeader), so focus mode has one bar
+  const titleBits = (
+    <>
+      <span className="widget__icon">
+        <WidgetSlotIcon el={el} />
+      </span>
+      {renaming ? (
+        <input
+          ref={titleRef}
+          className="widget__title"
+          style={{ background: 'transparent', border: 'none' }}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={commitName}
+          onPointerDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            e.stopPropagation()
+            if (e.key === 'Enter') commitName()
+            if (e.key === 'Escape') {
+              setName(el.title)
+              setRenaming(false)
+            }
+          }}
+        />
+      ) : (
+        <span
+          className="widget__title"
+          onDoubleClick={(e) => {
+            e.stopPropagation()
+            setRenaming(true)
+          }}
+        >
+          {el.title}
+        </span>
+      )}
+      {!renaming && folder && (
+        <span className="widget__cwd" title={el.cwd}>
+          {folder}
+        </span>
+      )}
+      {el.kind === 'agent' && <AgentMeter id={el.id} />}
+      {el.mirrorOf === 'desktop' && (
+        <span
+          className="dsk-badge"
+          title="Read-only mirror of a Claude desktop-app session. Open it in Claude to reply, or right-click to fork it into a terminal."
+        >
+          Desktop
+        </span>
+      )}
+      {el.mirrorOf === 'desktop' && <MirrorWaitChip el={el} />}
+      {(el.kind === 'agent' || el.mirrorOf === 'desktop') && <ContextMeter el={el} />}
+    </>
+  )
+  const actionButtons = (
+    <>
+      {el.mirrorOf === 'desktop' && el.desktopId && (
+        <button
+          className="widget__btn"
+          title="Open in the Claude app (reply, answer, approve)"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => openInClaude(el)}
+        >
+          <IconExternal />
+        </button>
+      )}
+      {el.kind === 'agent' && (
+        <button
+          className="widget__btn"
+          title="Agent settings"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() =>
+            openAgentWizard({ x: el.x + el.w / 2, y: el.y + el.h / 2, editId: el.id })
+          }
+        >
+          <IconSettings />
+        </button>
+      )}
+      {isTerminal && (
+        <button
+          className={`widget__btn${labeling ? ' widget__btn--on' : ''}`}
+          title="Label"
+          data-label-toggle
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => setLabelingWidget(labeling ? null : el.id)}
+        >
+          <IconTag />
+        </button>
+      )}
+      <button
+        className={`widget__btn${el.locked ? ' widget__btn--on' : ''}`}
+        title={el.locked ? 'Unlock' : 'Lock position'}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={() => {
+          beginHistory()
+          mutateElement(el.id, (w) => {
+            w.locked = !w.locked
+          })
+        }}
+      >
+        <IconLock />
+      </button>
+      <button
+        className="widget__btn widget__btn--danger"
+        title="Close widget"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={() => {
+          beginHistory()
+          removeElements([el.id])
+        }}
+      >
+        <IconClose />
+      </button>
+    </>
+  )
+
   return (
     <>
     {stackFront && !spreadCard && !focusRole && visible && <StackEdges el={el} stack={stack!} />}
@@ -595,7 +713,7 @@ export const WidgetFrame = memo(function WidgetFrame({
         </div>
       ) : snapPreview ? (
         <StackRail stack={snapPreview.stack} ghostIds={snapPreview.ghostIds} onGrab={grab} />
-      ) : stackFront ? (
+      ) : focusRole ? null : stackFront ? (
         <StackRail stack={stack!} onGrab={grab} />
       ) : (
       <div
@@ -609,54 +727,7 @@ export const WidgetFrame = memo(function WidgetFrame({
           toggleFocus(el.id)
         }}
       >
-        <span className="widget__icon">
-          <WidgetSlotIcon el={el} />
-        </span>
-        {renaming ? (
-          <input
-            ref={titleRef}
-            className="widget__title"
-            style={{ background: 'transparent', border: 'none' }}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={commitName}
-            onPointerDown={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              e.stopPropagation()
-              if (e.key === 'Enter') commitName()
-              if (e.key === 'Escape') {
-                setName(el.title)
-                setRenaming(false)
-              }
-            }}
-          />
-        ) : (
-          <span
-            className="widget__title"
-            onDoubleClick={(e) => {
-              e.stopPropagation()
-              setRenaming(true)
-            }}
-          >
-            {el.title}
-          </span>
-        )}
-        {!renaming && folder && (
-          <span className="widget__cwd" title={el.cwd}>
-            {folder}
-          </span>
-        )}
-        {el.kind === 'agent' && <AgentMeter id={el.id} />}
-        {el.mirrorOf === 'desktop' && (
-          <span
-            className="dsk-badge"
-            title="Read-only mirror of a Claude desktop-app session. Open it in Claude to reply, or right-click to fork it into a terminal."
-          >
-            Desktop
-          </span>
-        )}
-        {el.mirrorOf === 'desktop' && <MirrorWaitChip el={el} />}
-        {(el.kind === 'agent' || el.mirrorOf === 'desktop') && <ContextMeter el={el} />}
+        {titleBits}
         <span className="widget__bar-spacer" />
         <div className="widget__actions">
           <button
@@ -667,65 +738,17 @@ export const WidgetFrame = memo(function WidgetFrame({
           >
             {focusRole === 'on' ? <IconUnfocus /> : <IconFocus />}
           </button>
-          {el.mirrorOf === 'desktop' && el.desktopId && (
-            <button
-              className="widget__btn"
-              title="Open in the Claude app (reply, answer, approve)"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => openInClaude(el)}
-            >
-              <IconExternal />
-            </button>
-          )}
-          {el.kind === 'agent' && (
-            <button
-              className="widget__btn"
-              title="Agent settings"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() =>
-                openAgentWizard({ x: el.x + el.w / 2, y: el.y + el.h / 2, editId: el.id })
-              }
-            >
-              <IconSettings />
-            </button>
-          )}
-          {isTerminal && (
-            <button
-              className={`widget__btn${labeling ? ' widget__btn--on' : ''}`}
-              title="Label"
-              data-label-toggle
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => setLabelingWidget(labeling ? null : el.id)}
-            >
-              <IconTag />
-            </button>
-          )}
-          <button
-            className={`widget__btn${el.locked ? ' widget__btn--on' : ''}`}
-            title={el.locked ? 'Unlock' : 'Lock position'}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => {
-              beginHistory()
-              mutateElement(el.id, (w) => {
-                w.locked = !w.locked
-              })
-            }}
-          >
-            <IconLock />
-          </button>
-          <button
-            className="widget__btn widget__btn--danger"
-            title="Close widget"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => {
-              beginHistory()
-              removeElements([el.id])
-            }}
-          >
-            <IconClose />
-          </button>
+          {actionButtons}
         </div>
       </div>
+      )}
+      {focusRole === 'on' && (
+        <FocusHeader accent={accent}>
+          {{
+            title: stackFront ? <StackRail stack={stack!} onGrab={() => {}} /> : titleBits,
+            actions: actionButtons,
+          }}
+        </FocusHeader>
       )}
       {labeling && <LabelPopover el={el} onClose={() => setLabelingWidget(null)} />}
 
@@ -1040,5 +1063,37 @@ function AgentMeter({ id }: { id: string }) {
     <span className="widget__meter" title="turns · active time · cost (run /cost)">
       {fmtMeter(m)}
     </span>
+  )
+}
+
+/** A focused widget's header, rendered into the focus strip (focusSlots.ts)
+ *  in place of its own title bar. */
+function FocusHeader({
+  accent,
+  children,
+}: {
+  accent: string
+  children: { title: React.ReactNode; actions: React.ReactNode }
+}) {
+  const title = useFocusSlot('title')
+  const actions = useFocusSlot('actions')
+  const style = { '--k': accent } as React.CSSProperties
+  return (
+    <>
+      {title &&
+        createPortal(
+          <div className="focus-strip__part focus-strip__part--title" style={style} {...stopCanvas}>
+            {children.title}
+          </div>,
+          title,
+        )}
+      {actions &&
+        createPortal(
+          <div className="focus-strip__part" style={style} {...stopCanvas}>
+            {children.actions}
+          </div>,
+          actions,
+        )}
+    </>
   )
 }

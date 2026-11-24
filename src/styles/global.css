@@ -1258,6 +1258,17 @@ body.is-panning * {
   border-bottom: 1px solid var(--line-soft);
   background: var(--panel-2);
 }
+/* the same bar inside the focus strip: no panel of its own */
+.web__bar--strip {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.web__bar--strip .web__url {
+  min-width: 60px;
+}
 .web__nav {
   width: 24px;
   height: 24px;
@@ -7037,8 +7048,12 @@ button.web__tag:hover {
 .widget--focus-on {
   border-color: var(--line-hard);
 }
-.widget--focus .widget__actions {
-  opacity: 1;
+/* focused, a widget has no title bar: the focus strip sits on top of it as
+   its one bar, so the two read as a single card */
+.widget--focus-on {
+  border-top-color: transparent;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 .focus-strip {
@@ -7053,8 +7068,7 @@ button.web__tag:hover {
   padding: 0 6px 0 4px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-panel);
+  border-radius: var(--r-md) var(--r-md) 0 0;
   pointer-events: auto;
   animation: focus-strip-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) 0.06s both;
 }
@@ -7125,6 +7139,58 @@ button.web__tag:hover {
   width: 12px;
   height: 12px;
   color: var(--ink-faint);
+}
+/* the focused widget's header, tools and buttons (focusSlots.ts) */
+.focus-strip__title:empty,
+.focus-strip__tools:empty,
+.focus-strip__actions:empty {
+  display: none;
+}
+.focus-strip__title {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 36%;
+}
+.focus-strip__part {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.focus-strip__part--title .widget__title {
+  max-width: none;
+  color: var(--ink);
+}
+.focus-strip__part .widget__btn {
+  width: 24px;
+  height: 24px;
+}
+/* a stacked widget's tab rail, without its focus and spread buttons */
+.focus-strip__part .stack-rail {
+  height: 28px;
+  background: none;
+  border: 0;
+  cursor: default;
+  min-width: 0;
+}
+.focus-strip__part .stack-rail__spread {
+  display: none;
+}
+/* tools (the web widget's address bar) take the free space and give it up
+   first; then the jacks shrink */
+.focus-strip__tools {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 190px;
+}
+.focus-strip:has(> .focus-strip__tools:not(:empty)) .focus-strip__jacks {
+  flex: 0 1 auto;
+  justify-content: flex-end;
+}
+.focus-strip__actions {
+  display: flex;
+  flex-shrink: 0;
 }
 .focus-strip__jacks {
   display: flex;

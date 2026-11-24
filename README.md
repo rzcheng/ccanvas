@@ -212,8 +212,8 @@ page with a small address bar: back, forward, reload, the address, a local
   directly. Other sites load through a small proxy that strips the headers that
   stop them being framed, so they show, but without your cookies or logins and
   with some pages half-working. A quiet *preview* tag in the bar says so.
-- **Focus it (⌘⇧↵) for the real browser** (desktop app). A native webview takes
-  over the widget's body: logins, scripts and everything else work, and every
+- **Focus it (⌘⇧↵) for the real browser** (desktop app). The address bar moves
+  into the focus strip and a native webview fills everything under it: logins, scripts and everything else work, and every
   web widget shares one profile, so you stay signed in. Links stay in the view;
   a link that opens a new window opens it in a new web widget beside this one
   and focuses that. ⌘⇧↵ inside the page goes back to the canvas, and the widget
@@ -414,7 +414,7 @@ terminal untouched; on Windows and Linux they use Ctrl.
 | ⌘/Ctrl + `1`–`9` | jump to and focus the Nth terminal or agent on the current layer |
 | ⌘/Ctrl + `Shift ]` / `[` | next · previous terminal |
 | ⌘/Ctrl + `Esc` | leave the focused terminal |
-| ⌘/Ctrl + `Shift ↵` · `F` | focus mode: the widget you're in (or the selected one) fills the window; again, `Esc`, or a click on the dimmed board to go back. While focused, ⌘1–9, ⌘⇧]/[ and the strip's numbers switch which widget is focused |
+| ⌘/Ctrl + `Shift ↵` · `F` | focus mode: the widget you're in (or the selected one) fills the window under a single bar (its name, controls and, for a web page, the address bar); again, `Esc`, or a click on the dimmed board to go back. While focused, ⌘1–9, ⌘⇧]/[ and the strip's numbers switch which widget is focused |
 | `S` · `U` | stack the selected widgets · unstack the selected stack |
 | `Space` · `⌥Space` | spread the selected stack · spread the stack you're typing in |
 | `[` / `]` · ⌃`⇥` | switch a stack's front widget (⌃⇥ works inside it too) |
