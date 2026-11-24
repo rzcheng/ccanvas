@@ -581,6 +581,26 @@ export function LayerOverview() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // what's on a sheet changed while open (a drag, a find jump, an agent's
+  // satellite): re-fit the sheets whose content bounds moved, smoothly
+  useEffect(() => {
+    const c = C.current
+    if (c.state !== 'open' || !c.g) return
+    const root = rootRef.current!
+    const fits = layers.map((l) => ovFit(byLayer.get(l.id) ?? [], root.clientWidth, root.clientHeight))
+    fits.forEach((f, i) => {
+      const old = c.fits[i]
+      if (old && old.x === f.x && old.y === f.y && old.zoom === f.zoom) return
+      const w = rec(i).world
+      if (!w) return
+      w.style.transition = `transform 220ms ${EASE_FOCUS}, opacity ${T.focus}ms ease`
+      w.style.transform = camT(f)
+      w.style.setProperty('--fs', String(f.zoom * c.g!.k))
+    })
+    c.fits = fits
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [byLayer])
+
   // a layer moved or was removed while open: the sheets slide to their new
   // places and the focus stays on the layer it was on
   const order = layers.map((l) => l.id).join(',')
