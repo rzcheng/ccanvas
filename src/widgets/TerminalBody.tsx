@@ -67,11 +67,15 @@ export function TerminalBody({
   el,
   active,
   visible = true,
+  tabShown = visible,
 }: {
   el: WidgetElement
   active: boolean
-  /** is the tab this terminal lives on currently shown? */
+  /** is this terminal shown (its tab and its layer are the current ones)? */
   visible?: boolean
+  /** is its tab shown? A terminal on a hidden layer of the shown tab still
+   *  connects, so a project's agents resume at launch without a visit first */
+  tabShown?: boolean
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
@@ -102,10 +106,10 @@ export function TerminalBody({
   // xterm on a hidden tab leaves its renderer blank. Once armed it stays armed,
   // so the live shell persists when you switch away and back. It also waits for
   // the user's terminal profile so the xterm is created with their look.
-  const [shown, setShown] = useState(visible)
+  const [shown, setShown] = useState(visible || tabShown)
   useEffect(() => {
-    if (visible) setShown(true)
-  }, [visible])
+    if (visible || tabShown) setShown(true)
+  }, [visible, tabShown])
   const profile = useTerminalProfile()
   const armed = shown && profile !== undefined
 

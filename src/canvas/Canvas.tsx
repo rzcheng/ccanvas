@@ -1179,6 +1179,7 @@ export function Canvas() {
                   selected={shown && selSet.has(el.id)}
                   onStartMove={shown ? onWidgetStartMove : NOOP}
                   visible={shown}
+                  tabShown={isActiveTab}
                 />
               )
             })}

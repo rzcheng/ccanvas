@@ -93,6 +93,7 @@ export const WidgetFrame = memo(function WidgetFrame({
   selected,
   onStartMove,
   visible = true,
+  tabShown = visible,
 }: {
   el: WidgetElement
   selected: boolean
@@ -101,6 +102,8 @@ export const WidgetFrame = memo(function WidgetFrame({
    *  When not, the card is hidden on its own (`widget--offlayer`) but stays
    *  mounted, so its shell or agent keeps running. */
   visible?: boolean
+  /** is its tab shown? (terminals on a hidden layer of it still connect) */
+  tabShown?: boolean
 }) {
   const tool = useStore((s) => s.tool)
   const activeWidgetId = useStore((s) => s.activeWidgetId)
@@ -502,7 +505,7 @@ export const WidgetFrame = memo(function WidgetFrame({
           {el.kind === 'video' && <VideoBody el={el} active={active} />}
           {el.kind === 'mediainfo' && <MediaInfoBody el={el} />}
           {el.kind === 'claude' && <ClaudeBody el={el} />}
-          {isTerminal && <TerminalBody el={el} active={active} visible={visible} />}
+          {isTerminal && <TerminalBody el={el} active={active} visible={visible} tabShown={tabShown} />}
           {isTerminal && far && visible && <TermCard el={el} />}
           {el.kind === 'files' && <FilesBody el={el} />}
           {el.kind === 'diff' && <DiffBody el={el} />}
