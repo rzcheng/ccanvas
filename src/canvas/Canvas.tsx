@@ -52,6 +52,7 @@ import {
   layersOf,
   MAX_LAYERS,
 } from '../lib/layers'
+import { previewSlots } from '../lib/spreadDrag'
 import { WidgetFrame, pullOutOfSpread, type SpreadCard } from '../widgets/WidgetFrame'
 import {
   SNAP_ENTER,
@@ -1390,13 +1391,18 @@ export function Canvas() {
   if (spread && spreadStack) {
     const f = spreadStack.front
     const rects = spreadRects(spreadStack.members.length, viewW, viewH, f.w / Math.max(1, f.h))
+    // while a card is dragged the others show where they'd go; the dragged
+    // card keeps its own slot and is moved from there by the pointer
+    const slots = previewSlots(spreadStack.members.map((m) => m.id), spread.drag)
     spreadStack.members.forEach((m, i) => {
-      const r = rects[i]
+      const at = slots.get(m.id)!
+      const r = rects[at.base]
       spreadCards.set(m.id, {
         tx: (r.x - cam.x) / cam.zoom - m.x,
         ty: (r.y - cam.y) / cam.zoom - m.y,
         k: r.w / cam.zoom / m.w,
         index: i,
+        slot: at.slot,
         hi: i === spread.hi,
         closing: spread.closing,
         front: m.id === f.id,

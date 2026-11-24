@@ -280,6 +280,9 @@ export type SpreadState = {
   hi: number
   /** true while the cards fly back into the stack before the view closes */
   closing: boolean
+  /** a card being dragged and the slot it would take. Only a preview; the
+   *  order changes on release. */
+  drag?: { id: string; to: number | null }
 }
 
 /** Focus mode: one widget fills the canvas area at 100% while the board dims. */
@@ -541,6 +544,7 @@ export type Store = {
   /** close the spread, optionally bringing `focusId` to the front and into focus */
   closeSpread: (focusId?: string | null) => void
   setSpreadHi: (i: number) => void
+  setSpreadDrag: (d: SpreadState['drag'] | null) => void
   setStackDrop: (d: StackDrop | null) => void
 
   // ----- history -----
@@ -2192,7 +2196,7 @@ export const useStore = create<Store>((set, get) => ({
     const sp = get().spread
     if (!sp || sp.closing) return
     if (focusId) get().setStackFront(focusId)
-    set({ spread: { ...sp, closing: true } })
+    set({ spread: { ...sp, closing: true, drag: undefined } })
     const finish = () => {
       if (get().spread?.stackId !== sp.stackId) return
       set({ spread: null })
@@ -2205,6 +2209,14 @@ export const useStore = create<Store>((set, get) => ({
   setSpreadHi: (i) => {
     const sp = get().spread
     if (sp && sp.hi !== i) set({ spread: { ...sp, hi: i } })
+  },
+
+  setSpreadDrag: (d) => {
+    const sp = get().spread
+    if (!sp) return
+    const cur = sp.drag
+    if (cur === d || (!cur && !d) || (cur && d && cur.id === d.id && cur.to === d.to)) return
+    set({ spread: { ...sp, drag: d ?? undefined } })
   },
 
   setStackDrop: (d) => {
