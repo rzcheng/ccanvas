@@ -7,11 +7,27 @@ import { WIDGET_ACCENT } from '../lib/types'
 import { useStore, selectActive } from '../store/workspace'
 import { useAgents, useDisplayStatus } from '../lib/agents'
 import { stacksOf, type Stack } from '../lib/stacks'
-import { IconStack, IconSpread } from '../ui/icons'
+import { IconStack, IconSpread, IconFocus, IconUnfocus } from '../ui/icons'
+import { toggleFocus } from '../lib/view'
 import { KIND_ICON, StatusIcon } from './widgetIcons'
 
 const accentOf = (w: WidgetElement) =>
   w.color ?? (w.kind === 'terminal' || w.kind === 'agent' ? 'var(--accent)' : WIDGET_ACCENT[w.kind])
+
+/** Focus / back-to-canvas for a stack's front (the spread is off while focused). */
+function StackRailFocus({ stack }: { stack: Stack }) {
+  const focused = useStore((s) => s.focus?.id === stack.front.id)
+  return (
+    <button
+      className={`stack-rail__spread${focused ? ' stack-rail__spread--on' : ''}`}
+      title={focused ? 'Back to canvas (⌘⇧↵)' : 'Focus (⌘⇧↵)'}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={() => toggleFocus(stack.front.id)}
+    >
+      {focused ? <IconUnfocus /> : <IconFocus />}
+    </button>
+  )
+}
 
 /** Stop typing into any member of this stack: drop it as the active widget and
  *  take keyboard focus out of its terminal/editor. */
@@ -106,6 +122,7 @@ export function StackRail({
           />
         ))}
       </div>
+      <StackRailFocus stack={stack} />
       <button
         className="stack-rail__spread"
         title="Spread the stack (Space)"

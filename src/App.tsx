@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { viewport, viewCenter, orderedTerminals, focusWidget, cycleTerminal, exitTerminal } from './lib/view'
+import { viewport, viewCenter, orderedTerminals, focusWidget, cycleTerminal, exitTerminal, toggleFocus } from './lib/view'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { isTauri } from './lib/backend'
@@ -120,6 +120,13 @@ export default function App() {
       const stop = () => {
         e.preventDefault()
         e.stopPropagation()
+      }
+      // ⌘⇧↵ focus mode: the widget you're in (or the selected one) fills the
+      // view; again to go back. Works from inside a terminal (capture phase).
+      if (e.shiftKey && e.key === 'Enter') {
+        stop()
+        toggleFocus()
+        return
       }
       if (!e.shiftKey && /^Digit[1-9]$/.test(e.code)) {
         const t = orderedTerminals()[Number(e.code.slice(5)) - 1]
@@ -355,6 +362,21 @@ export default function App() {
         return
       }
 
+      // focus mode: Esc goes back to the canvas (inside a terminal Esc is the
+      // program's, so ⌘Esc steps out of it first); F focuses the selection
+      if (e.key === 'Escape' && store.focus?.id) {
+        e.preventDefault()
+        store.exitFocus()
+        return
+      }
+      if (key === 'f' && !e.altKey && store.selection.length === 1 && !store.focus?.id) {
+        const el = selectActive(store).elements.find((x) => x.id === store.selection[0])
+        if (el?.type === 'widget') {
+          e.preventDefault()
+          toggleFocus(el.id)
+          return
+        }
+      }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         store.deleteSelection()

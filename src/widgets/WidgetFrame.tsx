@@ -1,9 +1,11 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { WidgetElement } from '../lib/types'
 import { WIDGET_ACCENT, AGENT_COLORS, claudeColorName } from '../lib/types'
 import { useStore, selectActive } from '../store/workspace'
 import { elementBounds, edgeLines, snapValue } from '../lib/geometry'
-import { IconClose, IconLock, IconTag, IconSettings, IconPullOut, IconExternal } from '../ui/icons'
+import { IconClose, IconLock, IconTag, IconSettings, IconPullOut, IconExternal, IconFocus, IconUnfocus } from '../ui/icons'
+import { flyFocus, cancelFlight } from '../lib/focusMotion'
+import { toggleFocus } from '../lib/view'
 import { KIND_ICON, StatusGlyph, StatusIcon } from './widgetIcons'
 import { useAgents, useDisplayStatus, sendTo, sendPrompt, isLive as isSessionLive, type AgentMetrics } from '../lib/agents'
 import { useAgentContext } from '../lib/context'
@@ -160,6 +162,11 @@ export const WidgetFrame = memo(function WidgetFrame({
   // otherwise select just this one. Mirrors the canvas vector-drag behaviour.
   const grab = (e: React.PointerEvent) => {
     e.stopPropagation()
+    // a focused widget is pinned to the view: its bar selects, never drags
+    if (useStore.getState().focus?.id === el.id) {
+      setSelection([el.id])
+      return
+    }
     const cur = useStore.getState().selection
     if (e.shiftKey) {
       setSelection(cur.includes(el.id) ? cur.filter((x) => x !== el.id) : [...cur, el.id])
@@ -369,6 +376,54 @@ export const WidgetFrame = memo(function WidgetFrame({
     }
   }
   const focusCard = () => useStore.getState().closeSpread(el.id)
+  // ---- focus mode ----
+  // 'on': fills the view; 'back': flying home. Either way it is laid out at
+  // the focus box at 100% scale (counter-scaled against the camera) and
+  // lib/focusMotion animates the way in and out.
+  const focusRole = useStore((s) =>
+    s.focus?.id === el.id ? 'on' : s.focus?.returning.includes(el.id) ? 'back' : null,
+  )
+  const focusBoxNow = useStore((s) => (focusRole ? s.focus?.box ?? null : null))
+  const focusCam = useStore((s) => (focusRole ? selectActive(s).camera : null))
+  const nodeRef = useRef<HTMLDivElement>(null)
+  const prevFocusRole = useRef<typeof focusRole>(null)
+  useLayoutEffect(() => {
+    const node = nodeRef.current
+    const prev = prevFocusRole.current
+    prevFocusRole.current = focusRole
+    if (!node) return
+    const st = useStore.getState()
+    const cam = selectActive(st).camera
+    const box = st.focus?.box
+    const home = { x: el.x * cam.zoom + cam.x, y: el.y * cam.zoom + cam.y, w: el.w * cam.zoom, h: el.h * cam.zoom }
+    if (focusRole === 'on' && prev !== 'on' && box) {
+      // a stack tab switched while focused swaps in place, no flight
+      if (st.focus?.instant) return
+      flyFocus(el.id, 'in', node, home, box, cam.zoom)
+    } else if (focusRole === 'back' && prev === 'on' && box) {
+      flyFocus(el.id, 'out', node, home, box, cam.zoom, () =>
+        useStore.getState().finishFocusReturn(el.id),
+      )
+    } else if (!focusRole && prev) {
+      cancelFlight(el.id)
+      node.style.clipPath = ''
+    }
+    // el geometry is read once, when the role changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRole])
+  const focusStyle: React.CSSProperties =
+    focusRole && focusBoxNow && focusCam
+      ? {
+          left: (focusBoxNow.x - focusCam.x) / focusCam.zoom,
+          top: (focusBoxNow.y - focusCam.y) / focusCam.zoom,
+          width: focusBoxNow.w,
+          height: focusBoxNow.h,
+          transform: `scale(${1 / focusCam.zoom})`,
+          transformOrigin: '0 0',
+          zIndex: focusRole === 'on' ? 20002 : 20001,
+        }
+      : {}
+
   const spreadStyle: React.CSSProperties = spreadCard
     ? {
         transform: spreadCard.closing
@@ -380,7 +435,7 @@ export const WidgetFrame = memo(function WidgetFrame({
 
   return (
     <>
-    {stackFront && !spreadCard && visible && <StackEdges el={el} stack={stack!} />}
+    {stackFront && !spreadCard && !focusRole && visible && <StackEdges el={el} stack={stack!} />}
     <div
       className={`widget${selected && !spreadCard ? ' widget--selected' : ''}${
         active ? ' widget--active' : ''
@@ -390,7 +445,8 @@ export const WidgetFrame = memo(function WidgetFrame({
         stackHidden ? ' widget--stack-hidden' : ''
       }${spreadCard ? ' widget--spread' : ''}${spreadCard?.hi && !spreadCard.closing ? ' widget--spread-hi' : ''}${
         snapRole ? ` widget--snap-${snapRole}` : ''
-      }`}
+      }${focusRole ? ` widget--focus widget--focus-${focusRole}` : ''}`}
+      ref={nodeRef}
       data-widget-id={el.id}
       aria-hidden={stackHidden || undefined}
       style={
@@ -402,6 +458,7 @@ export const WidgetFrame = memo(function WidgetFrame({
           zIndex: el.z,
           '--k': accent,
           ...spreadStyle,
+          ...focusStyle,
         } as React.CSSProperties
       }
     >
@@ -435,7 +492,17 @@ export const WidgetFrame = memo(function WidgetFrame({
       ) : stackFront ? (
         <StackRail stack={stack!} onGrab={grab} />
       ) : (
-      <div className="widget__bar" onPointerDown={grab}>
+      <div
+        className="widget__bar"
+        onPointerDown={grab}
+        onDoubleClick={(e) => {
+          // double-click the empty part of a title bar to focus it (as a Mac
+          // window zooms); the title itself still renames
+          const t = e.target as HTMLElement
+          if (t.closest('button, input, .widget__title')) return
+          toggleFocus(el.id)
+        }}
+      >
         <span className="widget__icon">
           {isTerminal ? <StatusIcon id={el.id} kind={el.kind} /> : <Icon />}
         </span>
@@ -486,6 +553,14 @@ export const WidgetFrame = memo(function WidgetFrame({
         {(el.kind === 'agent' || el.mirrorOf === 'desktop') && <ContextMeter el={el} />}
         <span className="widget__bar-spacer" />
         <div className="widget__actions">
+          <button
+            className={`widget__btn${focusRole === 'on' ? ' widget__btn--on' : ''}`}
+            title={focusRole === 'on' ? 'Back to canvas (⌘⇧↵)' : 'Focus (⌘⇧↵)'}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => toggleFocus(el.id)}
+          >
+            {focusRole === 'on' ? <IconUnfocus /> : <IconFocus />}
+          </button>
           {el.mirrorOf === 'desktop' && el.desktopId && (
             <button
               className="widget__btn"
@@ -573,7 +648,7 @@ export const WidgetFrame = memo(function WidgetFrame({
           {isTerminal && (
             <TerminalBody el={el} active={active} visible={visible} tabShown={tabShown} hidden={stackHidden} />
           )}
-          {isTerminal && far && visible && <TermCard el={el} />}
+          {isTerminal && far && visible && !focusRole && <TermCard el={el} />}
           {el.kind === 'files' && <FilesBody el={el} />}
           {el.kind === 'diff' && <DiffBody el={el} />}
           {el.kind === 'editor' && <EditorBody el={el} active={active} />}
@@ -617,7 +692,7 @@ export const WidgetFrame = memo(function WidgetFrame({
 
       {el.mirrorOf === 'desktop' && <MirrorAsk el={el} />}
 
-      {!el.locked && !spreadCard && (
+      {!el.locked && !spreadCard && !focusRole && (
         <div
           className="widget__resize"
           title="Resize"

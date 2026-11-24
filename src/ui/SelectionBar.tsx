@@ -47,7 +47,7 @@ export function SelectionBar() {
   const flowsEnabled = useStore((s) => s.flowsEnabled)
   const setFlowsEnabled = useStore((s) => s.setFlowsEnabled)
 
-  const spreadOpen = useStore((s) => s.spread != null)
+  const spreadOpen = useStore((s) => s.spread != null || s.focus != null)
   const stackSelection = useStore((s) => s.stackSelection)
 
   const [bc, setBc] = useState('')

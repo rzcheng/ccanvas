@@ -62,6 +62,18 @@ export function orderedTerminals(): WidgetElement[] {
  * otherwise it's centred, zooming in (up to 100%) far enough to fit.
  */
 export function focusWidget(id: string) {
+  // in focus mode a jump swaps which widget fills the view (same layer only;
+  // a widget on another layer leaves focus and goes there)
+  const f0 = useStore.getState().focus
+  if (f0?.id) {
+    const ws = selectActive(useStore.getState())
+    const el = ws.elements.find((e) => e.id === id)
+    if (el && el.type === 'widget' && layerOf(el) === activeLayerId(ws)) {
+      useStore.getState().setSelection([id])
+      useStore.getState().setActiveWidget(id)
+      return
+    }
+  }
   revealLayerOf(id)
   const st = useStore.getState()
   const el = selectActive(st).elements.find((e) => e.id === id)
@@ -123,4 +135,36 @@ export function exitTerminal() {
   const st = useStore.getState()
   st.setActiveWidget(null)
   ;(document.activeElement as HTMLElement | null)?.blur?.()
+}
+
+// ---------- focus mode ----------
+
+/** Height of the focus strip above a focused widget, and the margins around it. */
+export const FOCUS_STRIP_H = 36
+const FOCUS_MARGIN = 16
+
+/** The canvas-local screen box a focused widget fills. */
+export function focusBox(): { x: number; y: number; w: number; h: number } {
+  const { vw, vh } = viewport()
+  const top = FOCUS_MARGIN + FOCUS_STRIP_H + 10
+  return {
+    x: FOCUS_MARGIN,
+    y: top,
+    w: Math.max(240, vw - FOCUS_MARGIN * 2),
+    h: Math.max(160, vh - top - FOCUS_MARGIN),
+  }
+}
+
+/** Focus the widget you're in (or the one selected), or leave focus. */
+export function toggleFocus(id?: string) {
+  const st = useStore.getState()
+  if (st.focus?.id) {
+    st.exitFocus()
+    return
+  }
+  const target = id ?? st.activeWidgetId ?? (st.selection.length === 1 ? st.selection[0] : null)
+  if (!target) return
+  const el = selectActive(st).elements.find((e) => e.id === target)
+  if (!el || el.type !== 'widget') return
+  st.enterFocus(target, focusBox())
 }

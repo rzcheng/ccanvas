@@ -280,6 +280,18 @@ export type SpreadState = {
   closing: boolean
 }
 
+/** Focus mode: one widget fills the canvas area at 100% while the board dims. */
+export type FocusState = {
+  /** the widget filling the view; null while the last one flies home */
+  id: string | null
+  /** widgets flying back to their spot on the canvas */
+  returning: string[]
+  /** the box the focused widget fills, in canvas-local screen px */
+  box: { x: number; y: number; w: number; h: number }
+  /** the last change swapped stack tabs in place (no flight) */
+  instant?: boolean
+}
+
 /** Snap-to-stack feedback while a widget (or stack) is dragged over another. */
 export type StackDrop = {
   /** widgets being dragged, the visible one first (a dragged stack brings every member) */
@@ -341,6 +353,8 @@ export type Store = {
   layerOverview: false | 'entering' | 'open' | 'closing'
   /** the open stack spread view, if any */
   spread: SpreadState | null
+  /** focus mode (session-only, never saved or undone) */
+  focus: FocusState | null
   /** drag-to-stack drop target while dragging */
   stackDrop: StackDrop | null
 
@@ -509,6 +523,19 @@ export type Store = {
   reorderStack: (stackId: string, ids: string[]) => void
   renameStack: (stackId: string, title: string) => void
   openSpread: (stackId: string) => void
+  /** fill the view with this widget (the front of its stack); `box` is the
+   *  canvas-local screen box to fill (lib/view.ts focusBox) */
+  enterFocus: (id: string, box: FocusState['box']) => void
+  /** fly the focused widget home */
+  exitFocus: () => void
+  /** while focused: fly the current widget home and this one out */
+  swapFocus: (id: string) => void
+  /** a widget finished flying home */
+  finishFocusReturn: (id: string) => void
+  /** drop focus at once, no flight (tab or layer switch, widget removed) */
+  clearFocus: () => void
+  /** the window resized while focused */
+  setFocusBox: (box: FocusState['box']) => void
   /** close the spread, optionally bringing `focusId` to the front and into focus */
   closeSpread: (focusId?: string | null) => void
   setSpreadHi: (i: number) => void
@@ -581,6 +608,7 @@ export const useStore = create<Store>((set, get) => ({
   flowsEnabled: false, // connector flows were removed from the UI
   layerOverview: false,
   spread: null,
+  focus: null,
   stackDrop: null,
 
   active: () => {
@@ -748,6 +776,7 @@ export const useStore = create<Store>((set, get) => ({
 
   switchTab: (id) =>
     set({
+      focus: null,
       activeTabId: id,
       selection: [],
       activeWidgetId: null,
@@ -859,7 +888,11 @@ export const useStore = create<Store>((set, get) => ({
   setStrokeWidth: (w) => set({ strokeWidth: w }),
 
   // ---------- camera ----------
-  setCamera: (c) => set((s) => patchActive(s, (ws) => ({ ...ws, camera: c }))),
+  setCamera: (c) => {
+    // focus pins a widget to the screen against the camera: hold it still
+    if (get().focus) return
+    set((s) => patchActive(s, (ws) => ({ ...ws, camera: c })))
+  },
 
   homeView: (vw, vh) => {
     const ws = get().active()
@@ -933,6 +966,8 @@ export const useStore = create<Store>((set, get) => ({
 
   removeElements: (ids) => {
     const set_ = new Set(ids)
+    const f = get().focus
+    if (f && ((f.id && set_.has(f.id)) || f.returning.some((r) => set_.has(r)))) set({ focus: null })
     // tracking ends if the tracked agent itself is being removed
     const trackId = get().trackingAgentId
     if (trackId && set_.has(trackId)) get().stopTrackingAgent(false)
@@ -1204,6 +1239,10 @@ export const useStore = create<Store>((set, get) => ({
       if (el && layerOf(el) !== activeLayerId(ws)) get().setActiveLayer(layerOf(el))
     }
     if (id) frontIfHidden(get, set, id)
+    // while focused, a jump to another widget (roster, search, attention bar,
+    // ⌘1–9) swaps which one is focused instead of leaving focus
+    const f = get().focus
+    if (f?.id && id && id !== f.id) get().swapFocus(id)
     set({ activeWidgetId: id })
   },
   setEditingText: (id) => set({ editingTextId: id }),
@@ -1647,7 +1686,7 @@ export const useStore = create<Store>((set, get) => ({
   setSnapGuides: (g) => set({ snapGuides: g }),
 
   // ---------- view ----------
-  setPresenting: (on) => set({ presenting: on }),
+  setPresenting: (on) => set(on ? { presenting: on, focus: null } : { presenting: on }),
   zoomToSelection: (vw, vh) => {
     const ws = get().active()
     if (!ws) return
@@ -1676,7 +1715,7 @@ export const useStore = create<Store>((set, get) => ({
       markOpenRequest()
       // nothing typed while the stack is up may reach a widget
       blurFocus()
-      set({ layerOverview: 'entering', activeWidgetId: null, editingTextId: null, spread: null, stackDrop: null })
+      set({ layerOverview: 'entering', activeWidgetId: null, editingTextId: null, spread: null, stackDrop: null, focus: null })
     } else set({ layerOverview: open })
   },
 
@@ -1756,6 +1795,7 @@ export const useStore = create<Store>((set, get) => ({
   setActiveLayer: (id, cam) => {
     const ws = get().active()
     if (!ws) return
+    if (get().focus) set({ focus: null })
     // the focus-leak rule: whatever happens next, nothing keeps keyboard focus
     blurFocus()
     // a stack spread or a pending drag-to-stack belongs to the layer being left
@@ -1985,6 +2025,9 @@ export const useStore = create<Store>((set, get) => ({
         ),
       })),
     )
+    // focused on this stack: the new front takes the focused spot in place
+    const f = get().focus
+    if (f?.id && f.id !== id && st.members.some((m) => m.id === f.id)) set({ focus: { ...f, id, instant: true } })
   },
 
   cycleStack: (id, dir) => {
@@ -2081,9 +2124,59 @@ export const useStore = create<Store>((set, get) => ({
     )
   },
 
+  enterFocus: (id, box) => {
+    const st = get()
+    if (st.layerOverview || st.presenting) return
+    const ws = st.active()
+    const el = ws?.elements.find((e) => e.id === id)
+    if (!ws || !el || el.type !== 'widget') return
+    frontIfHidden(get, set, id)
+    // a stacked widget is focused as its stack's front
+    const front = (el.stackId && stackOfId(ws.elements, id)?.front.id) || id
+    set({
+      focus: { id: front, returning: (st.focus?.returning ?? []).filter((r) => r !== front), box, instant: false },
+      spread: null,
+      stackDrop: null,
+      selection: [front],
+    })
+  },
+
+  exitFocus: () => {
+    const f = get().focus
+    if (!f?.id) return
+    set({ focus: { ...f, id: null, returning: [...f.returning.filter((r) => r !== f.id), f.id] } })
+  },
+
+  swapFocus: (id) => {
+    const f = get().focus
+    if (!f?.id || f.id === id) return
+    const el = get().active()?.elements.find((e) => e.id === id)
+    if (!el || el.type !== 'widget') return
+    set({
+      focus: { ...f, id, returning: [...f.returning.filter((r) => r !== f.id && r !== id), f.id], instant: false },
+      selection: [id],
+    })
+  },
+
+  finishFocusReturn: (id) => {
+    const f = get().focus
+    if (!f) return
+    const returning = f.returning.filter((r) => r !== id)
+    set({ focus: !f.id && !returning.length ? null : { ...f, returning } })
+  },
+
+  clearFocus: () => {
+    if (get().focus) set({ focus: null })
+  },
+
+  setFocusBox: (box) => {
+    const f = get().focus
+    if (f) set({ focus: { ...f, box } })
+  },
+
   openSpread: (stackId) => {
     const ws = get().active()
-    if (!ws) return
+    if (!ws || get().focus) return
     const st = stacksOf(ws.elements).get(stackId)
     if (!st) return
     set({

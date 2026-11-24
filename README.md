@@ -359,6 +359,10 @@ terminal untouched; on Windows and Linux they use Ctrl.
 | ⌘/Ctrl + `1`–`9` | jump to and focus the Nth terminal or agent on the current layer |
 | ⌘/Ctrl + `Shift ]` / `[` | next · previous terminal |
 | ⌘/Ctrl + `Esc` | leave the focused terminal |
+| ⌘/Ctrl + `Shift ↵` · `F` | focus mode: the widget you're in (or the selected one) fills the window; again, `Esc`, or a click on the dimmed board to go back. While focused, ⌘1–9, ⌘⇧]/[ and the strip's numbers switch which widget is focused |
+| `S` · `U` | stack the selected widgets · unstack the selected stack |
+| `Space` · `⌥Space` | spread the selected stack · spread the stack you're typing in |
+| `[` / `]` · ⌃`⇥` | switch a stack's front widget (⌃⇥ works inside it too) |
 | ⌘/Ctrl + `W` | close the focused widget on the current layer (desktop app; quits when no tab has a widget left) |
 | `L` · ⌃⌘`↑` | layers overview (`⌃⌘↑` works inside a terminal too) |
 | `⌥↑` / `⌥↓` · `⌥1`–`⌥9` | layer up / down · jump to layer N |

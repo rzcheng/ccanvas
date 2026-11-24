@@ -12,6 +12,7 @@ import { StatusGlyph } from '../widgets/widgetIcons'
 
 export function AttentionBar() {
   const status = useAgents((s) => s.status)
+  const focused = useStore((s) => s.focus?.id != null)
   const ws = useStore(selectActive)
   const setSelection = useStore((s) => s.setSelection)
   const setActiveWidget = useStore((s) => s.setActiveWidget)
@@ -22,7 +23,8 @@ export function AttentionBar() {
     (e): e is WidgetElement =>
       e.type === 'widget' && e.kind === 'agent' && status[e.id] === 'waiting',
   )
-  if (waiting.length === 0) return null
+  // in focus mode the strip's chip says who needs you, and this would sit on it
+  if (waiting.length === 0 || focused) return null
 
   const goto = (el: WidgetElement) => {
     revealLayerOf(el.id)

@@ -39,6 +39,8 @@ import {
   type MenuItem,
 } from '../ui/ContextMenu'
 import { IconExternal, IconLayers } from '../ui/icons'
+import { FocusStrip } from '../ui/FocusStrip'
+import { focusBox } from '../lib/view'
 import { ElementView } from './ElementView'
 import { TextElement } from './TextElement'
 import {
@@ -203,6 +205,7 @@ export function Canvas() {
   // tilt starts made that frame slow, and the overview's backdrop covers it.
   const overview = useStore((s) => s.layerOverview === 'open')
   const spread = useStore((s) => s.spread)
+  const focus = useStore((s) => s.focus)
   const stackDrop = useStore((s) => s.stackDrop)
   // snap-to-stack: one beat of "locked" brackets after a drop stacks
   const [snapLock, setSnapLock] = useState<{ box: Rect; label: string } | null>(null)
@@ -367,6 +370,15 @@ export function Canvas() {
     return () => window.removeEventListener('keydown', onKey, true)
   }, [])
 
+  // focus mode: the focus box follows the window size
+  useEffect(() => {
+    const onResize = () => {
+      if (useStore.getState().focus) useStore.getState().setFocusBox(focusBox())
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
   // a spread whose stack vanished (undo, delete) just closes
   const spreadGone = !!spread && !stacksOf(ws.elements).has(spread.stackId)
   useEffect(() => {
@@ -382,6 +394,11 @@ export function Canvas() {
       if (useStore.getState().spread) {
         e.preventDefault()
         e.stopPropagation()
+        return
+      }
+      // focus mode: the focused widget scrolls itself; the dimmed board doesn't move
+      if (useStore.getState().focus) {
+        if (!(e.target as HTMLElement | null)?.closest?.('.widget--focus')) e.preventDefault()
         return
       }
       const zoomGesture = e.ctrlKey || e.metaKey
@@ -1437,6 +1454,34 @@ export function Canvas() {
                 />
               )
             })}
+            {isActiveTab && focus && (
+              <>
+                <div
+                  className={`focus-scrim${focus.id ? '' : ' focus-scrim--closing'}`}
+                  style={{
+                    left: -cam.x / cam.zoom,
+                    top: -cam.y / cam.zoom,
+                    width: viewW / cam.zoom,
+                    height: viewH / cam.zoom,
+                  }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation()
+                    if (e.button === 0) useStore.getState().exitFocus()
+                  }}
+                />
+                {(() => {
+                  // a dashed outline where the focused widget lives on the canvas
+                  const home = focus.id ? byId.get(focus.id) : undefined
+                  if (!home || home.type !== 'widget') return null
+                  return (
+                    <div
+                      className="focus-socket"
+                      style={{ left: home.x, top: home.y, width: home.w, height: home.h }}
+                    />
+                  )
+                })()}
+              </>
+            )}
             {isActiveTab && spreadStack && (
               <div
                 className={`stack-scrim${spread?.closing ? ' stack-scrim--closing' : ''}`}
@@ -1459,6 +1504,7 @@ export function Canvas() {
 
       {/* selection + marquee + handles + snap guides (screen space) */}
       <div className="overlay">
+        <FocusStrip />
         {(dropTarget || snapLock) && (() => {
           const box = snapLock ? snapLock.box : dropTarget!
           const r = screenRectOf(box)

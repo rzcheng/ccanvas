@@ -334,6 +334,20 @@ export const IconPullOut = (p: P) => (
   </S>
 )
 
+/** focus: corners opening out */
+export const IconFocus = (p: P) => (
+  <S {...p}>
+    <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
+  </S>
+)
+
+/** back from focus: corners closing in */
+export const IconUnfocus = (p: P) => (
+  <S {...p}>
+    <path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5" />
+  </S>
+)
+
 export const IconSendBack = (p: P) => (
   <S {...p}>
     <rect x="4" y="4" width="11" height="11" rx="1.5" />

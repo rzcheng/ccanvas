@@ -42,7 +42,9 @@ export function TermNumbers() {
     }
   }, [])
 
-  if (!shown) return null
+  // in focus mode the strip shows the numbers instead
+  const focused = useStore((s) => !!s.focus)
+  if (!shown || focused) return null
   return (
     <div className="term-nums">
       {orderedTerminals()
