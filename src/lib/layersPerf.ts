@@ -7,7 +7,7 @@
 const KEY = 'ccanvas:layers:perf'
 
 export type PerfRun = {
-  kind: 'open' | 'dive'
+  kind: 'open' | 'dive' | 'close'
   /** keypress → first render of the overview */
   render?: number
   /** keypress → layout effect (React commit done) */
@@ -60,7 +60,7 @@ export function markOpenRequest() {
  * relative to the keypress.
  */
 export function sampleTransition(
-  kind: 'open' | 'dive',
+  kind: 'open' | 'dive' | 'close',
   ms: number,
   stamps: { render?: number; commit?: number; effectEnd?: number } = {},
 ) {
@@ -104,7 +104,7 @@ export function sampleTransition(
 }
 
 /**
- * ⇧P in the overview (with the readout on): six open → dive cycles with
+ * ⇧P in the overview (with the readout on): six open → close (Esc) cycles with
  * fixed waits, so the numbers don't depend on how fast keys arrive. Runs in
  * the page, so it measures the real window (keep it in front).
  */
@@ -114,19 +114,19 @@ export async function runBench(open: () => void, cycles = 6) {
   listeners.forEach((l) => l())
   // leave the overview the bench was started from first
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-  await wait(900)
+  await wait(1300)
   for (let i = 0; i < cycles; i++) {
     markOpenRequest()
     open()
-    await wait(1300)
+    await wait(1400)
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    await wait(900)
+    await wait(1300)
   }
   open()
 }
 
 /** p95 of a field across the recorded runs of one kind. */
-export function summary(kind: 'open' | 'dive', field: 'first' | 'p95' | 'max' | 'frame0') {
+export function summary(kind: 'open' | 'dive' | 'close', field: 'first' | 'p95' | 'max' | 'frame0') {
   const v = layersPerf.runs
     .filter((r) => r.kind === kind)
     .map((r) => r[field] as number)

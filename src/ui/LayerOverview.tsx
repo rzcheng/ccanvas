@@ -1,46 +1,44 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useStore, selectActive } from '../store/workspace'
-import { useAgents, useDisplayStatus, RECENT_FINISH_MS } from '../lib/agents'
+import { useAgents, RECENT_FINISH_MS } from '../lib/agents'
 import type { Camera, CanvasElement, WidgetElement } from '../lib/types'
 import {
   OV,
   BASE_LAYER_ID,
   MAX_LAYERS,
   activeLayerId,
+  clamp01,
+  coveredLabels,
+  easeInOut,
+  easeOut,
+  labelYs,
   landingCamera,
   layerDir,
   layerNumber,
   layerOf,
   layerStatus,
   layersOf,
-  ovBoost,
-  ovFit,
-  ovRailTarget,
-  ovSolve,
-  ovStageY,
-  ovZ,
-  ovZBase,
-  glyphCounts,
-  labelSpots,
+  lerp,
+  lerpCam,
   matchesQuery,
-  widgetType,
-  pathWithin,
+  midEllipsis,
+  mixPose,
+  ovAnchor,
+  ovDeck,
+  ovFit,
+  ovFlat,
+  ovLayout,
+  ovPoses,
+  ovText,
+  readingOrder,
   shortPath,
-  type Glyph,
+  springStep,
   type LedStatus,
-  type OvGeom,
+  type OvLayout,
+  type Pose,
 } from '../lib/layers'
-import { baseName } from '../lib/backend'
-import {
-  IconAgent,
-  IconDesktop,
-  IconDiff,
-  IconEditor,
-  IconLayers,
-  IconNote,
-  IconTerminal,
-  IconWeb,
-} from './icons'
+import { StatusGlyph } from '../widgets/widgetIcons'
+import { IconLayers } from './icons'
 import {
   layersPerf,
   runBench,
@@ -53,56 +51,74 @@ import {
 import { LayerProxy, type ProxyMode } from './LayerProxy'
 import '../styles/layers.css'
 
-// The layers overview: the canvas tilts back into a card file of every layer
-// on this tab, drawn as cheap proxies. Mounted only while open (App.tsx), so
-// it costs nothing otherwise: no listeners, timers or rAF.
+// The layers overview: the canvas pulls back into a deck of every layer on
+// this tab, which opens into an accordion (ported from the approved
+// layers-accordion prototype). Mounted only while open (App.tsx), so it costs
+// nothing otherwise: no listeners, timers or rAF.
 //
-// Ported from the layers prototype. React renders the structure (sheets,
-// proxies, rail text); the motion is applied imperatively to refs, as CSS
-// transitions on transform and opacity only, so a transition runs with no JS
-// per frame. `will-change` is set only while something moves (.lo--moving).
+// One float, the open position, follows a spring and drives every sheet: each
+// sheet's pose is a function of its distance from it (lib/layers.ts →
+// ovPose). React renders the structure (sheets, tiles, rail text); a rAF loop
+// writes transforms and opacities to refs, and only while something moves.
+// Nothing else animates: no layout, no filters.
+//
+// Phases: preroll (the live widgets fold into tiles over the still canvas)
+// → intro (pull back into a deck, fan out) → live → dive | outro → handover
+// (the tiles wipe away over the real, already-mounted widgets) → unmount.
 
 const T = {
-  enter: 380,
-  focus: 170,
-  dive: 320,
-  fade: 120,
-  tilt: 260, // flat canvas → tilted slab in the middle of the stack
-  exDelay: 190, // the fan-out starts as the slab settles
-  expand: 440, // slab → card file, springy
-  exStagger: 18,
+  preroll: 110,
+  intro: 820,
+  dive: 720,
+  handover: 200,
+  fade: 120, // reduced motion: crossfades only
+  hover: 70,
+  snap: 140,
+  born: 380,
 }
-const EASE_OUT = 'cubic-bezier(0.16, 1, 0.3, 1)'
-const EASE_DIVE = 'cubic-bezier(0.55, 0, 0.1, 1)'
-const EASE_FOCUS = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
-const EASE_SPRING = 'cubic-bezier(0.34, 1.3, 0.64, 1)' // a small overshoot, then settles
-const PROXY_CAP = 60 // per sheet; past this, coloured boxes only
-const RAIL_W0 = 236
-const GLASS_KEY = 'ccanvas:layers:glass'
+const PROXY_CAP = 60 // per sheet; past this, blocks only
+const RAIL_W0 = 214
 const VIEW_KEY = 'ccanvas:layers:view'
-const WORD: Record<string, string> = { working: 'working', waiting: 'needs you', idle: 'idle', done: 'done' }
+/** localStorage: a slow-motion factor for judging the motion (e.g. "4") */
+const SLOW_KEY = 'ccanvas:layers:slow'
+function slowFactor(): number {
+  try {
+    const v = parseFloat(localStorage.getItem(SLOW_KEY) ?? '')
+    return Number.isFinite(v) && v >= 1 ? Math.min(v, 20) : 1
+  } catch {
+    return 1
+  }
+}
+
+type Phase = 'preroll' | 'intro' | 'live' | 'dive' | 'outro' | 'handover' | 'gone'
 
 type Rec = {
-  el?: HTMLDivElement | null
   sheet?: HTMLDivElement | null
+  base?: HTMLDivElement | null
+  face?: HTMLDivElement | null
   glass?: HTMLDivElement | null
   world?: HTMLDivElement | null
-  item?: HTMLDivElement | null
+  lab?: HTMLDivElement | null
   lead?: HTMLDivElement | null
+  /** the tiles, cached for the morph and the hand-over */
+  tiles?: HTMLElement[] | null
+  // last values written, so a frame touches only what changed
+  txt?: number
+  m?: number
+  h?: number
+  open?: boolean
+  surf?: number
+  tz?: number
+  labOpen?: boolean
 }
-type State = 'opening' | 'open' | 'diving'
 
 function camT(c: Camera): string {
   const d = window.devicePixelRatio || 1
   const sn = (v: number) => Math.round(v * d) / d
   return `translate(${sn(c.x)}px, ${sn(c.y)}px) scale(${c.zoom})`
 }
-function trans(node: HTMLElement | null | undefined, props: string[], dur: number, ease: string, delay = 0) {
-  if (!node) return
-  node.style.transition = dur ? props.map((p) => `${p} ${dur}ms ${ease} ${delay}ms`).join(', ') : 'none'
-}
-const STAGE_FLAT = 'translate3d(0, 0, 0) rotateX(0deg) scale3d(1, 1, 1)'
-const stageOpen = (g: OvGeom) => `translate3d(0, ${g.Y}px, 0) rotateX(${OV.TILT}deg) scale3d(${g.k}, ${g.k}, ${g.k})`
+const poseT = (p: Pose) =>
+  `translate3d(${p.x.toFixed(2)}px, ${p.y.toFixed(2)}px, ${p.z.toFixed(2)}px) rotateX(${p.tilt.toFixed(3)}deg) scale(${p.scale.toFixed(5)})`
 
 function prefersReduced(): boolean {
   return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -111,6 +127,7 @@ function textScale(): number {
   const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ts'))
   return Number.isFinite(v) && v > 0 ? v : 1.1
 }
+const toggle = (node: Element | null | undefined, cls: string, on: boolean) => node?.classList.toggle(cls, on)
 
 export function LayerOverview() {
   const ws = useStore(selectActive)
@@ -131,17 +148,17 @@ export function LayerOverview() {
     [status, finishedAt],
   )
 
+  // the layer the accordion is open on (rounded target): drives the chrome
   const [focus, setFocusState] = useState(curIdx)
-  const [frost, setFrost] = useState(() => localStorage.getItem(GLASS_KEY) !== 'solid')
-  // 'map': every sheet shows type tiles; 'detail': the focused sheet shows
-  // text cards (the others stay tiles, blurred behind it anyway)
+  // 'map': tiles with a title, a meta line and a last line; 'detail' (V): a
+  // few lines of each widget
   const [view, setView] = useState<ProxyMode>(() =>
     localStorage.getItem(VIEW_KEY) === 'detail' ? 'detail' : 'map',
   )
-  // The other layers' sheets are bare outlines for the first part of the open,
-  // so their content is built a couple of frames in, not in the first frame.
+  // The other layers fade in from 100 ms, so their content is built a
+  // couple of frames in, not in the first frame.
   const [ready, setReady] = useState(false)
-  // dragging a card: the sheet (or rail label) it would drop on
+  // dragging a tile: the sheet (or rail label) it would drop on
   const [dropIdx, setDropIdx] = useState(-1)
   const [renaming, setRenaming] = useState<string | null>(null)
   // a one-line note above the key hints ("⌫ again to merge…", "the base layer stays")
@@ -150,34 +167,70 @@ export function LayerOverview() {
   const [query, setQuery] = useState<string | null>(null)
   // ⌫ on a layer with widgets arms; a second ⌫ on the same layer removes it
   const armed = useRef<string | null>(null)
-  // after a reorder or removal, the layer that should keep the focus
+  // after a reorder or removal, the layer that should stay open
   const keepFocus = useRef<string | null>(null)
 
   // the first render's timestamp, for the perf readout (P)
   const renderAt = useRef(performance.now())
   const rootRef = useRef<HTMLDivElement>(null)
-  const stageRef = useRef<HTMLDivElement>(null)
+  const viewRef = useRef<HTMLDivElement>(null)
   const bgRef = useRef<HTMLDivElement>(null)
   const headRef = useRef<HTMLDivElement>(null)
   const footRef = useRef<HTMLDivElement>(null)
-  const recs = useRef<Rec[]>([])
-  const rec = (i: number) => (recs.current[i] ??= {})
+  const recs = useRef(new Map<string, Rec>())
+  const rec = (id: string) => {
+    let r = recs.current.get(id)
+    if (!r) recs.current.set(id, (r = {}))
+    return r
+  }
 
-  // everything the appliers share; a ref, never state, so motion never re-renders
+  // everything the loop shares; a ref, never state, so motion never re-renders
   const C = useRef({
-    state: 'opening' as State,
-    g: null as OvGeom | null,
-    fits: [] as Camera[],
-    top: 0,
+    phase: 'preroll' as Phase,
+    t0: 0,
+    pos: curIdx,
+    vel: 0,
+    target: curIdx,
+    /** the layer the canvas is on: the deck forms around it */
+    here: curIdx,
+    /** the live camera the open starts from and the close lands on */
+    startCam: ws.camera,
+    L: null as OvLayout | null,
+    /** the sheet scale on screen: eases to L.s when a layer is added or removed */
+    sNow: 0,
     railW: RAIL_W0,
+    fits: new Map<string, Camera>(),
+    raf: 0,
+    last: 0,
     reduced: prefersReduced(),
+    slow: slowFactor(),
     timers: [] as number[],
-    busyTimer: 0,
-    magRaf: 0,
-    magY: null as number | null,
+    hoverT: 0,
+    wheelT: 0,
+    pinch: 0,
     lastMove: 0,
-    n,
-    wheel: { acc: 0, step: 0, prev: 0, pinch: 0 },
+    /** per layer: a slide still settling after a reorder or removal (layers) */
+    off: new Map<string, number>(),
+    /** per layer: when it was added (it drops in) */
+    born: new Map<string, number>(),
+    /** per layer: measured rail label height; cleared when it changes */
+    labH: new Map<string, number>(),
+    labY: new Map<string, number>(),
+    /** the last frame's poses and world cameras, by index: a dive starts there */
+    poses: [] as Pose[],
+    cams: [] as Camera[],
+    /** the accordion the intro opens to, or the outro closes from */
+    acc: [] as Pose[],
+    deckShift: 0,
+    diveTo: -1,
+    diveCam: null as Camera | null,
+    selectId: undefined as string | undefined,
+    glide: { dx: 0, dy: 0 },
+    committed: false,
+    /** handover: which sheet lands, and on what camera */
+    landIdx: -1,
+    landCam: null as Camera | null,
+    order: layers.map((l) => l.id).join(','),
   })
   const later = (fn: () => void, ms: number) => {
     C.current.timers.push(window.setTimeout(fn, ms))
@@ -193,298 +246,564 @@ export function LayerOverview() {
   }, [ws.elements, layers])
 
   // ---------- geometry ----------
-  const measure = () => {
+  const measure = (snap: boolean) => {
     const root = rootRef.current!
     const W = root.clientWidth
     const H = root.clientHeight
     const c = C.current
+    const ls = live.current.layers
     c.railW = Math.round((RAIL_W0 * Math.min(textScale(), 1.4)) / 1.1)
-    c.g = ovSolve(n, W, H, c.g?.focus ?? focus, c.railW)
-    c.top = root.getBoundingClientRect().top
-    const stage = stageRef.current!
-    stage.style.width = W + 'px'
-    stage.style.height = H + 'px'
-    // custom properties set once per layout, never per frame
-    stage.style.setProperty('--k', String(c.g.k))
-    stage.style.setProperty('--uy', String(1 / Math.cos((OV.TILT * Math.PI) / 180)))
+    c.L = ovLayout(ls.length, W, H, c.railW)
+    if (snap || !c.sNow) c.sNow = c.L.s
     root.style.setProperty('--lr-w', c.railW + 'px')
-    c.fits = layers.map((l) => ovFit(byLayer.get(l.id) ?? [], W, H))
-    layers.forEach((_, i) => {
-      rec(i).world?.style.setProperty('--fs', String(c.fits[i].zoom * c.g!.k))
+    const view = viewRef.current!
+    view.style.perspective = `${c.L.persp}px`
+    view.style.perspectiveOrigin = `${c.L.ox}px ${c.L.oy}px`
+    // hairlines and radii stay screen-sized on a scaled sheet
+    view.style.setProperty('--sk', String(1 / c.L.s))
+    for (const l of ls) {
+      const fit = ovFit(live.current.byLayer.get(l.id) ?? [], W, H)
+      c.fits.set(l.id, fit)
+      const w = rec(l.id).world
+      if (w) {
+        w.style.transition = 'none'
+        w.style.transform = camT(fit)
+        w.style.setProperty('--fs', String(fit.zoom * c.L.s))
+      }
+    }
+    c.labH.clear()
+  }
+  /** Align the backdrop's grid with a camera, like the canvas's own. */
+  const gridTo = (cam: Camera) => {
+    const bg = bgRef.current
+    if (!bg) return
+    bg.style.backgroundSize = `${140 * cam.zoom}px ${140 * cam.zoom}px, ${28 * cam.zoom}px ${28 * cam.zoom}px`
+    bg.style.backgroundPosition = `${cam.x - 7 * cam.zoom}px ${cam.y - 7 * cam.zoom}px, ${cam.x}px ${cam.y}px`
+  }
+  const fitOf = (id: string): Camera => C.current.fits.get(id) ?? { x: 0, y: 0, zoom: 1 }
+
+  /** Start the loop if it isn't running. */
+  const kick = () => {
+    const c = C.current
+    if (c.raf || c.phase === 'gone') return
+    c.last = performance.now()
+    c.raf = requestAnimationFrame((t) => frameRef.current(t))
+  }
+
+  const setPhase = (p: Phase, now = performance.now()) => {
+    const c = C.current
+    c.phase = p
+    c.t0 = now
+    const root = rootRef.current
+    toggle(root, 'lo--live', p === 'live')
+  }
+
+  /** The store side of a dive: switch layer (and select), show the canvas. */
+  const commit = () => {
+    const c = C.current
+    if (c.committed) return
+    c.committed = true
+    const store = useStore.getState()
+    if (c.diveTo >= 0) {
+      const L = live.current
+      const target = L.layers[c.diveTo]?.id
+      if (target) {
+        // switching drops focus and selection either way (the focus-leak rule)
+        store.setActiveLayer(target, target === L.curId ? undefined : c.diveCam!)
+        if (c.selectId) {
+          store.setSelection([c.selectId])
+          store.bringToFront([c.selectId])
+        }
+      }
+    }
+    // the live canvas paints again under the overview, which still covers it
+    store.setLayerOverview('closing')
+    if (c.diveCam && c.diveTo >= 0) gridTo(c.diveCam)
+  }
+
+  // ---------- the frame ----------
+  const frame = (now: number) => {
+    const c = C.current
+    c.raf = 0
+    const L0 = c.L
+    if (!L0 || c.phase === 'gone') return
+    const dt = Math.max(0, Math.min(0.034, (now - c.last) / 1000)) / c.slow
+    c.last = now
+    const { layers: ls } = live.current
+    const N = ls.length
+    let more = true
+
+    // phase ends
+    let el = (now - c.t0) / c.slow
+    if (c.phase === 'preroll' && el >= T.preroll) {
+      startIntro(now)
+      el = 0
+    }
+    if (c.phase === 'intro' && el >= T.intro) {
+      setPhase('live', now)
+      c.pos = c.target = c.here
+      c.vel = 0
+      useStore.getState().setLayerOverview('open')
+      el = 0
+    }
+    if (c.phase === 'outro' && el >= T.intro) {
+      commit()
+      c.landIdx = c.here
+      c.landCam = c.startCam
+      setPhase('handover', now)
+      el = 0
+    }
+    if (c.phase === 'dive' && el >= T.dive) {
+      commit()
+      c.landIdx = c.diveTo
+      c.landCam = c.diveCam
+      setPhase('handover', now)
+      el = 0
+    }
+    if (c.phase === 'handover' && el >= T.handover) {
+      setPhase('gone', now)
+      useStore.getState().setLayerOverview(false)
+      return
+    }
+
+    // the sheet scale eases after a layer is added or removed
+    if (c.sNow !== L0.s) {
+      c.sNow += (L0.s - c.sNow) * (1 - Math.exp(-dt * 12))
+      if (Math.abs(c.sNow - L0.s) < 1e-4) c.sNow = L0.s
+    }
+    const L = c.sNow === L0.s ? L0 : { ...L0, s: c.sNow }
+
+    const phase = c.phase
+    const poses: Pose[] = []
+    const cams: Array<Camera | null> = ls.map(() => null)
+    const morph = ls.map(() => 0)
+    const surf = ls.map(() => 1) // the sheet's own surface (0 = see-through)
+    let hand = -1 // the hand-over's progress, on sheet `handIdx`
+    let handIdx = -1
+    let bgOp = 1
+    let chromeOp = 1
+    let labOp = 1
+    let dist: number[] = [] // each sheet's distance from the open one, for labels
+    let glideIdx = -1
+    let glideT = 0
+
+    if (phase === 'preroll') {
+      const u = clamp01(el / T.preroll)
+      for (let i = 0; i < N; i++) poses.push(ovFlat(i === c.here))
+      cams[c.here] = c.startCam
+      morph[c.here] = 1
+      hand = 1 - u
+      handIdx = c.here
+      surf[c.here] = 0
+      bgOp = 0
+      chromeOp = 0
+      labOp = 0
+      dist = ls.map((_, i) => i - c.here)
+    } else if (phase === 'intro' || phase === 'outro') {
+      let t = clamp01(el / T.intro)
+      if (phase === 'outro') t = 1 - t
+      const a = easeInOut(clamp01(t / 0.34))
+      for (let i = 0; i < N; i++) {
+        const d = i - c.here
+        // 1) pull back: the canvas → a closed deck (the others fade in under it)
+        const p = mixPose(ovFlat(i === c.here), ovDeck(L, d, c.deckShift), a)
+        if (i !== c.here) p.op = clamp01((t - 0.12) / 0.2)
+        // 2) fan out from where you are, nearest first
+        const b = easeOut(clamp01((t - 0.27 - Math.abs(d) * 0.055) / 0.46))
+        poses.push(mixPose(p, c.acc[i] ?? p, b))
+      }
+      cams[c.here] = lerpCam(c.startCam, fitOf(ls[c.here].id), a)
+      // the sheet's own surface fades in as it pulls away from the canvas
+      surf[c.here] = clamp01(t / 0.2)
+      morph[c.here] = 1 - easeInOut(clamp01(t / 0.22))
+      chromeOp = clamp01((t - 0.25) / 0.35)
+      labOp = clamp01((t - 0.6) / 0.35)
+      dist = ls.map((_, i) => i - c.here)
+      // the live canvas paints again under the deck before it lands
+      if (phase === 'outro' && t < 0.15) commit()
+    } else if (phase === 'live') {
+      let moving = false
+      if (c.reduced) {
+        c.pos = c.target
+        c.vel = 0
+      } else if (Math.abs(c.pos - c.target) > 5e-4 || Math.abs(c.vel) > 5e-4) {
+        ;[c.pos, c.vel] = springStep(c.pos, c.vel, c.target, dt)
+        moving = true
+      } else {
+        c.pos = c.target
+        c.vel = 0
+      }
+      const decay = Math.exp(-dt * 14)
+      for (const [id, o] of c.off) {
+        const v = o * decay
+        if (Math.abs(v) < 0.002 || c.reduced) c.off.delete(id)
+        else c.off.set(id, v)
+      }
+      const at = ls.map((l, i) => i + (c.off.get(l.id) ?? 0))
+      poses.push(...ovPoses(L, at, c.pos))
+      // a new layer drops in from above
+      for (const [id, t0] of c.born) {
+        const i = ls.findIndex((l) => l.id === id)
+        const k = c.reduced ? 1 : clamp01((now - t0) / c.slow / T.born)
+        if (i >= 0) {
+          const e = easeOut(k)
+          poses[i] = { ...poses[i], y: poses[i].y - (1 - e) * 90, z: poses[i].z + (1 - e) * 160 * L.zk, op: e }
+        }
+        if (k >= 1) c.born.delete(id)
+      }
+      dist = at.map((e) => e - c.pos)
+      more = moving || c.off.size > 0 || c.born.size > 0 || c.sNow !== L0.s
+    } else if (phase === 'dive') {
+      const t = clamp01(el / T.dive)
+      const j = c.diveTo
+      for (let i = 0; i < N; i++) {
+        const start = c.poses[i] ?? ovFlat(false)
+        if (i === j) {
+          // lift out, flatten, then grow to the window
+          const lift = easeOut(clamp01(t / 0.4))
+          const p = { ...start, z: start.z + 140 * L.zk * lift * (1 - t), tilt: lerp(start.tilt, Math.min(start.tilt, 8), lift) }
+          const f = easeInOut(clamp01((t - 0.1) / 0.9))
+          poses.push(mixPose(p, ovFlat(true), f))
+          cams[i] = lerpCam(c.cams[i] ?? fitOf(ls[i].id), c.diveCam!, f)
+          continue
+        }
+        // the rest fold away above and below, nearest last
+        const d = i - j
+        const k = easeInOut(clamp01((t - (0.18 - Math.min(Math.abs(d), 3) * 0.05)) / 0.55))
+        const away = {
+          ...start,
+          y: start.y - Math.sign(d) * 420,
+          z: start.z - 260 * L.zk,
+          tilt: Math.min(85, start.tilt + 12),
+          op: 0,
+        }
+        poses.push(mixPose(start, away, k))
+      }
+      morph[j] = easeInOut(clamp01((t - 0.5) / 0.5))
+      // and the sheet becomes the canvas as it lands
+      surf[j] = 1 - clamp01((t - 0.8) / 0.2)
+      chromeOp = 1 - clamp01((t - 0.6) / 0.3)
+      labOp = (1 - clamp01(t / 0.3)) * 0.9
+      glideIdx = j
+      glideT = easeInOut(t)
+      dist = ls.map((_, i) => i - j)
+      // switch layer while the overview still covers the canvas, so the
+      // real widgets have painted by the time the tiles wipe away
+      if (t >= 0.85) commit()
+    } else if (phase === 'handover') {
+      const u = clamp01(el / T.handover)
+      const j = c.landIdx
+      for (let i = 0; i < N; i++) poses.push(ovFlat(i === j))
+      if (j >= 0) {
+        cams[j] = c.landCam
+        morph[j] = 1
+        surf[j] = 0
+      }
+      hand = u
+      handIdx = j
+      bgOp = 1 - clamp01(u / 0.4)
+      chromeOp = 0
+      labOp = 0
+      dist = ls.map((_, i) => i - j)
+    }
+
+    // ---- write the sheets ----
+    const lastCams: Camera[] = []
+    for (let i = 0; i < N; i++) {
+      const id = ls[i].id
+      const r = rec(id)
+      const p = poses[i]
+      if (!r.sheet || !p) continue
+      r.sheet.style.transform = poseT(p)
+      r.sheet.style.opacity = p.op.toFixed(3)
+      const d = dist[i] ?? 0
+      r.sheet.style.zIndex = String(
+        (phase === 'dive' && i === c.diveTo) || ((phase === 'preroll' || phase === 'handover') && i === handIdx)
+          ? 200
+          : 100 - Math.round(Math.abs(d) * 10),
+      )
+      if (r.face) {
+        r.face.style.opacity = (1 - p.shade).toFixed(3)
+        const txt = Math.round(ovText(p.tilt) * 50) / 50
+        if (r.txt !== txt) {
+          r.txt = txt
+          r.face.style.setProperty('--txt', String(txt))
+        }
+      }
+      const open = phase === 'live' && Math.abs(d) < 0.5
+      if (r.open !== open) {
+        r.open = open
+        toggle(r.sheet, 'is-open', open)
+      }
+      if (r.surf !== surf[i]) {
+        r.surf = surf[i]
+        if (r.base) r.base.style.opacity = surf[i].toFixed(3)
+        if (r.glass) r.glass.style.opacity = surf[i].toFixed(3)
+        toggle(r.sheet, 'is-handover', surf[i] < 1)
+      }
+      const cam = cams[i]
+      if (cam && r.world) {
+        r.world.style.transition = 'none'
+        r.world.style.transform = camT(cam)
+      }
+      // while a sheet grows to (or shrinks from) the canvas, its tile text
+      // keeps the size it has in the accordion: a counter-scale, not a font size
+      const fit = fitOf(id)
+      const tz = cam ? Math.round(((fit.zoom * L.s) / Math.max(1e-3, cam.zoom * p.scale)) * 1000) / 1000 : 1
+      if (r.tz !== tz && r.world) {
+        r.tz = tz
+        r.world.style.setProperty('--tz', String(tz))
+      }
+      lastCams[i] = cam ?? fitOf(id)
+      applyTiles(r, morph[i], i === handIdx ? hand : 0)
+    }
+    c.poses = poses
+    c.cams = lastCams
+
+    // ---- the backdrop and the chrome ----
+    if (bgRef.current) bgRef.current.style.opacity = bgOp.toFixed(3)
+    for (const node of [headRef.current, footRef.current]) if (node) node.style.opacity = chromeOp.toFixed(3)
+
+    // ---- the rail: flat labels pushed apart, a leader to each sheet ----
+    placeLabels(L, poses, dist, labOp, phase, glideIdx, glideT)
+
+    if (more) kick()
+  }
+  const frameRef = useRef(frame)
+  frameRef.current = frame
+
+  /** Blocks → widgets (--m), and the hand-over wipe (--h), in reading order. */
+  const applyTiles = (r: Rec, m: number, h: number) => {
+    // re-query after a render (tiles may have mounted); tiles that just
+    // mounted already rest at 0, so a sheet at rest needs no writes
+    if (r.m === m && r.h === h && (r.tiles || (m === 0 && h === 0))) return
+    const root = r.world
+    if (!root) return
+    const fresh = !r.tiles
+    const tiles = (r.tiles ??= Array.from(root.querySelectorAll<HTMLElement>('.pt')))
+    const cnt = tiles.length
+    const spread = 0.35
+    const each = (v: number, ord: number) =>
+      v <= 0 ? 0 : v >= 1 ? 1 : clamp01((v - (ord / Math.max(1, cnt - 1)) * spread) / (1 - spread))
+    for (const tile of tiles) {
+      const ord = Number(tile.dataset.ord) || 0
+      if (fresh || r.m !== m) {
+        const mi = each(m, ord)
+        tile.style.setProperty('--m', mi.toFixed(3))
+        tile.classList.toggle('is-real', mi > 0.5)
+      }
+      if (fresh || r.h !== h) tile.style.setProperty('--h', each(h, ord).toFixed(3))
+    }
+    r.m = m
+    r.h = h
+  }
+
+  const placeLabels = (
+    L: OvLayout,
+    poses: Pose[],
+    dist: number[],
+    labOp: number,
+    phase: Phase,
+    glideIdx: number,
+    glideT: number,
+  ) => {
+    const c = C.current
+    const ls = live.current.layers
+    const x0 = OV.RAIL_X + c.railW + 4
+    if (phase === 'dive') {
+      // the dived layer's name glides to the layer chip; the rest fade
+      ls.forEach((l, i) => {
+        const r = rec(l.id)
+        if (!r.lab) return
+        if (i === glideIdx) {
+          const y = c.labY.get(l.id) ?? 0
+          r.lab.style.transform = `translate3d(${c.glide.dx * glideT}px, ${y + c.glide.dy * glideT}px, 0) translateY(-50%)`
+          r.lab.style.opacity = String(1 - clamp01((glideT - 0.75) / 0.25))
+        } else r.lab.style.opacity = labOp.toFixed(3)
+        if (r.lead) r.lead.style.opacity = (i === glideIdx ? 0 : labOp).toFixed(3)
+      })
+      return
+    }
+    // the open label is taller (two lines, folder, counts): toggle, then measure
+    const marks = ls.map((l, i) => {
+      const r = rec(l.id)
+      const open = Math.abs(dist[i] ?? 9) < 0.5
+      if (r.labOpen !== open) {
+        r.labOpen = open
+        toggle(r.lab, 'is-open', open)
+        toggle(r.lead, 'is-open', open)
+        c.labH.delete(l.id)
+      }
+      return { i, id: l.id, r, a: ovAnchor(L, poses[i]), d: dist[i] ?? 0 }
+    })
+    for (const m of marks) if (!c.labH.has(m.id) && m.r.lab) c.labH.set(m.id, m.r.lab.offsetHeight)
+    marks.sort((p, q) => p.a.y - q.a.y)
+    const ys = labelYs(
+      marks.map((m) => m.a.y),
+      marks.map((m) => c.labH.get(m.id) ?? 24),
+    )
+    marks.forEach((m, k) => {
+      const y = ys[k]
+      c.labY.set(m.id, y)
+      const { lab, lead } = m.r
+      // labels fade in as their sheet settles: nearest first during the opening
+      const stagger = phase === 'intro' ? clamp01(labOp * 1.6 - Math.abs(m.d) * 0.15) : labOp
+      const op = stagger * Math.max(0.35, 1 - Math.abs(m.d) * 0.18)
+      if (lab) {
+        lab.style.transform = `translate3d(0, ${y.toFixed(1)}px, 0) translateY(-50%)`
+        lab.style.opacity = op.toFixed(3)
+      }
+      if (lead) {
+        const dx = Math.max(0, m.a.left - 6 - x0)
+        const dy = m.a.y - y
+        const len = Math.hypot(dx, dy)
+        lead.style.transform = `translate3d(${x0}px, ${y.toFixed(1)}px, 0) rotate(${Math.atan2(dy, dx)}rad) scaleX(${(len / 100).toFixed(4)})`
+        lead.style.opacity = op.toFixed(3)
+      }
     })
   }
 
-  /** Mark a transition: pointer input pauses, and `will-change` goes on the
-   *  stage, the sheets and the one world whose transform animates (`w`). */
-  const busy = (cls: string, ms: number, w?: number) => {
-    const root = rootRef.current
-    if (!root) return
-    root.classList.add('lo--moving', 'lo--busy', cls)
-    const world = w == null ? null : rec(w).world
-    world?.classList.add('is-moving')
-    window.clearTimeout(C.current.busyTimer)
-    C.current.busyTimer = window.setTimeout(() => {
-      root.classList.remove('lo--moving', 'lo--busy', cls)
-      world?.classList.remove('is-moving')
-    }, ms)
-  }
-  const chrome = (on: boolean, dur: number, delay = 0) => {
-    for (const node of [bgRef.current, headRef.current, footRef.current]) {
-      trans(node, ['opacity'], dur, 'ease', delay)
-      if (node) node.style.opacity = on ? '1' : '0'
-    }
-  }
-  const railTarget = (i: number) => ovRailTarget(C.current.g!, i, C.current.railW)
-  const placeRail = (i: number, dur: number, ease: string, delay = 0) => {
-    const r = rec(i)
-    const g = C.current.g!
-    const t = railTarget(i)
-    trans(r.item, ['transform', 'opacity'], dur, ease, delay)
-    if (r.item) {
-      r.item.style.transform = `translate3d(0, ${t.y}px, 0)`
-      r.item.style.opacity = i === g.focus ? '1' : '0.82'
-    }
-    trans(r.lead, ['transform'], dur, ease, delay)
-    if (r.lead) r.lead.style.transform = `scaleX(${t.lead / 100})`
-  }
-
-  /** Open layout: tilted card file, focused sheet lifted and fully revealed.
-   *  'grow' = a new layer drops in, 'focus' = focus moved, 'layout' = no motion. */
-  const applyOpen = (kind: 'grow' | 'focus' | 'layout') => {
-    const g = C.current.g!
-    const dur = kind === 'grow' ? T.enter : kind === 'focus' ? T.focus : 0
-    const ease = kind === 'grow' ? EASE_OUT : EASE_FOCUS
-    g.Y = ovStageY(g)
-    const stage = stageRef.current!
-    trans(stage, ['transform'], dur, ease)
-    stage.style.transform = stageOpen(g)
-    for (let i = 0; i < n; i++) {
-      const r = rec(i)
-      trans(r.el, ['transform'], dur, ease)
-      if (r.el) r.el.style.transform = `translate3d(0, 0, ${ovZ(g, i)}px)`
-      trans(r.sheet, ['opacity'], kind === 'grow' ? 240 : 0, 'ease')
-      if (r.sheet) r.sheet.style.opacity = '1'
-      trans(r.glass, ['opacity'], 0, 'ease')
-      if (r.glass) {
-        r.glass.style.opacity = '1'
-        r.glass.style.background = ''
-      }
-      if (r.world) {
-        r.world.style.transition = `transform 0ms, opacity ${T.focus}ms ease`
-        r.world.style.transform = camT(C.current.fits[i])
-        r.world.style.opacity = ''
-      }
-      placeRail(i, dur, ease)
-    }
-  }
-
-  /** Flat layout: sheet j fills the viewport exactly over the live canvas at
-   *  `cam`; the others either sit stacked at z=0 ('collapse', frame 0 of the
-   *  open) or fly away from you ('fly', a dive). */
-  const applyFlat = (j: number, cam: Camera, others: 'collapse' | 'fly', dur: number, ease: string) => {
-    const stage = stageRef.current!
-    trans(stage, ['transform'], dur, ease)
-    stage.style.transform = STAGE_FLAT
-    for (let i = 0; i < n; i++) {
-      const r = rec(i)
-      const me = i === j
-      trans(r.el, ['transform'], dur, ease)
-      if (r.el)
-        r.el.style.transform = `translate3d(0, 0, ${me || others === 'collapse' ? 0 : i > j ? OV.FAR : -OV.FAR}px)`
-      trans(r.sheet, ['opacity'], me ? 0 : Math.min(dur, 200), 'ease')
-      if (r.sheet) r.sheet.style.opacity = me ? '1' : '0'
-      trans(r.glass, ['opacity'], dur ? Math.round(dur * 0.6) : 0, 'ease', dur ? Math.round(dur * 0.4) : 0)
-      if (r.glass) r.glass.style.opacity = '0'
-      if (me) {
-        trans(r.world, ['transform', 'opacity'], dur, ease)
-        if (r.world) {
-          r.world.style.transform = camT(cam)
-          r.world.style.opacity = '1'
-        }
-      } else if (others === 'collapse' && r.world) {
-        // hidden until the fan-out: park it at its own fit now, so only your
-        // sheet's world animates (and gets a compositing layer) on the way in
-        trans(r.world, ['transform'], 0, 'linear')
-        r.world.style.transform = camT(C.current.fits[i])
-        r.world.style.opacity = '0'
-      }
-      trans(r.item, ['opacity'], dur ? 110 : 0, 'ease')
-      if (r.item) r.item.style.opacity = '0'
-    }
-  }
-
-  /** Open, step 1: the canvas tilts back into one thin slab of every layer,
-   *  centred where the stack will be. Your layer stays on top and drawn; the
-   *  others are bare outlines a few px apart. */
-  const applySlab = (a: number) => {
-    const g = C.current.g!
-    const zMid = (ovZBase(g, 0) + ovZBase(g, n - 1)) / 2
-    const step = OV.SLAB / g.u
-    const wT = T.tilt + 60
-    const stage = stageRef.current!
-    trans(stage, ['transform'], T.tilt, EASE_OUT)
-    stage.style.transform = stageOpen(g)
-    for (let i = 0; i < n; i++) {
-      const r = rec(i)
-      const me = i === a
-      trans(r.el, ['transform'], T.tilt, EASE_OUT)
-      if (r.el) r.el.style.transform = `translate3d(0, 0, ${zMid + (i - a) * step}px)`
-      trans(r.sheet, ['opacity'], 160, 'ease', me ? 0 : 90) // outlines appear once it's tilting
-      if (r.sheet) r.sheet.style.opacity = '1'
-      trans(r.glass, ['opacity'], 180, 'ease')
-      if (r.glass) {
-        r.glass.style.opacity = '1'
-        r.glass.style.background = me ? '' : 'transparent'
-      }
-      if (r.world) {
-        r.world.style.transition = me ? `transform ${wT}ms ${EASE_OUT}, opacity 160ms ease` : 'opacity 160ms ease'
-        r.world.style.transform = camT(C.current.fits[i])
-        r.world.style.opacity = me ? '' : '0'
-      }
-    }
-  }
-
-  /** Open, step 2: the slab fans out into the card file, nearest layers first,
-   *  with a small spring; each plate fills in once it has pulled away. */
-  const applyExpand = (a: number) => {
-    const g = C.current.g!
-    const wT = T.tilt + 60
-    for (let i = 0; i < n; i++) {
-      const r = rec(i)
-      const delay = Math.abs(i - a) * T.exStagger
-      trans(r.el, ['transform'], T.expand, EASE_SPRING, delay)
-      if (r.el) r.el.style.transform = `translate3d(0, 0, ${ovZ(g, i)}px)`
-      if (r.glass) {
-        r.glass.style.transition = `opacity 180ms ease, background-color 240ms ease ${110 + delay}ms`
-        r.glass.style.background = ''
-      }
-      if (r.world) {
-        r.world.style.transition = `transform ${wT}ms ${EASE_OUT}, opacity 260ms ease ${150 + delay}ms`
-        r.world.style.opacity = ''
-      }
-      placeRail(i, 300, EASE_OUT, 90 + delay)
-    }
-  }
-
-  /** Cursor spread: rAF-batched, transforms only. */
-  const applyMag = () => {
+  const startIntro = (now: number) => {
     const c = C.current
-    c.magRaf = 0
-    if (c.state !== 'open' || !c.g) return
-    c.g.boost = ovBoost(c.g, c.magY)
-    for (let i = 0; i < n; i++) {
-      const r = rec(i)
-      trans(r.el, ['transform'], 180, EASE_FOCUS)
-      if (r.el) r.el.style.transform = `translate3d(0, 0, ${ovZ(c.g, i)}px)`
-      placeRail(i, 180, EASE_FOCUS)
-    }
-  }
-  const queueMag = (y: number | null) => {
-    const c = C.current
-    c.magY = y
-    if (!c.magRaf) c.magRaf = requestAnimationFrame(applyMag)
+    const ls = live.current.layers
+    const L = c.L!
+    setPhase('intro', now)
+    // the accordion it opens to, and the deck it forms first (where the
+    // open sheet will be)
+    c.acc = ovPoses(L, ls.map((_, i) => i), c.here)
+    c.deckShift = (c.acc[c.here]?.y ?? L.cy) - L.cy
   }
 
   // ---------- actions ----------
-  const setFocus = (i: number) => {
+  const go = (i: number) => {
     const c = C.current
-    if (!c.g || c.state !== 'open') return
-    i = Math.max(0, Math.min(n - 1, i))
-    if (i === c.g.focus) return
-    c.g.focus = i
+    if (c.phase !== 'live') return
+    i = Math.max(0, Math.min(live.current.n - 1, Math.round(i)))
+    c.target = i
     setFocusState(i)
     if (armed.current) {
       armed.current = null
       setNote(null)
     }
-    applyOpen(c.reduced ? 'layout' : 'focus')
+    kick()
   }
 
-  const close = () => {
+  /** Fade out and unmount (reduced motion). */
+  const fadeOut = () => {
     const root = rootRef.current
     const store = useStore.getState()
     store.setLayerOverview('closing') // the live canvas shows again under the fade
     if (!root) return store.setLayerOverview(false)
-    const ms = C.current.reduced ? T.fade : 90
-    root.style.transition = `opacity ${ms}ms ease`
+    C.current.phase = 'gone'
+    root.classList.remove('lo--live')
+    root.style.transition = `opacity ${T.fade}ms ease`
     root.style.opacity = '0'
-    later(() => useStore.getState().setLayerOverview(false), ms)
+    later(() => useStore.getState().setLayerOverview(false), T.fade)
+  }
+
+  /** Esc / L / the backdrop: the opening, backwards, onto the layer you're on. */
+  const close = () => {
+    const c = C.current
+    const L = live.current
+    if (c.reduced) {
+      if (c.phase === 'live') fadeOut()
+      return
+    }
+    const now = performance.now()
+    if (c.phase === 'intro') {
+      // reverse from wherever it has got to
+      const el = Math.min(T.intro, (now - c.t0) / c.slow)
+      setPhase('outro', now - (T.intro - el) * c.slow)
+      return
+    }
+    if (c.phase !== 'live') return
+    // the layer you're on may have changed (its layer removed)
+    c.here = L.curIdx
+    c.startCam = L.ws.camera
+    c.acc = c.poses.map((p) => ({ ...p }))
+    const deck = ovPoses(c.L!, L.layers.map((_, i) => i), c.here)
+    c.deckShift = (deck[c.here]?.y ?? c.L!.cy) - c.L!.cy
+    c.diveTo = -1
+    c.committed = false
+    window.clearTimeout(c.hoverT)
+    setPhase('outro', now)
+    sampleTransition('close', T.intro + T.handover)
+    kick()
   }
 
   /** Dive into layer j (and select one of its widgets). */
   const dive = (j: number, selectId?: string) => {
     const c = C.current
-    if (c.state !== 'open' && c.state !== 'opening') return
-    j = Math.max(0, Math.min(n - 1, j))
-    const target = layers[j].id
+    if (c.phase !== 'live' && c.phase !== 'intro') return
+    const L = live.current
+    j = Math.max(0, Math.min(L.n - 1, j))
+    const target = L.layers[j].id
     const root = rootRef.current!
-    const cam = target === curId ? ws.camera : landingCamera(ws, target, root.clientWidth, root.clientHeight)
-    c.state = 'diving'
-    root.classList.remove('lo--open')
-    // a dive in the open's first frames: every sheet back in the render tree
-    for (let i = 0; i < n; i++) if (rec(i).el) rec(i).el!.style.visibility = ''
-    for (const t of c.timers) window.clearTimeout(t)
-    c.timers = []
-    cancelAnimationFrame(c.magRaf)
-    c.magRaf = 0
-    if (c.g) c.g.boost = []
-    hint(null)
-    const finish = () => {
-      const store = useStore.getState()
-      // switching drops focus and selection either way (the focus-leak rule)
-      store.setActiveLayer(target, target === curId ? undefined : cam)
-      if (selectId) {
-        store.setSelection([selectId])
-        store.bringToFront([selectId])
-      }
-      close()
+    const cam = target === L.curId ? L.ws.camera : landingCamera(L.ws, target, root.clientWidth, root.clientHeight)
+    c.diveTo = j
+    c.diveCam = cam
+    c.selectId = selectId
+    c.committed = false
+    window.clearTimeout(c.hoverT)
+    if (c.reduced) {
+      commit()
+      fadeOut()
+      return
     }
-    if (c.reduced) return finish()
-    busy('lo--diving', T.dive, j)
-    sampleTransition('dive', T.dive)
-    applyFlat(j, cam, 'fly', T.dive, EASE_DIVE)
-    chrome(false, 140, T.dive - 140)
-    later(finish, T.dive + 10)
+    // where the name has to go: the layer chip in the top bar
+    const nm = rec(target).lab?.querySelector('.lr__t') ?? rec(target).lab
+    const chip = document.querySelector('.tb-layer__name') ?? document.querySelector('.tb-layer')
+    if (nm && chip) {
+      const a = nm.getBoundingClientRect()
+      const b = chip.getBoundingClientRect()
+      c.glide = { dx: b.left - a.left, dy: b.top + b.height / 2 - (a.top + a.height / 2) }
+    } else c.glide = { dx: 0, dy: -40 }
+    setPhase('dive')
+    sampleTransition('dive', T.dive + T.handover)
+    kick()
   }
 
-  /** ⇧↑ / ⇧↓: move the focused layer up or down the stack. */
+  /** ⇧↑ / ⇧↓: move the open layer up or down the stack. */
   const reorder = (dir: 1 | -1) => {
     const c = C.current
-    if (c.state !== 'open' || !c.g) return
-    const i = c.g.focus
+    if (c.phase !== 'live') return
+    const L = live.current
+    const i = Math.round(c.target)
     const j = i + dir
-    if (j < 0 || j >= n) return
-    keepFocus.current = layers[i].id
-    useStore.getState().moveLayer(layers[i].id, j)
+    if (j < 0 || j >= L.n) return
+    keepFocus.current = L.layers[i].id
+    useStore.getState().moveLayer(L.layers[i].id, j)
   }
 
-  /** ⌫: remove the focused layer. Its widgets merge into the layer below
+  /** ⌫: remove the open layer. Its widgets merge into the layer below
    *  (nothing closes); with widgets on it, press twice. */
   const remove = () => {
     const c = C.current
-    if (c.state !== 'open' || !c.g) return
-    const l = layers[c.g.focus]
+    if (c.phase !== 'live') return
+    const L = live.current
+    const f = Math.round(c.target)
+    const l = L.layers[f]
     if (l.id === BASE_LAYER_ID) {
       setNote('The base layer stays: rename it with R')
       return
     }
-    const count = (byLayer.get(l.id) ?? []).length
-    const intoIdx = c.g.focus > 0 ? c.g.focus - 1 : 1
+    const count = (L.byLayer.get(l.id) ?? []).length
+    const intoIdx = f > 0 ? f - 1 : 1
     if (count && armed.current !== l.id) {
       armed.current = l.id
       setNote(
-        `⌫ again to remove ${l.name}: its ${count} item${count > 1 ? 's' : ''} move to ${layerNumber(intoIdx)} ${layers[intoIdx].name}, and nothing closes`,
+        `⌫ again to remove ${l.name}: its ${count} item${count > 1 ? 's' : ''} move to ${layerNumber(intoIdx)} ${L.layers[intoIdx].name}, and nothing closes`,
       )
       return
     }
     armed.current = null
     setNote(null)
-    keepFocus.current = layers[intoIdx].id
+    keepFocus.current = L.layers[intoIdx].id
     useStore.getState().removeLayer(l.id)
   }
 
   const newLayer = () => {
-    if (C.current.state !== 'open' || n >= MAX_LAYERS) return
+    if (C.current.phase !== 'live' || live.current.n >= MAX_LAYERS) return
     void useStore.getState().newLayerWithPicker()
   }
 
@@ -495,20 +814,16 @@ export function LayerOverview() {
       return next
     })
 
-  const toggleGlass = () =>
-    setFrost((f) => {
-      localStorage.setItem(GLASS_KEY, f ? 'solid' : 'frosted')
-      return !f
-    })
-
-  // hovering a rail row outlines its card on the sheet
-  const hinted = useRef<string | null>(null)
-  const hint = (id: string | null) => {
-    if (hinted.current === id) return
-    const stage = stageRef.current
-    if (hinted.current) stage?.querySelector(`[data-pid="${hinted.current}"]`)?.classList.remove('pc--hint')
-    hinted.current = id
-    if (id) stage?.querySelector(`[data-pid="${id}"]`)?.classList.add('pc--hint')
+  // hovering waits a beat, so sweeping across the stack doesn't roll it
+  // through every layer on the way
+  const hoverGo = (i: number) => {
+    const c = C.current
+    if (c.phase !== 'live' || dragCleanup.current) return
+    // only after a real pointer move: a sheet sliding under a still cursor
+    // (after ↑/↓) must not steal the keyboard's choice
+    if (performance.now() - c.lastMove > 60) return
+    window.clearTimeout(c.hoverT)
+    c.hoverT = window.setTimeout(() => go(i), T.hover)
   }
 
   // ---------- open ----------
@@ -516,169 +831,155 @@ export function LayerOverview() {
     const c = C.current
     const root = rootRef.current!
     const commitAt = performance.now()
-    measure()
+    measure(true)
+    // the backdrop is the canvas (same colour and grid, at the same camera),
+    // so dropping it in over the live canvas is invisible
+    gridTo(ws.camera)
     if (c.reduced) {
-      // reduced motion: an opacity crossfade to a static stack, no tilt or spread
+      // reduced motion: an opacity crossfade to a resting accordion
       setReady(true)
-      applyOpen('layout')
-      chrome(true, 0)
+      setPhase('live')
+      c.pos = c.target = c.here
+      frame(performance.now())
       root.style.opacity = '0'
       void root.offsetWidth
       root.style.transition = `opacity ${T.fade}ms ease`
       root.style.opacity = '1'
-      c.state = 'open'
-      root.classList.add('lo--open')
       useStore.getState().setLayerOverview('open')
       sampleTransition('open', T.fade, { render: renderAt.current, commit: commitAt, effectEnd: performance.now() })
       return
     }
-    // frame 0: your sheet sits exactly over the live canvas, so the swap is invisible
-    root.classList.add('lo--entering-start')
-    applyFlat(curIdx, ws.camera, 'collapse', 0, 'linear')
-    chrome(false, 0)
-    for (let i = 0; i < n; i++) {
-      // rail items wait at their final height, nudged left
-      const r = rec(i)
-      const t = railTarget(i)
-      trans(r.item, ['transform'], 0, 'ease')
-      if (r.item) r.item.style.transform = `translate3d(-12px, ${t.y}px, 0)`
-      trans(r.lead, ['transform'], 0, 'ease')
-      if (r.lead) r.lead.style.transform = 'scaleX(0)'
-    }
-    void stageRef.current!.offsetWidth // commit the start values
-    root.classList.remove('lo--entering-start')
-    const total = T.exDelay + T.expand + T.exStagger * (n - 1)
-    busy('lo--entering', total, curIdx)
-    // the first frame builds only your sheet: the others stay out of the
-    // render tree until their outlines are due (they fade in from 90 ms)
-    for (let i = 0; i < n; i++) if (i !== curIdx && rec(i).el) rec(i).el!.style.visibility = 'hidden'
-    later(() => {
-      for (let i = 0; i < n; i++) if (rec(i).el) rec(i).el!.style.visibility = ''
-    }, 80)
-    applySlab(curIdx)
+    // frame 0: your sheet sits exactly over the live canvas, see-through, so
+    // the live widgets show; then the tiles cover them, bottom up
+    setPhase('preroll', commitAt)
+    c.last = commitAt
+    frame(commitAt)
+    kick()
     // build the other sheets' content once the open is under way
     requestAnimationFrame(() => requestAnimationFrame(() => setReady(true)))
-    chrome(true, 220)
-    // the backdrop is the canvas itself (same colour and grid), so it can
-    // cover the live canvas at once; the live widgets are hidden only once
-    // the open has settled (see Canvas), off the animation's critical path
-    trans(bgRef.current, ['opacity'], 0, 'linear')
-    if (bgRef.current) bgRef.current.style.opacity = '1'
-    later(() => C.current.state === 'opening' && applyExpand(curIdx), T.exDelay)
-    later(() => {
-      if (C.current.state !== 'opening') return
-      C.current.state = 'open'
-      root.classList.add('lo--open')
-      useStore.getState().setLayerOverview('open')
-    }, total)
-    sampleTransition('open', total, { render: renderAt.current, commit: commitAt, effectEnd: performance.now() })
+    sampleTransition('open', T.preroll + T.intro, {
+      render: renderAt.current,
+      commit: commitAt,
+      effectEnd: performance.now(),
+    })
     return () => {
       for (const t of C.current.timers) window.clearTimeout(t)
-      window.clearTimeout(C.current.busyTimer)
-      cancelAnimationFrame(C.current.magRaf)
+      window.clearTimeout(C.current.hoverT)
+      window.clearTimeout(C.current.wheelT)
+      cancelAnimationFrame(C.current.raf)
+      C.current.raf = 0
+      C.current.phase = 'gone'
     }
     // mount only: the open sequence runs once
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // after any render: classes React rewrote and label sizes may have changed,
+  // and new tiles may have mounted, so the next frame re-applies everything
+  useLayoutEffect(() => {
+    for (const r of recs.current.values()) {
+      r.open = r.labOpen = r.surf = undefined
+      r.tiles = null
+    }
+    C.current.labH.clear()
+    kick()
+  })
+
   // what's on a sheet changed while open (a drag, a find jump, an agent's
   // satellite): re-fit the sheets whose content bounds moved, smoothly
   useEffect(() => {
     const c = C.current
-    if (c.state !== 'open' || !c.g) return
+    if (c.phase !== 'live' || !c.L) return
     const root = rootRef.current!
-    const fits = layers.map((l) => ovFit(byLayer.get(l.id) ?? [], root.clientWidth, root.clientHeight))
-    fits.forEach((f, i) => {
-      const old = c.fits[i]
-      if (old && old.x === f.x && old.y === f.y && old.zoom === f.zoom) return
-      const w = rec(i).world
-      if (!w) return
-      w.style.transition = `transform 220ms ${EASE_FOCUS}, opacity ${T.focus}ms ease`
+    for (const l of layers) {
+      const f = ovFit(byLayer.get(l.id) ?? [], root.clientWidth, root.clientHeight)
+      const old = c.fits.get(l.id)
+      if (old && old.x === f.x && old.y === f.y && old.zoom === f.zoom) continue
+      c.fits.set(l.id, f)
+      const w = rec(l.id).world
+      if (!w) continue
+      w.style.transition = old ? 'transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1)' : 'none'
       w.style.transform = camT(f)
-      w.style.setProperty('--fs', String(f.zoom * c.g!.k))
-    })
-    c.fits = fits
+      w.style.setProperty('--fs', String(f.zoom * c.L.s))
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [byLayer])
 
-  // a layer moved or was removed while open: the sheets slide to their new
-  // places and the focus stays on the layer it was on
+  // a layer was added, moved or removed while open: the sheets slide to
+  // their new places, the open position follows the layer it was on, and a
+  // new layer drops in from above, open
   const order = layers.map((l) => l.id).join(',')
-  const prevOrder = useRef(order)
   useLayoutEffect(() => {
-    if (prevOrder.current === order) return // mount, or nothing moved
     const c = C.current
-    const before = prevOrder.current.split(',').length
-    prevOrder.current = order
-    if (n > before || c.state !== 'open' || !c.g) return
-    const keep = keepFocus.current ? layers.findIndex((l) => l.id === keepFocus.current) : -1
+    if (c.order === order) return
+    const prev = c.order.split(',')
+    c.order = order
+    if (!c.L) return
+    const ids = order.split(',')
+    const added = ids.filter((id) => !prev.includes(id))
+    ids.forEach((id, i) => {
+      const was = prev.indexOf(id)
+      if (was < 0) return
+      const o = was + (c.off.get(id) ?? 0) - i
+      if (Math.abs(o) > 1e-3) c.off.set(id, o)
+      else c.off.delete(id)
+    })
+    for (const id of prev) if (!ids.includes(id)) recs.current.delete(id)
+    measure(false)
+    let to = Math.min(Math.round(c.target), ids.length - 1)
+    if (added.length && c.phase === 'live') {
+      for (const id of added) c.born.set(id, performance.now())
+      to = ids.indexOf(added[added.length - 1])
+    } else if (keepFocus.current && ids.includes(keepFocus.current)) to = ids.indexOf(keepFocus.current)
     keepFocus.current = null
-    c.g.focus = keep >= 0 ? keep : Math.min(c.g.focus, n - 1)
-    measure()
-    applyOpen('focus')
-    setFocusState(c.g.focus)
+    if (c.phase === 'live') {
+      c.target = to
+      setFocusState(to)
+    }
+    // a pending "⌫ again" belonged to the stack as it was
+    if (armed.current) {
+      armed.current = null
+      setNote(null)
+    }
+    kick()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order])
 
-  // a layer was added while open (N): it drops in from above, focused
-  useLayoutEffect(() => {
-    const c = C.current
-    const prev = c.n
-    c.n = n
-    if (n <= prev || c.state !== 'open' || !c.g) return
-    c.g.focus = n - 1
-    measure()
-    const g = c.g
-    const r = rec(n - 1)
-    if (r.el) r.el.style.transform = `translate3d(0, 0, ${ovZ(g, n - 1) + 420}px)`
-    if (r.sheet) r.sheet.style.opacity = '0'
-    if (r.world) r.world.style.transform = camT(c.fits[n - 1])
-    if (r.item) {
-      r.item.style.transform = `translate3d(-12px, ${railTarget(n - 1).y}px, 0)`
-      r.item.style.opacity = '0'
-    }
-    void r.el?.offsetWidth
-    busy('lo--adding', T.enter)
-    applyOpen('grow')
-    setFocusState(n - 1)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [n])
-
   // ---------- input: keys, wheel, pointer, resize ----------
-  const live = useRef({ dive, setFocus, newLayer, toggleGlass, toggleView, reorder, remove, focus, curIdx, n, setRenaming, layers, setQuery })
-  live.current = { dive, setFocus, newLayer, toggleGlass, toggleView, reorder, remove, focus, curIdx, n, setRenaming, layers, setQuery }
+  const live = useRef({ dive, go, close, newLayer, toggleView, reorder, remove, curIdx, curId, n, layers, ws, byLayer, setRenaming, setQuery })
+  live.current = { dive, go, close, newLayer, toggleView, reorder, remove, curIdx, curId, n, layers, ws, byLayer, setRenaming, setQuery }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       if (t.tagName === 'INPUT' || t.isContentEditable) return
-      const L = live.current
+      const Lv = live.current
       const c = C.current
       const k = e.key
       const done = () => {
         e.preventDefault()
         e.stopPropagation()
       }
-      if (e.ctrlKey && e.metaKey && e.code === 'ArrowDown') return done(), L.dive(c.g?.focus ?? L.focus)
+      const at = Math.round(c.target)
+      if (e.ctrlKey && e.metaKey && e.code === 'ArrowDown') return done(), Lv.dive(at)
       if (e.metaKey || e.ctrlKey || e.altKey) return
-      if (k === '/' && c.state === 'open') return done(), L.setQuery('')
-      if (k === 'Escape' || k === 'l' || k === 'L') return done(), L.dive(L.curIdx)
+      if (k === '/' && c.phase === 'live') return done(), Lv.setQuery('')
+      if (k === 'Escape' || k === 'l' || k === 'L') return done(), Lv.close()
       if (/^[1-9]$/.test(k)) {
         done()
-        if (+k <= L.n) L.dive(+k - 1)
+        if (+k <= Lv.n) Lv.dive(+k - 1)
         return
       }
-      if (k === 'Enter' || k === ' ') return done(), L.dive(c.g?.focus ?? L.focus)
-      if (e.shiftKey && (k === 'ArrowUp' || k === 'ArrowDown')) return done(), L.reorder(k === 'ArrowUp' ? 1 : -1)
-      if (k === 'Backspace' || k === 'Delete') return done(), L.remove()
-      if (k === 'ArrowUp' || k === 'k' || k === 'K') return done(), L.setFocus((c.g?.focus ?? 0) + 1)
-      if (k === 'ArrowDown' || k === 'j' || k === 'J') return done(), L.setFocus((c.g?.focus ?? 0) - 1)
-      if (k === 'n' || k === 'N') return done(), L.newLayer()
-      if (k === 'g' || k === 'G') return done(), L.toggleGlass()
+      if (k === 'Enter' || k === ' ') return done(), Lv.dive(at)
+      if (e.shiftKey && (k === 'ArrowUp' || k === 'ArrowDown')) return done(), Lv.reorder(k === 'ArrowUp' ? 1 : -1)
+      if (k === 'Backspace' || k === 'Delete') return done(), Lv.remove()
+      if (k === 'ArrowUp' || k === 'k' || k === 'K') return done(), Lv.go(at + 1)
+      if (k === 'ArrowDown' || k === 'j' || k === 'J') return done(), Lv.go(at - 1)
+      if (k === 'n' || k === 'N') return done(), Lv.newLayer()
       if (k === 'P' && layersPerf.on) return done(), void runBench(() => useStore.getState().setLayerOverview(true))
       if (k === 'p' || k === 'P') return done(), setPerfOn(!layersPerf.on)
-      if (k === 'v' || k === 'V') return done(), L.toggleView()
-      if ((k === 'r' || k === 'R') && c.state === 'open') return done(), L.setRenaming(L.layers[c.g?.focus ?? 0]?.id ?? null)
+      if (k === 'v' || k === 'V') return done(), Lv.toggleView()
+      if ((k === 'r' || k === 'R') && c.phase === 'live') return done(), Lv.setRenaming(Lv.layers[at]?.id ?? null)
       // every other bare key stops here: nothing reaches the canvas underneath
       done()
     }
@@ -686,41 +987,40 @@ export function LayerOverview() {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       const c = C.current
-      if (c.state !== 'open') return
-      const w = c.wheel
+      if (c.phase !== 'live') return
       if (e.ctrlKey || e.metaKey) {
-        // pinch in dives into the focused layer
+        // pinch in dives into the open layer
         if (e.deltaY < 0) {
-          w.pinch -= e.deltaY
-          if (w.pinch > 60) {
-            w.pinch = 0
-            live.current.dive(c.g!.focus)
+          c.pinch -= e.deltaY
+          if (c.pinch > 60) {
+            c.pinch = 0
+            live.current.dive(Math.round(c.target))
           }
         }
         return
       }
-      // one step per 48px, then a cooldown so trackpad inertia can't race
-      const now = performance.now()
-      if (now - w.prev > 250) w.acc = 0
-      w.prev = now
-      if (now - w.step < 140) return
-      w.acc += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY
-      if (Math.abs(w.acc) >= 48) {
-        live.current.setFocus(c.g!.focus + (w.acc < 0 ? 1 : -1)) // scroll up = up the stack
-        w.acc = 0
-        w.step = now
-      }
+      // the wheel moves the target (scroll up = up the stack), and it snaps
+      // to a layer once the wheel rests
+      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY
+      const n = live.current.n
+      c.target = Math.max(0, Math.min(n - 1, c.target - dy * 0.004))
+      setFocusState(Math.round(c.target))
+      window.clearTimeout(c.wheelT)
+      c.wheelT = window.setTimeout(() => {
+        C.current.target = Math.round(C.current.target)
+        kick()
+      }, T.snap)
+      kick()
     }
-    const onMove = (e: PointerEvent) => {
-      const c = C.current
-      c.lastMove = performance.now()
-      if (!c.reduced && !dragCleanup.current) queueMag(e.clientY - c.top)
+    const onMove = () => {
+      C.current.lastMove = performance.now()
     }
-    const onLeave = () => queueMag(null)
+    const onLeave = () => window.clearTimeout(C.current.hoverT)
     const onResize = () => {
-      if (C.current.state !== 'open') return
-      measure()
-      applyOpen('layout')
+      const c = C.current
+      if (c.phase !== 'live') return
+      measure(true)
+      kick()
     }
     window.addEventListener('keydown', onKey, true)
     root.addEventListener('wheel', onWheel, { passive: false })
@@ -737,36 +1037,29 @@ export function LayerOverview() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // hover moves the focus only after a real pointer move: a sheet sliding
-  // under a still cursor (after ↑/↓) must not steal the keyboard's focus
-  const hoverFocus = (i: number) => {
-    if (dragCleanup.current) return // dragging a card: the stack holds still
-    if (performance.now() - C.current.lastMove < 60) setFocus(i)
-  }
-  // ---------- drag a card onto another sheet (or its rail label) ----------
+  // ---------- drag a tile onto another sheet (or its rail label) ----------
   const ghostRef = useRef<HTMLDivElement>(null)
   const dragEndedAt = useRef(0)
   // a drag in progress when the overview unmounts must not leave listeners
   const dragCleanup = useRef<(() => void) | null>(null)
   useEffect(() => () => dragCleanup.current?.(), [])
-  const cardAt = (x: number, y: number) =>
-    // inside a preserve-3d tree elementFromPoint can report the sheet's glass
-    // while elementsFromPoint has the card first, so resolve from the full list
+  const tileAt = (x: number, y: number) =>
+    // resolve from the full hit list: the sheet's own surface can come first
     document.elementsFromPoint(x, y).find((n) => n instanceof HTMLElement && !!n.dataset.pid) as
       | HTMLElement
       | undefined
   const onSheetDown = (i: number, e: React.PointerEvent) => {
-    if (C.current.state !== 'open' || e.button !== 0) return
-    const card = cardAt(e.clientX, e.clientY)
-    const id = card?.dataset.pid
-    if (!card || !id) return
+    if (C.current.phase !== 'live' || e.button !== 0) return
+    const tile = tileAt(e.clientX, e.clientY)
+    const id = tile?.dataset.pid
+    if (!tile || !id) return
     const sx = e.clientX
     const sy = e.clientY
     let on = false
     let over = -1
     const overAt = (x: number, y: number) => {
       for (const n of document.elementsFromPoint(x, y)) {
-        const hit = (n as HTMLElement).closest?.('.lo-layer, .lr') as HTMLElement | null
+        const hit = (n as HTMLElement).closest?.('.lo-sheet, .lr') as HTMLElement | null
         if (!hit) continue
         const idx = Number(hit.dataset.idx)
         return Number.isFinite(idx) ? idx : -1
@@ -777,10 +1070,11 @@ export function LayerOverview() {
       if (!on) {
         if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return
         on = true
-        card.classList.add('is-lifted')
+        window.clearTimeout(C.current.hoverT)
+        tile.classList.add('is-lifted')
         const g = ghostRef.current
         if (g) {
-          g.firstChild!.textContent = card.querySelector('.pt__name, .pc__title')?.textContent ?? ''
+          g.firstChild!.textContent = tile.querySelector('.pt__tt, .pt__bt')?.textContent ?? ''
           g.classList.add('lo-ghost--on')
         }
       }
@@ -791,8 +1085,8 @@ export function LayerOverview() {
         over = next
         setDropIdx(over !== i ? over : -1)
         if (g) g.lastChild!.textContent = over >= 0 && over !== i ? `→ ${layerNumber(over)} ${live.current.layers[over].name}` : ''
-        // no refocus while dragging: it re-lays out the stack and slides the
-        // target out from under the pointer, so the drop would miss it
+        // no roll while dragging: it would slide the target out from under
+        // the pointer, so the drop would miss it
       }
     }
     const detach = () => {
@@ -805,7 +1099,7 @@ export function LayerOverview() {
       detach()
       if (!on) return // a plain click: the sheet's click handler dives
       dragEndedAt.current = performance.now()
-      card.classList.remove('is-lifted')
+      tile.classList.remove('is-lifted')
       ghostRef.current?.classList.remove('lo-ghost--on')
       setDropIdx(-1)
       const ls = live.current.layers
@@ -821,29 +1115,7 @@ export function LayerOverview() {
   const onSheetClick = (i: number, e: React.MouseEvent) => {
     e.stopPropagation()
     if (performance.now() - dragEndedAt.current < 80) return // the click that ends a drag
-    // inside a preserve-3d tree elementFromPoint can report the sheet's glass
-    // while elementsFromPoint has the card first, so resolve from the full list
-    dive(i, cardAt(e.clientX, e.clientY)?.dataset.pid)
-  }
-
-  /** How many list rows fit above layer i's rail label: the room up to the
-   *  label above it (or the header), less the name and meta lines. */
-  const railRows = (i: number) => {
-    const g = C.current.g
-    if (!g) return 6
-    const y = ovRailTarget(g, i, C.current.railW).y
-    const above = i + 1 < n ? ovRailTarget(g, i + 1, C.current.railW).y + 6 : OV.HEAD_H + 8
-    const rowH = 21 * textScale()
-    return Math.max(2, Math.min(14, Math.floor((y - above - 62 * textScale()) / rowH)))
-  }
-
-  /** A sheet's screen px per world unit, for laying out tile labels. Rounded
-   *  so it stays stable (and the sheets' memo holds) between renders. */
-  const labelScale = (id: string) => {
-    const W = rootRef.current?.clientWidth ?? window.innerWidth
-    const H = rootRef.current?.clientHeight ?? window.innerHeight
-    const k = C.current.g?.k ?? 0.5
-    return Math.round(ovFit(byLayer.get(id) ?? [], W, H).zoom * k * 1000) / 1000
+    dive(i, tileAt(e.clientX, e.clientY)?.dataset.pid)
   }
 
   // ---------- find (/) ----------
@@ -855,19 +1127,19 @@ export function LayerOverview() {
     return m
   }, [q, ws.elements])
   const matchCount = (id: string) => (byLayer.get(id) ?? []).filter((e) => matches?.has(e.id)).length
-  // typing moves the focus to the first layer with a match (yours first)
+  // typing rolls to the first layer with a match (yours first)
   useEffect(() => {
     if (!matches || !matches.size) return
     const has = (i: number) => (byLayer.get(layers[i].id) ?? []).some((e) => matches.has(e.id))
-    if (C.current.g && has(C.current.g.focus)) return
+    if (has(Math.round(C.current.target))) return
     const order = [curIdx, ...layers.map((_, i) => i).filter((i) => i !== curIdx)]
     const hit = order.find(has)
-    if (hit != null) setFocus(hit)
+    if (hit != null) go(hit)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matches])
-  /** Enter in the find box: dive into the focused layer, selecting its first match. */
+  /** Enter in the find box: dive into the open layer, selecting its first match. */
   const diveToMatch = () => {
-    const i = C.current.g?.focus ?? curIdx
+    const i = Math.round(C.current.target)
     const first = (byLayer.get(layers[i].id) ?? []).find((e) => matches?.has(e.id))
     dive(i, first?.id)
   }
@@ -878,17 +1150,18 @@ export function LayerOverview() {
     (a, s) => ({ w: a.w + s.count, r: a.r + s.working, q: a.q + s.waiting }),
     { w: 0, r: 0, q: 0 },
   )
+  const subMax = Math.max(14, Math.floor((C.current.railW - 52) / 7))
 
   return (
     <div
       className="lo"
       ref={rootRef}
       onClick={(e) => {
-        // the click that ends a card drag lands on the common ancestor: not a backdrop click
+        // the click that ends a tile drag lands on the common ancestor: not a backdrop click
         if (performance.now() - dragEndedAt.current < 80) return
         // the backdrop: back to the layer you were on
-        if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('lo-view'))
-          dive(curIdx)
+        if (C.current.phase !== 'live') return
+        if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('lo-view')) close()
       }}
     >
       <div className="lo-bg" ref={bgRef} />
@@ -896,149 +1169,121 @@ export function LayerOverview() {
         <span />
         <em />
       </div>
-      <div
-        className={`lo-view${frost ? ' lo--frost' : ''}`}
-        onClick={(e) => {
-          e.stopPropagation()
-          if (performance.now() - dragEndedAt.current >= 80) dive(curIdx)
-        }}
-      >
-        <div className="lo-stage" ref={stageRef}>
-          {layers.map((l, i) => (
-            <div
-              key={l.id}
-              ref={(node) => void (rec(i).el = node)}
-              data-idx={i}
-              className={`lo-layer${i === focus ? ' is-focus' : ''}${i === curIdx ? ' is-current' : ''}${
-                stats[i].waiting ? ' has-waiting' : ''
-              }${i === dropIdx ? ' is-drop' : ''}`}
-            >
-              <div
-                className="lo-sheet"
-                ref={(node) => void (rec(i).sheet = node)}
-                onPointerEnter={() => hoverFocus(i)}
-                onPointerDown={(e) => onSheetDown(i, e)}
-                onClick={(e) => onSheetClick(i, e)}
-              >
-                <div className="lo-glass" ref={(node) => void (rec(i).glass = node)} />
-                <div className="lo-world" ref={(node) => void (rec(i).world = node)}>
-                  {(ready || i === curIdx) && (
-                    <SheetContent
-                      els={byLayer.get(l.id) ?? []}
-                      labelScale={labelScale(l.id)}
-                      mode={view === 'detail' && i === focus ? 'detail' : 'map'}
-                      matches={matches}
-                    />
-                  )}
-                </div>
+      <div className="lo-view" ref={viewRef}>
+        {layers.map((l, i) => (
+          <div
+            key={l.id}
+            ref={(node) => void (rec(l.id).sheet = node)}
+            data-idx={i}
+            className={`lo-sheet${i === curIdx ? ' is-current' : ''}${stats[i].waiting ? ' has-waiting' : ''}${
+              i === dropIdx ? ' is-drop' : ''
+            }`}
+            onPointerEnter={() => hoverGo(i)}
+            onPointerDown={(e) => onSheetDown(i, e)}
+            onClick={(e) => onSheetClick(i, e)}
+          >
+            <div className="lo-base" ref={(node) => void (rec(l.id).base = node)} />
+            <div className="lo-face" ref={(node) => void (rec(l.id).face = node)}>
+              <div className="lo-glass" ref={(node) => void (rec(l.id).glass = node)} />
+              <div className="lo-world" ref={(node) => void (rec(l.id).world = node)}>
+                {(ready || i === C.current.here) && (
+                  <SheetContent
+                    els={byLayer.get(l.id) ?? []}
+                    fs={Math.round(((C.current.fits.get(l.id)?.zoom ?? 0.5) * (C.current.L?.s ?? 0.45)) * 1000) / 1000}
+                    mode={view}
+                    matches={matches}
+                    home={layerDir(ws, l.id)}
+                  />
+                )}
               </div>
             </div>
-          ))}
-        </div>
+            <div className="lo-attn" />
+          </div>
+        ))}
       </div>
 
       <div className="lo-rail">
         {layers.map((l, i) => {
           const st = stats[i]
           const here = i === curIdx
-          const isFocus = i === focus
-          const dir = l.dir
-          // agents that need you first, then working, then the rest
-          const rank = (e: WidgetElement) => ({ waiting: 0, working: 1, done: 2 })[statusOf(e.id) as string] ?? 3
-          const els = (byLayer.get(l.id) ?? [])
-            .filter((e): e is WidgetElement => e.type === 'widget')
-            .sort((a, b) => rank(a) - rank(b))
-          // the focused layer's list grows upward into its sheet's reveal gap:
-          // show only as many rows as fit before the label above it
-          const rows = isFocus ? railRows(i) : 0
-          const listed = matches ? els.filter((e) => matches.has(e.id)) : els
-          const shown = listed.length > rows ? listed.slice(0, Math.max(0, rows - 1)) : listed
+          const hits = matches ? matchCount(l.id) : 0
           return (
             <div
               key={l.id}
-              ref={(node) => void (rec(i).item = node)}
+              ref={(node) => void (rec(l.id).lab = node)}
               data-idx={i}
-              className={`lr${isFocus ? ' is-focus' : ''}${st.waiting ? ' has-waiting' : ''}${i === dropIdx ? ' is-drop' : ''}`}
+              className={`lr${st.waiting ? ' has-waiting' : ''}${i === dropIdx ? ' is-drop' : ''}${
+                matches ? (hits ? ' has-hits' : ' no-hits') : ''
+              }`}
+              onPointerEnter={() => hoverGo(i)}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (renaming === l.id || C.current.phase !== 'live') return
+                if (Math.round(C.current.target) === i) dive(i)
+                else go(i)
+              }}
             >
-              <div
-                className="lr__box"
-                onPointerEnter={() => hoverFocus(i)}
-                onPointerLeave={() => hint(null)}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (renaming === l.id || C.current.state !== 'open') return
-                  const row = (e.target as HTMLElement).closest<HTMLElement>('.lr__row')
-                  dive(i, row?.dataset.id)
-                }}
-              >
-                <div className="lr__num">{layerNumber(i)}</div>
-                <div className="lr__main">
-                  <div className="lr__name">
-                    {renaming === l.id ? (
-                      <input
-                        className="lr__input"
-                        defaultValue={l.name}
-                        autoFocus
-                        onClick={(e) => e.stopPropagation()}
-                        onBlur={(e) => {
-                          useStore.getState().renameLayer(l.id, e.target.value)
-                          setRenaming(null)
-                        }}
-                        onKeyDown={(e) => {
-                          e.stopPropagation()
-                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                          if (e.key === 'Escape') setRenaming(null)
-                        }}
-                      />
-                    ) : (
-                      <span
-                        className="lr__nm"
-                        onDoubleClick={(e) => {
-                          e.stopPropagation()
-                          setRenaming(l.id)
-                        }}
-                      >
-                        {l.name}
-                      </span>
-                    )}
-                    {here && <span className="lr__here">here</span>}
-                  </div>
-                  <div className="lr__meta">
-                    {dir && <span className="lr__dir">{"\u200e" + shortPath(dir)}</span>}
-                    {matches ? (
-                      <span className={matchCount(l.id) ? 'lr__found' : ''}>
-                        {matchCount(l.id) ? `${matchCount(l.id)} found` : 'no match'}
-                      </span>
-                    ) : st.count ? (
-                      <GlyphCounts els={byLayer.get(l.id) ?? []} />
-                    ) : (
-                      <span>empty</span>
-                    )}
-                    {st.working > 0 && <span className="m m--working">{st.working}</span>}
-                    {st.waiting > 0 && <span className="m m--waiting">{st.waiting} needs you</span>}
-                    {st.done > 0 && <span className="m m--done">{st.done}</span>}
-                  </div>
-                  {isFocus && els.length > 0 && (
-                    <div className="lr__list" onPointerLeave={() => hint(null)}>
-                      {shown.map((e) => (
-                        <RailRow
-                          key={e.id}
-                          el={e}
-                          home={layerDir(ws, l.id)}
-                          onHover={() => hint(e.id)}
-                        />
-                      ))}
-                      {shown.length < listed.length && (
-                        <div className="lr__more">+{listed.length - shown.length} more</div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="lr__lead" ref={(node) => void (rec(i).lead = node)} />
+              <span className="lr__n">{layerNumber(i)}</span>
+              <span className="lr__nm">
+                {renaming === l.id ? (
+                  <input
+                    className="lr__input"
+                    defaultValue={l.name}
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={(e) => {
+                      useStore.getState().renameLayer(l.id, e.target.value)
+                      setRenaming(null)
+                    }}
+                    onKeyDown={(e) => {
+                      e.stopPropagation()
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                      if (e.key === 'Escape') setRenaming(null)
+                    }}
+                  />
+                ) : (
+                  <span
+                    className="lr__t"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation()
+                      setRenaming(l.id)
+                    }}
+                  >
+                    {l.name}
+                  </span>
+                )}
+                {here && <span className="lr__here">here</span>}
+                {st.waiting > 0 && <span className="lr__dot" title="needs you" />}
+                {matches && hits > 0 && <span className="lr__hits">{hits}</span>}
+              </span>
+              <span className="lr__sub" title={l.dir ?? ws.dir}>
+                {l.dir || ws.dir ? midEllipsis(shortPath((l.dir ?? ws.dir)!), subMax) : 'no folder'}
+              </span>
+              <span className="lr__sum">
+                {matches && <span className={hits ? 'lr__found' : ''}>{hits ? `${hits} found` : 'no match'}</span>}
+                {st.waiting > 0 && (
+                  <span className="lr__w">
+                    <StatusGlyph status="waiting" title="needs you" /> {st.waiting}
+                  </span>
+                )}
+                {st.working > 0 && (
+                  <span>
+                    <StatusGlyph status="working" title="working" /> {st.working}
+                  </span>
+                )}
+                {st.done > 0 && (
+                  <span className="lr__d">
+                    <StatusGlyph status="done" title="just finished" /> {st.done}
+                  </span>
+                )}
+                <span>{st.count ? `${st.count} widget${st.count === 1 ? '' : 's'}` : 'empty'}</span>
+              </span>
             </div>
           )
         })}
+        {layers.map((l) => (
+          <div key={l.id} className="lr-lead" ref={(node) => void (rec(l.id).lead = node)} />
+        ))}
       </div>
 
       <div className="lo-head" ref={headRef}>
@@ -1075,7 +1320,7 @@ export function LayerOverview() {
                 diveToMatch()
               } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 e.preventDefault()
-                setFocus((C.current.g?.focus ?? 0) + (e.key === 'ArrowUp' ? 1 : -1))
+                go(Math.round(C.current.target) + (e.key === 'ArrowUp' ? 1 : -1))
               }
             }}
           />
@@ -1107,19 +1352,10 @@ export function LayerOverview() {
           className="lo-btn"
           onClick={(e) => {
             e.stopPropagation()
-            toggleGlass()
-          }}
-        >
-          glass: {frost ? 'frosted' : 'solid'} <span className="kbd">G</span>
-        </button>
-        <button
-          className="lo-btn"
-          onClick={(e) => {
-            e.stopPropagation()
             toggleView()
           }}
         >
-          view: {view} <span className="kbd">V</span>
+          tiles: {view === 'map' ? 'names' : 'cards'} <span className="kbd">V</span>
         </button>
       </div>
       <PerfReadout />
@@ -1128,21 +1364,21 @@ export function LayerOverview() {
         <div className="lo-keys">
           <span>
             <span className="kbd">↑</span>
-            <span className="kbd">↓</span> or scroll · move
+            <span className="kbd">↓</span>, hover or scroll · roll
           </span>
           <span>
             <span className="kbd">⏎</span> or click · dive in
           </span>
           <span>
-            <span className="kbd">1</span>–<span className="kbd">9</span> · jump
+            <span className="kbd">1</span>–<span className="kbd">9</span> · jump in
           </span>
           <span>
             <span className="kbd">/</span> · find
           </span>
           <span>
-            <span className="kbd">V</span> · map / detail
+            <span className="kbd">V</span> · cards
           </span>
-          <span>drag a card · move it to another layer</span>
+          <span>drag a tile · move it to another layer</span>
           <span>
             <span className="kbd">⇧↑</span>
             <span className="kbd">⇧↓</span> · reorder
@@ -1162,26 +1398,30 @@ export function LayerOverview() {
   )
 }
 
-/** One sheet's proxies. Memoised on the layer's element list, so a focus change
- *  (which re-renders the overview) never touches them. */
+/** One sheet's tiles. Memoised on the layer's element list, so a roll (which
+ *  never re-renders) and a focus change (which does) leave them alone. */
 const SheetContent = memo(function SheetContent({
   els,
   mode,
   matches,
-  labelScale,
+  fs,
+  home,
 }: {
   els: CanvasElement[]
   mode: ProxyMode
   matches: Set<string> | null
-  /** screen px per world unit on this sheet (fit zoom × k): sizes the label
-   *  boxes that overlapping tiles keep clear of each other */
-  labelScale: number
+  /** screen px per world unit on this sheet (fit zoom × sheet scale) */
+  fs: number
+  home?: string
 }) {
-  const spots = useMemo(() => {
+  const { ord, covered } = useMemo(() => {
     const ws = els.filter((e): e is WidgetElement => e.type === 'widget')
-    const s = Math.max(0.02, labelScale)
-    return labelSpots(ws, 150 / s, 56 / s)
-  }, [els, labelScale])
+    const rank = readingOrder(ws)
+    const ord = new Map(ws.map((w, i) => [w.id, rank[i]]))
+    const s = Math.max(0.02, fs)
+    // the text block: about 200 × 64 screen px from the tile's top-left
+    return { ord, covered: coveredLabels(ws, 200 / s, 64 / s) }
+  }, [els, fs])
   let widgets = 0
   return (
     <>
@@ -1194,7 +1434,9 @@ const SheetContent = memo(function SheetContent({
             rect={capped}
             mode={mode}
             dim={!!matches && !matches.has(e.id)}
-            spot={spots.get(e.id)}
+            ord={ord.get(e.id)}
+            noText={covered.has(e.id)}
+            home={home}
           />
         )
       })}
@@ -1202,22 +1444,7 @@ const SheetContent = memo(function SheetContent({
   )
 })
 
-function RailRow({ el, home, onHover }: { el: WidgetElement; home?: string; onHover: () => void }) {
-  const isTerm = el.kind === 'terminal' || el.kind === 'agent'
-  const s = useDisplayStatus(el.id) ?? 'off'
-  // a widget moved here from another project keeps its folder: say so
-  const guest = home && el.cwd && !pathWithin(home, el.cwd) ? baseName(el.cwd) : null
-  return (
-    <div className="lr__row" data-id={el.id} onPointerEnter={onHover}>
-      {isTerm ? <span className={`pc__led pc__led--${s}`} /> : <span className="lr__ic" />}
-      <span className="lr__t">{el.title}</span>
-      {guest && <span className="lr__guest">↗ {guest}</span>}
-      <span className={`lr__s lr__s--${isTerm ? s : ''}`}>{isTerm ? (WORD[s] ?? s) : widgetType(el)}</span>
-    </div>
-  )
-}
-
-/** The perf readout (P): the last few opens and dives, newest first. */
+/** The perf readout (P): the last few opens, dives and closes, newest first. */
 function PerfReadout() {
   const [, tick] = useState(0)
   useEffect(() => subscribePerf(() => tick((x) => x + 1)), [])
@@ -1235,7 +1462,7 @@ function PerfReadout() {
       <div className="lo-perf__row">
         perf (P to hide, ⇧P to bench) · ms · {document.hidden ? 'HIDDEN: throttled' : 'visible'}
       </div>
-      {(['open', 'dive'] as const).map((k) => {
+      {(['open', 'dive', 'close'] as const).map((k) => {
         const a = summary(k, 'frame0')
         const b = summary(k, 'first')
         const c = summary(k, 'p95')
@@ -1250,41 +1477,5 @@ function PerfReadout() {
       })}
       {layersPerf.runs.map(row)}
     </div>
-  )
-}
-
-const GLYPH_ICON: Record<Glyph, (p: { className?: string }) => JSX.Element> = {
-  agent: IconAgent,
-  mirror: IconDesktop,
-  shell: IconTerminal,
-  code: IconEditor,
-  git: IconDiff,
-  web: IconWeb,
-  note: IconNote,
-}
-const GLYPH_NAME: Record<Glyph, string> = {
-  agent: 'Claude',
-  mirror: 'desktop mirror',
-  shell: 'terminal',
-  code: 'file / editor',
-  git: 'git',
-  web: 'web / VS Code',
-  note: 'note',
-}
-
-/** What's on a layer, by type: one small glyph and a count per kind. */
-function GlyphCounts({ els }: { els: CanvasElement[] }) {
-  return (
-    <span className="lr__kinds">
-      {glyphCounts(els).map(([g, n]) => {
-        const Icon = GLYPH_ICON[g]
-        return (
-          <span key={g} className="lr__kind" title={`${n} ${GLYPH_NAME[g]}`}>
-            <Icon />
-            {n}
-          </span>
-        )
-      })}
-    </span>
   )
 }
