@@ -1,58 +1,54 @@
-// The strip along the top of focus mode: a way back to the canvas, where you
-// are (tab › stack › widget), and a "jack" for every terminal and agent on the
-// layer, numbered like ⌘1–9, with its live status, then one (unnumbered) for
-// each desktop-app mirror. A jack swaps which widget is focused. One that needs
-// you lights its jack, and a chip on the right takes you to it. Nothing ever
-// swaps in on its own.
+// The strip along the top of focus mode, and the only bar there: a way back to
+// the canvas, the focused widget's own header and controls (its title bar is
+// hidden while focused and renders in here, see focusSlots.ts), and a "jack"
+// for every terminal and agent on the layer, numbered like ⌘1–9, with its live
+// status, then one (unnumbered) for each desktop-app mirror. A jack swaps which
+// widget is focused. One that needs you lights its jack, and a chip on the
+// right takes you to it. Nothing ever swaps in on its own.
 
 import { useStore, selectActive } from '../store/workspace'
 import { useAgents } from '../lib/agents'
 import { focusWidget, orderedMirrors, orderedTerminals, FOCUS_STRIP_H } from '../lib/view'
-import { stacksOf } from '../lib/stacks'
 import { StatusGlyph, StatusIcon } from '../widgets/widgetIcons'
-import { IconBack, IconStack, IconUnfocus } from './icons'
+import { IconBack, IconUnfocus } from './icons'
+import { slotRef } from './focusSlots'
 
 export function FocusStrip() {
   const focusId = useStore((s) => s.focus?.id ?? null)
+  // after focus ends the strip fades out while the widget flies home
+  const leavingId = useStore((s) => (s.focus && !s.focus.id ? (s.focus.returning[s.focus.returning.length - 1] ?? null) : null))
+  const shownId = focusId ?? leavingId
   // re-render when widgets come, go or are renamed
   const ws = useStore(selectActive)
   // terminals keep ⌘1–9's numbering; mirrors follow, unnumbered (read-only,
   // so not in the ⌘N / cycle order you type into)
-  const terms = focusId ? orderedTerminals() : []
-  const mirrors = focusId ? orderedMirrors() : []
+  const terms = shownId ? orderedTerminals() : []
+  const mirrors = shownId ? orderedMirrors() : []
   const numbered = Math.min(9, terms.length)
   const jacks = [...terms.slice(0, numbered), ...mirrors]
   const all = [...terms, ...mirrors]
   const allIds = all.map((t) => t.id)
   const waiting = useAgents((s) => allIds.filter((id) => id !== focusId && s.status[id] === 'waiting').join(','))
-  if (!focusId) return null
-  const el = ws.elements.find((e) => e.id === focusId)
+  if (!shownId) return null
+  const el = ws.elements.find((e) => e.id === shownId)
   if (!el || el.type !== 'widget') return null
-  const stack = el.stackId ? stacksOf(ws.elements).get(el.stackId) : undefined
   const waitingIds = waiting ? waiting.split(',') : []
   const exit = () => useStore.getState().exitFocus()
 
   return (
-    <div className="focus-strip" style={{ height: FOCUS_STRIP_H }} onPointerDown={(e) => e.stopPropagation()}>
+    <div
+      className={`focus-strip${focusId ? '' : ' focus-strip--leaving'}`}
+      style={{ height: FOCUS_STRIP_H }}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
       <button className="focus-strip__back" title="Back to canvas (⌘⇧↵ or Esc)" onClick={exit}>
         <IconBack />
         Canvas
       </button>
       <span className="focus-strip__sep" />
-      <span className="focus-strip__crumb">
-        <span className="focus-strip__tab">{ws.name}</span>
-        {stack && (
-          <>
-            <i>›</i>
-            <span className="focus-strip__stack">
-              <IconStack />
-              {stack.title}
-            </span>
-          </>
-        )}
-        <i>›</i>
-        <b>{el.title}</b>
-      </span>
+      {/* the focused widget's own header and tools render into these (focusSlots.ts) */}
+      <div className="focus-strip__title" ref={slotRef('title')} />
+      <div className="focus-strip__tools" ref={slotRef('tools')} />
       <div className="focus-strip__jacks">
         {jacks.map((t, i) => (
           <button
@@ -77,6 +73,7 @@ export function FocusStrip() {
             : `${waitingIds.length} need you`}
         </button>
       )}
+      <div className="focus-strip__actions" ref={slotRef('actions')} />
       <button className="focus-strip__exit" title="Back to canvas (⌘⇧↵)" onClick={exit}>
         <IconUnfocus />
       </button>

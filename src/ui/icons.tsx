@@ -172,6 +172,12 @@ export const IconBack = (p: P) => (
   </S>
 )
 
+export const IconForward = (p: P) => (
+  <S {...p}>
+    <path d="M9 5l7 7-7 7" />
+  </S>
+)
+
 export const IconFiles = (p: P) => (
   <S {...p}>
     <path d="M4 5.5h5l1.5 2H20a.5.5 0 01.5.5v10a1 1 0 01-1 1H4.5a.5.5 0 01-.5-.5V5.5z" />

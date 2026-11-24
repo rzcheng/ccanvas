@@ -21,13 +21,18 @@ tauri-build = { version = "2.5.6", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.10.3", features = ["protocol-asset"] }
+# "unstable" enables child webviews (the web widget's browser in focus mode)
+tauri = { version = "2.10.3", features = ["protocol-asset", "unstable"] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 portable-pty = "0.9"
 notify = "6"
 base64 = "0.22"
 plist = "1"
+# the web widget's preview proxy (web_proxy.rs): the same TLS build the
+# updater already uses (rustls on ring), so no extra crates
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

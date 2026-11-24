@@ -860,12 +860,36 @@ const server = http.createServer(async (req, res) => {
 // proxied site can't reach the shell, file or command routes. Nothing but
 // /proxy is served here, and it sends no CORS headers.
 
+/** Is `target` (an http(s) URL) on this machine or a private network, by its
+ *  host as written? */
+function localTarget(target) {
+  let host
+  try {
+    host = new URL(target).hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  } catch {
+    return true
+  }
+  if (host === 'localhost' || host.endsWith('.localhost')) return true
+  if (net.isIPv4(host)) {
+    const [a, b] = host.split('.').map(Number)
+    return a === 127 || a === 10 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b < 32) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b < 128) || a >= 224
+  }
+  if (net.isIPv6(host)) {
+    if (host.startsWith('::ffff:')) return localTarget(`http://${host.slice(7)}/`) || !net.isIPv4(host.slice(7))
+    return host === '::1' || host === '::' || /^f[cd]/.test(host) || /^fe[89ab]/.test(host)
+  }
+  return false
+}
+
 const proxyServer = http.createServer(async (req, res) => {
   if (!hostOk(req, PROXY_PORT)) return send(res, 403, { error: 'bad host' })
   const url = new URL(req.url, 'http://localhost')
   if (url.pathname !== '/proxy' || req.method !== 'GET') return send(res, 404, { error: 'not found' })
   const target = url.searchParams.get('url')
   if (!target || !/^https?:\/\//i.test(target)) return send(res, 400, { error: 'need an http(s) url' })
+  // a proxied page can read what this returns, so never fetch this machine or
+  // the local network for it (local dev servers are framed directly anyway)
+  if (localTarget(target)) return send(res, 400, { error: 'refusing a local address' })
   try {
     const upstream = await fetch(target, {
       headers: { 'user-agent': req.headers['user-agent'] || 'ccanvas' },

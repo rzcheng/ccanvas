@@ -147,7 +147,7 @@ terminals + folders come from an optional local backend (run it in a second
 terminal, or `npm start` to run both at once):
 
 ```bash
-npm run server     # ws + http on 127.0.0.1:7531 (web proxy on :7532)
+npm run server     # ws + http on 127.0.0.1:7531 (web preview proxy on :7532)
 npm start          # runs the pty server and the web app together
 ```
 
@@ -177,9 +177,9 @@ File drag-and-drop needs the desktop app; the VS Code widget works here too.
 | Surface | Notes |
 | --- | --- |
 | **Infinite canvas** | Pan by dragging empty canvas, middle-dragging, or scrolling with two fingers; smooth zoom with ⌘/Ctrl-scroll, a pinch, or scrolling over anything that doesn't scroll itself; dot grid; minimap (toggle it in the bottom-right controls) |
-| **Quick insert** | `Space` opens a command box at the cursor: type a widget name (`agent` `term` `files` `diff` `editor` `note` `music`), optionally followed by an agent's first prompt, a file path, or a note's text |
+| **Quick insert** | `Space` opens a command box at the cursor: type a widget name (`agent` `term` `files` `diff` `editor` `note` `web` `music`), optionally followed by an agent's first prompt, a file path, an address, or a note's text |
 | **Command palette** | ⌘/Ctrl-K to spawn widgets, arrange, switch tabs, open panels, insert prompts, run git, export, or jump to a widget |
-| **Widgets** | Claude agent · Terminal · File tree · Git panel · Editor (Monaco) · **VS Code** · Markdown note · Now playing (macOS), plus the Transcript (right-click an agent) and data, figure, and video viewers that open from the file tree or a path clicked in a terminal |
+| **Widgets** | Claude agent · Terminal · File tree · Git panel · Editor (Monaco) · **VS Code** · Markdown note · **Web page** · Now playing (macOS), plus the Transcript (right-click an agent) and data, figure, and video viewers that open from the file tree or a path clicked in a terminal |
 | **Drag & drop** | Drop a file from the OS onto a terminal or agent to paste its path in — the way you'd hand Claude a screenshot |
 | **Agent orchestration** | Per-agent status dot (idle, working, waiting, just finished), an *N waiting* inbox, idle notifications, broadcast to many, per-agent model/prompt/flags, and colour labels you can filter the canvas by |
 | **Context meter** | Each agent's bar shows how full its context window is (read from its session transcript), with a one-click **compact** past 70% |
@@ -198,6 +198,37 @@ File drag-and-drop needs the desktop app; the VS Code widget works here too.
 | **Layers** | A stack of planes per tab, each optionally its own project folder with its own view; `L` opens a tilted overview of every layer with live agent status, and hidden layers keep running |
 | **Tabs** | Multiple `.ccnvs` workspaces open at once, each bound to its own folder; drag to reorder, pin the ones you keep, jump with the tab finder |
 | **Persistence** | Save/Open into the canvas folder (backend) or File System Access API; reusable widget-layout templates; PNG/SVG export |
+
+<img src="docs/divider.svg" alt="" width="100%" height="20" />
+
+## Web pages
+
+A **web** widget (quick insert `web`, alias `browser` `url` `site`; the
+command palette's *New: Web page*; or type an address into the palette) shows a
+page with a small address bar: back, forward, reload, the address, a local
+`.html` file (live-reloads on save) and ↗ to open it in your browser.
+
+- **On the canvas it's a preview.** Local dev servers (`localhost:5173`) embed
+  directly. Other sites load through a small proxy that strips the headers that
+  stop them being framed, so they show, but without your cookies or logins and
+  with some pages half-working. A quiet *preview* tag in the bar says so.
+- **Focus it (⌘⇧↵) for the real browser** (desktop app). The address bar moves
+  into the focus strip and a native webview fills everything under it: logins, scripts and everything else work, and every
+  web widget shares one profile, so you stay signed in. Links stay in the view;
+  a link that opens a new window opens it in a new web widget beside this one
+  and focuses that. ⌘⇧↵ inside the page goes back to the canvas, and the widget
+  keeps the page you were on (only the URL is saved in the `.ccnvs`).
+- Being native, that view is drawn above the page, so it hides while a menu, the
+  command palette or anything else is over it, and it only exists in focus
+  mode, where nothing moves. In the browser build, focus mode shows the preview
+  with a note instead.
+
+Safety: the native view gets no access to ccanvas (no Tauri IPC or
+permissions, http(s) only, never the app's own origin). The preview proxy runs
+on its own loopback port (built into the desktop app; `npm run server` provides
+it for the browser build) and refuses local and private-network addresses, so a
+proxied page can't reach anything on your machine. The desktop app's also checks
+what a name resolves to and where each redirect goes.
 
 <img src="docs/divider.svg" alt="" width="100%" height="20" />
 
@@ -383,7 +414,7 @@ terminal untouched; on Windows and Linux they use Ctrl.
 | ⌘/Ctrl + `1`–`9` | jump to and focus the Nth terminal or agent on the current layer |
 | ⌘/Ctrl + `Shift ]` / `[` | next · previous terminal |
 | ⌘/Ctrl + `Esc` | leave the focused terminal |
-| ⌘/Ctrl + `Shift ↵` · `F` | focus mode: the widget you're in (or the selected one) fills the window; again, `Esc`, or a click on the dimmed board to go back. While focused, ⌘1–9, ⌘⇧]/[ and the strip's numbers switch which widget is focused |
+| ⌘/Ctrl + `Shift ↵` · `F` | focus mode: the widget you're in (or the selected one) fills the window under a single bar (its name, controls and, for a web page, the address bar); again, `Esc`, or a click on the dimmed board to go back. While focused, ⌘1–9, ⌘⇧]/[ and the strip's numbers switch which widget is focused |
 | `S` · `U` | stack the selected widgets · unstack the selected stack |
 | `Space` · `⌥Space` | spread the selected stack · spread the stack you're typing in |
 | `[` / `]` · ⌃`⇥` | switch a stack's front widget (⌃⇥ works inside it too) |
@@ -442,7 +473,9 @@ backend.
   streaming `pty:data`/`pty:exit` events), `src/transcript.rs` (per-agent
   transcript summaries that parse only what was appended since the last poll),
   `src/usage.rs` and `src/plan_usage.rs` (the usage pill), `src/editor.rs` (the
-  VS Code `serve-web` process + local proxy), `src/term_profile.rs` (reads the
+  VS Code `serve-web` process + local proxy), `src/web_proxy.rs` (the web
+  widget's canvas preview), `src/native_view.rs` with `src/lib/nativeView.ts`
+  (the real browser over a focused web widget), `src/term_profile.rs` (reads the
   host terminal's theme), and `src/files.rs` (native dialogs + fs; reads, `git`,
   and directory listings run off the main thread).
 - **`server/pty-server.mjs`**: the optional web-mode backend (same protocol, over

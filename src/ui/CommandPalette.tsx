@@ -8,6 +8,7 @@ import { desktopMirrorsSupported, runCommand, joinPath } from '../lib/backend'
 import { sendPrompt, isLive } from '../lib/agents'
 import type { CanvasElement, WidgetKind } from '../lib/types'
 import { AGENT_COLORS } from '../lib/types'
+import { hostOf, looksLikeUrl, normalizeUrl } from '../lib/weburl'
 
 /** The focused/selected agent or terminal a prompt insert should target. */
 function injectTargetId(): string | null {
@@ -80,6 +81,7 @@ const SPAWNABLE: { kind: WidgetKind; label: string; keywords?: string }[] = [
   { kind: 'editor', label: 'Editor' },
   { kind: 'vscode', label: 'VS Code' },
   { kind: 'note', label: 'Note' },
+  { kind: 'web', label: 'Web page', keywords: 'browser url site' },
   { kind: 'nowplaying', label: 'Now playing', keywords: 'music spotify song' },
 ]
 
@@ -438,6 +440,20 @@ export function CommandPalette() {
       const hay = (it.label + ' ' + it.group + ' ' + (it.hint ?? '') + ' ' + (it.keywords ?? '')).toLowerCase()
       return terms.every((term) => hay.includes(term))
     })
+    // an address typed into the palette opens it in a web widget
+    if (scope === 'all' && looksLikeUrl(q)) {
+      const url = normalizeUrl(q)
+      list.unshift({
+        id: 'web-open',
+        label: `Open ${url}`,
+        hint: 'web',
+        group: 'Create',
+        run: () => {
+          const w = worldCenter()
+          useStore.getState().spawnWidget('web', w.x, w.y, { url, title: hostOf(url) })
+        },
+      })
+    }
     if (scope === 'notes') {
       const text = q.trim()
       list.unshift({

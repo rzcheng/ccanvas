@@ -3,12 +3,14 @@ mod desktop_sessions;
 mod editor;
 mod files;
 mod media;
+mod native_view;
 mod plan_usage;
 mod pty;
 mod term_profile;
 mod transcript;
 mod usage;
 mod watch;
+mod web_proxy;
 
 use pty::PtyManager;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
@@ -117,6 +119,8 @@ pub fn run() {
             // start the embedded media server (range streaming + ffmpeg
             // transcode) so the desktop app plays video with no external backend
             media::start();
+            // the web widget's canvas preview of remote sites (web_proxy.rs)
+            web_proxy::start();
             // self-update from GitHub releases via the ccanvas update server
             // (endpoint + public key in tauri.conf.json → plugins.updater)
             #[cfg(desktop)]
@@ -143,6 +147,13 @@ pub fn run() {
             files::reveal_path,
             files::home_dir,
             media::media_info,
+            native_view::native_view_open,
+            native_view::native_view_bounds,
+            native_view::native_view_visible,
+            native_view::native_view_navigate,
+            native_view::native_view_go,
+            native_view::native_view_close,
+            web_proxy::web_proxy_url,
             usage::claude_usage,
             transcript::transcript_summary,
             transcript::transcript_chunk,

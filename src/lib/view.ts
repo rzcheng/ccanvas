@@ -156,10 +156,11 @@ export function exitTerminal() {
 export const FOCUS_STRIP_H = 36
 const FOCUS_MARGIN = 16
 
-/** The canvas-local screen box a focused widget fills. */
+/** The canvas-local screen box a focused widget fills: flush under the focus
+ *  strip, which is its only bar while focused. */
 export function focusBox(): { x: number; y: number; w: number; h: number } {
   const { vw, vh } = viewport()
-  const top = FOCUS_MARGIN + FOCUS_STRIP_H + 10
+  const top = FOCUS_MARGIN + FOCUS_STRIP_H
   return {
     x: FOCUS_MARGIN,
     y: top,

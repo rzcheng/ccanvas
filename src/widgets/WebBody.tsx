@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { WidgetElement } from '../lib/types'
 import { useStore } from '../store/workspace'
 import {
-  proxyAvailable,
+  previewProxy,
   openExternal,
   proxyUrl,
   pickPath,
@@ -10,70 +11,112 @@ import {
   watchPath,
   resolvePath,
   baseName,
-  isAbsolutePath,
+  isTauri,
 } from '../lib/backend'
-import { IconReload, IconWeb, IconFile } from '../ui/icons'
+import { normalizeUrl, isHttpUrl, isLocalUrl, looksLikeLocalFile, hostOf } from '../lib/weburl'
+import { nativeViewSupported, useNativeView } from '../lib/nativeView'
+import { focusWidget, toggleFocus } from '../lib/view'
+import { useFocusSlot, stopCanvas } from '../ui/focusSlots'
+import { IconReload, IconWeb, IconFile, IconBack, IconForward, IconExternal } from '../ui/icons'
 
-// Web preview widget. Two modes, stored on the same widget:
-//   • URL  (el.url)  — an http(s) page in an iframe. Localhost dev servers embed
-//     directly; sites that send X-Frame-Options / CSP load through the backend
-//     proxy (which strips those headers) or open in a real browser.
+// Web widget. Two modes, stored on the same widget (setting one clears the other):
+//   • URL  (el.url)  — an http(s) page. On the canvas it's an <iframe>: local
+//     dev servers embed directly, remote sites load through the preview proxy
+//     (framing headers stripped, no cookies: a preview). Focused in the desktop
+//     app, a real native browser takes over the body (lib/nativeView.ts), with
+//     one persistent profile so logins stick.
 //   • File (el.path) — a local .html file rendered via the iframe's srcDoc from
 //     its contents (read through the backend), watched on disk for live reload.
-// The two are mutually exclusive; setting one clears the other.
 
-function normalizeUrl(raw: string): string {
-  const v = raw.trim()
-  if (!v) return ''
-  if (/^https?:\/\//i.test(v)) return v
-  if (/^localhost(:\d+)?(\/|$)/i.test(v) || /^\d+\.\d+\.\d+\.\d+/.test(v))
-    return `http://${v}`
-  if (/^\d{2,5}(\/|$)/.test(v)) return `http://localhost:${v}`
-  return `https://${v}`
-}
+const SANDBOX =
+  'allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock allow-popups-to-escape-sandbox allow-presentation'
 
-const isLocal = (u: string) =>
-  /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|\d+\.\d+\.\d+\.\d+)/i.test(u)
+/** The default title, replaced by the page's host once there is one. */
+const DEFAULT_TITLE = 'web'
 
-// Treat an input as a local file (not a URL) when it has no http(s) scheme and
-// is either an absolute path or ends in .htm/.html (e.g. `dist/index.html`).
-function looksLikeLocalFile(v: string): boolean {
-  if (/^https?:\/\//i.test(v)) return false
-  return isAbsolutePath(v) || /\.html?($|[?#])/i.test(v)
-}
+type History = { list: string[]; at: number }
 
 export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) {
   const mutateElement = useStore((s) => s.mutateElement)
+  const focused = useStore((s) => s.focus?.id === el.id)
   const [input, setInput] = useState(el.url ?? el.path ?? '')
-  const [src, setSrc] = useState(el.url ?? '')
-  const [proxied, setProxied] = useState(false)
-  const [canProxy, setCanProxy] = useState(false)
+  // where the page is now (the bar shows it unless you're typing)
+  const [current, setCurrent] = useState(el.url ?? '')
+  const [hist, setHist] = useState<History>(() => ({ list: el.url ? [el.url] : [], at: 0 }))
+  const [loading, setLoading] = useState(false)
+  const [proxyBase, setProxyBase] = useState<string | null>(null)
   const [fileHtml, setFileHtml] = useState<string | null>(null)
   const frameRef = useRef<HTMLIFrameElement>(null)
+  const hostRef = useRef<HTMLDivElement>(null)
+  const urlRef = useRef<HTMLInputElement>(null)
+  const editing = useRef(false)
 
+  const toolsSlot = useFocusSlot('tools')
+  const inStrip = focused && !!toolsSlot
   const fileMode = !!el.path
   const abs = resolvePath(el.cwd, el.path ?? '')
 
   useEffect(() => {
     setInput(el.url ?? el.path ?? '')
-    setSrc(el.url ?? '')
+    setCurrent(el.url ?? '')
+    setHist((h) => (el.url && h.list[h.at] !== el.url ? push(h, el.url) : h))
   }, [el.url, el.path])
 
-  // the proxy is part of the Node server; probe whether it's running. It serves
-  // pages from its own port (7532), so a proxied page's scripts can't call the
-  // backend API as same-origin even with allow-same-origin below.
+  // a fresh widget opens with its address bar ready to type into
+  useEffect(() => {
+    if (!el.url && !el.path) requestAnimationFrame(() => urlRef.current?.focus())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     let alive = true
-    void proxyAvailable().then((on) => {
-      if (!alive) return
-      setCanProxy(on)
-      // a remote page opened from elsewhere (e.g. a link double-clicked in a
-      // terminal) starts proxied, as if typed in the bar — most sites block framing
-      if (on && el.url && !isLocal(el.url)) setProxied(true)
-    })
+    void previewProxy().then((base) => alive && setProxyBase(base))
     return () => {
       alive = false
     }
+  }, [])
+
+  // ---- the native browser (focus mode, desktop app) ----
+  const nativeWanted = focused && !fileMode && isHttpUrl(current) && nativeViewSupported()
+  const native = useNativeView(
+    el.id,
+    current,
+    nativeWanted,
+    hostRef,
+    (last) => {
+      // keep where you left off; only the URL is ever saved (and not once
+      // the widget has switched to showing a local file)
+      const now = stored(el.id)
+      if (now && !now.path && last && isHttpUrl(last) && last !== now.url)
+        mutateElement(el.id, (w) => {
+          ;(w as WidgetElement).url = last
+        })
+    },
+    {
+      onNav: (url, isLoading) => {
+        setLoading(isLoading)
+        setCurrent(url)
+        if (!editing.current) setInput(url)
+      },
+      onNewWindow: (url) => openBeside(el.id, url),
+      onExitFocus: () => useStore.getState().exitFocus(),
+    },
+  )
+  const nativeLive = native.state === 'live' || native.state === 'opening'
+
+  // the preview proxy reports in-page link clicks so the bar and history follow
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (!frameRef.current || e.source !== frameRef.current.contentWindow) return
+      const d = e.data as { type?: unknown; url?: unknown } | null
+      if (!d || d.type !== 'ccanvas-web-nav' || typeof d.url !== 'string' || !isHttpUrl(d.url)) return
+      const url = d.url
+      setCurrent(url)
+      if (!editing.current) setInput(url)
+      setHist((h) => (h.list[h.at] === url ? h : push(h, url)))
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
   }, [])
 
   // file mode: load the file's contents and re-load whenever it changes on disk
@@ -101,58 +144,138 @@ export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) 
     }
   }, [el.path, abs, loadFile])
 
-  // navigate the bar — route to file mode or URL mode based on the input
-  const go = (raw: string) => {
-    const v = raw.trim()
-    if (!v) return
-    if (looksLikeLocalFile(v)) {
-      setInput(v)
-      mutateElement(el.id, (w) => {
-        const x = w as WidgetElement
-        x.path = v
-        x.url = undefined
-        x.title = baseName(v)
-      })
-      return
-    }
-    const url = normalizeUrl(v)
-    setInput(url)
-    setSrc(url)
-    // remote sites usually block framing — default to the proxy when available
-    setProxied(canProxy && !isLocal(url))
-    mutateElement(el.id, (w) => {
-      const x = w as WidgetElement
-      x.url = url
-      x.path = undefined
-    })
-  }
-
-  // file button — native open dialog filtered to HTML, falls back to nothing
-  const openLocalFile = async () => {
-    const p = await pickPath({ name: 'HTML', extensions: ['html', 'htm'] })
-    if (!p) return
+  const setFile = (p: string) =>
     mutateElement(el.id, (w) => {
       const x = w as WidgetElement
       x.path = p
       x.url = undefined
       x.title = baseName(p)
     })
+
+  // navigate the bar: route to file mode or URL mode based on the input
+  const go = (raw: string) => {
+    const v = raw.trim()
+    if (!v) return
+    if (looksLikeLocalFile(v)) {
+      setInput(v)
+      setFile(v)
+      return
+    }
+    const url = normalizeUrl(v)
+    setInput(url)
+    if (native.state === 'live') {
+      native.navigate(url)
+      return
+    }
+    setCurrent(url)
+    setHist((h) => push(h, url))
+    mutateElement(el.id, (w) => {
+      const x = w as WidgetElement
+      x.url = url
+      x.path = undefined
+      if (!x.title || x.title === DEFAULT_TITLE || x.title === 'web preview') x.title = hostOf(url)
+    })
   }
 
-  const effectiveSrc = src ? (proxied && canProxy ? proxyUrl(src) : src) : ''
-  const externalTarget = fileMode ? abs : src
+  // file button: native open dialog filtered to HTML
+  const openLocalFile = async () => {
+    const p = await pickPath({ name: 'HTML', extensions: ['html', 'htm'] })
+    if (p) setFile(p)
+  }
 
+  const proxied = !!proxyBase && isHttpUrl(current) && !isLocalUrl(current)
+  const frameSrc = current ? (proxied ? proxyUrl(proxyBase!, current) : current) : ''
+  const externalTarget = fileMode ? abs : current
+
+  const step = (d: 1 | -1) => {
+    if (native.state === 'live') return d < 0 ? native.back() : native.forward()
+    const at = hist.at + d
+    if (at < 0 || at >= hist.list.length) return
+    setHist({ ...hist, at })
+    setCurrent(hist.list[at])
+    setInput(hist.list[at])
+  }
   const reload = () => {
     if (fileMode) void loadFile()
-    else if (frameRef.current) frameRef.current.src = effectiveSrc
+    else if (native.state === 'live') native.reload()
+    else if (frameRef.current) frameRef.current.src = frameSrc
   }
+  const canBack = nativeLive || (!fileMode && hist.at > 0)
+  const canForward = nativeLive || (!fileMode && hist.at < hist.list.length - 1)
 
-  return (
-    <div className="web">
-      <div className="web__bar">
-        <button className="web__nav" title="Reload" onClick={reload}>
-          <IconReload />
+  // quietly say what you're looking at: a preview on the canvas, the real
+  // browser in focus mode, or a preview in focus when no browser is available
+  const remote = !fileMode && isHttpUrl(current) && !isLocalUrl(current)
+  const fallback = focused && !fileMode && isHttpUrl(current) && !nativeLive
+  const fallbackNote = !isTauri()
+    ? 'Preview only. The full browser is in the desktop app.'
+    : native.state === 'failed'
+      ? "Couldn't open the browser view here, so this is the preview."
+      : null
+
+  // in focus mode the bar moves into the focus strip, the one bar there
+  // (focusSlots.ts), and the page sits flush under it
+  const bar = (
+    <div className={`web__bar${inStrip ? ' web__bar--strip' : ''}`} {...(inStrip ? stopCanvas : {})}>
+      <button className="web__nav" title="Back" disabled={!canBack} onClick={() => step(-1)}>
+        <IconBack />
+      </button>
+      <button className="web__nav" title="Forward" disabled={!canForward} onClick={() => step(1)}>
+        <IconForward />
+      </button>
+      <button
+        className={`web__nav${loading && nativeLive ? ' web__nav--busy' : ''}`}
+        title="Reload"
+        onClick={reload}
+      >
+        <IconReload />
+      </button>
+      <input
+        ref={urlRef}
+        className="web__url"
+        value={input}
+        placeholder="Address, localhost:3000 or ./index.html"
+        spellCheck={false}
+        onFocus={(e) => {
+          editing.current = true
+          e.currentTarget.select()
+        }}
+        onBlur={() => {
+          editing.current = false
+        }}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={(e) => {
+          e.stopPropagation()
+          if (e.key === 'Enter') {
+            go(input)
+            e.currentTarget.blur()
+          } else if (e.key === 'Escape') {
+            setInput(fileMode ? (el.path ?? '') : current)
+            e.currentTarget.blur()
+          }
+        }}
+        onPointerDown={(e) => e.stopPropagation()}
+      />
+      {fileMode && (
+        <span className="web__tag web__tag--live" title="Live-reloading on file change">
+          <span className="web__live-dot" />
+          live
+        </span>
+      )}
+      {remote && !focused && (
+        <button
+          className="web__tag"
+          title={
+            nativeViewSupported()
+              ? 'On the canvas this is a preview. Focus the widget (⌘⇧↵) for the full browser, with your logins.'
+              : 'On the canvas this is a preview: no logins, and some pages won’t work.'
+          }
+          onClick={() => nativeViewSupported() && toggleFocus(el.id)}
+        >
+          preview
         </button>
+      )}
+      {!inStrip && (
         <button
           className={`web__nav${fileMode ? ' web__nav--on' : ''}`}
           title="Open a local HTML file (live-reloads on save)"
@@ -160,46 +283,22 @@ export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) 
         >
           <IconFile />
         </button>
-        <input
-          className="web__url"
-          value={input}
-          placeholder="localhost:3000  ·  url  ·  ./index.html…"
-          spellCheck={false}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            e.stopPropagation()
-            if (e.key === 'Enter') go(input)
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-        />
-        {fileMode && (
-          <span className="web__live" title="Live-reloading on file change">
-            <span className="web__live-dot" />
-            live
-          </span>
-        )}
-        {!fileMode && canProxy && (
-          <button
-            className={`web__nav web__toggle${proxied ? ' web__toggle--on' : ''}`}
-            title={
-              proxied
-                ? 'Loading through the proxy (strips framing headers)'
-                : 'Load through the proxy so sites that block embedding still show'
-            }
-            onClick={() => setProxied((p) => !p)}
-          >
-            proxy
-          </button>
-        )}
-        <button
-          className="web__nav"
-          title="Open in your browser"
-          disabled={!externalTarget}
-          onClick={() => externalTarget && void openExternal(externalTarget)}
-        >
-          ↗
-        </button>
-      </div>
+      )}
+      <button
+        className="web__nav"
+        title="Open in your browser"
+        disabled={!externalTarget}
+        onClick={() => externalTarget && void openExternal(externalTarget)}
+      >
+        <IconExternal />
+      </button>
+    </div>
+  )
+
+  return (
+    <div className="web">
+      {inStrip ? createPortal(bar, toolsSlot!) : bar}
+      {fallback && fallbackNote && <div className="web__note">{fallbackNote}</div>}
       {fileMode ? (
         fileHtml != null ? (
           <iframe
@@ -207,7 +306,7 @@ export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) 
             className="web__frame"
             srcDoc={fileHtml}
             title={el.title}
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock allow-popups-to-escape-sandbox allow-presentation"
+            sandbox={SANDBOX}
             style={{ pointerEvents: active ? 'auto' : 'none' }}
           />
         ) : (
@@ -220,28 +319,62 @@ export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) 
             </div>
           </div>
         )
-      ) : effectiveSrc ? (
+      ) : nativeWanted && native.state !== 'failed' ? (
+        // the native view is drawn over this box; it shows through while the
+        // view is hidden under a menu or still opening
+        <div ref={hostRef} className="web__native" style={{ pointerEvents: 'auto' }}>
+          {!native.shown && <span>{hostOf(current)}</span>}
+        </div>
+      ) : frameSrc ? (
         <iframe
           ref={frameRef}
           className="web__frame"
-          src={effectiveSrc}
+          src={frameSrc}
           title={el.title}
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock allow-popups-to-escape-sandbox allow-presentation"
-          style={{ pointerEvents: active ? 'auto' : 'none' }}
+          sandbox={SANDBOX}
+          style={{ pointerEvents: active || focused ? 'auto' : 'none' }}
         />
       ) : (
         <div className="web__empty">
           <IconWeb className="" />
           <div>
-            Enter a URL above, or open a local <b>.html</b> file with the{' '}
-            <b>file</b> button — it live-reloads on save.
+            Type an address above, or open a local <b>.html</b> file with the file button (it
+            live-reloads on save).
             <br />
-            Local dev servers embed directly (e.g. localhost:5173).
-            <br />
-            Other sites: use <b>proxy</b> or <b>↗</b> to open in a browser.
+            Local dev servers embed directly. Other sites show as a preview
+            {nativeViewSupported() ? '; focus the widget for the full browser.' : '.'}
           </div>
         </div>
       )}
     </div>
   )
+}
+
+function push(h: History, url: string): History {
+  const list = [...h.list.slice(0, h.at + 1), url]
+  return { list, at: list.length - 1 }
+}
+
+/** The widget as stored right now (it may have moved on since render). */
+function stored(id: string): WidgetElement | undefined {
+  const w = useStore.getState().active()?.elements.find((e) => e.id === id)
+  return w && w.type === 'widget' ? w : undefined
+}
+
+/** A page asked for a new window: open it in a new web widget beside this one
+ *  and focus that (focus swaps; the old one flies home). */
+function openBeside(fromId: string, url: string) {
+  if (!isHttpUrl(url)) return
+  const st = useStore.getState()
+  const from = st.active()?.elements.find((e) => e.id === fromId)
+  if (!from || from.type !== 'widget') return
+  const w = Math.max(from.w, 640)
+  const h = Math.max(from.h, 480)
+  const id = st.spawnWidget('web', from.x + from.w + 40 + w / 2, from.y + h / 2, {
+    url,
+    title: hostOf(url),
+    w,
+    h,
+  })
+  focusWidget(id)
 }
