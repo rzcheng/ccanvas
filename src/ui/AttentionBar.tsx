@@ -47,7 +47,7 @@ export function AttentionBar() {
   }
 
   return (
-    <div className="attn">
+    <div className="attn" data-wheel="zoom">
       <button
         className="attn__pill"
         onClick={() => setOpen((o) => !o)}

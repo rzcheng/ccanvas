@@ -554,6 +554,7 @@ export const WidgetFrame = memo(function WidgetFrame({
       }${focusRole ? ` widget--focus widget--focus-${focusRole}` : ''}`}
       ref={nodeRef}
       data-widget-id={el.id}
+      data-wheel="zoom"
       aria-hidden={stackHidden || undefined}
       style={
         {
@@ -728,6 +729,8 @@ export const WidgetFrame = memo(function WidgetFrame({
 
       <div
         className="widget__body"
+        data-wheel="auto"
+        data-wheel-lock={!active || handleBody ? '' : undefined}
         style={
           isLive || isNote
             ? { pointerEvents: tool === 'select' ? 'auto' : 'none' }

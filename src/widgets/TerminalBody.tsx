@@ -839,7 +839,7 @@ export function TerminalBody({
       style={{ background: profile?.theme.background ?? DEFAULT_THEME.background }}
       onContextMenu={onContextMenu}
     >
-      <div ref={hostRef} className="term__screen">
+      <div ref={hostRef} className="term__screen" data-wheel="content">
         <div
           ref={innerRef}
           className="term__inner"

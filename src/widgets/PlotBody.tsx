@@ -298,6 +298,7 @@ function ImageView({ url, name }: { url: string | null; name: string }) {
   return (
     <div
       className="plot__port"
+      data-wheel="content"
       ref={portRef}
       onWheel={onWheel}
       onPointerDown={onPointerDown}

@@ -49,6 +49,7 @@ export function TopBar() {
 
   return (
     <header
+      data-wheel="zoom"
       className={`topbar${MAC_OVERLAY ? ' topbar--mac' : ''}`}
       data-tauri-drag-region
     >

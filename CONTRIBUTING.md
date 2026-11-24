@@ -81,6 +81,18 @@ for how the pieces fit together.
 4. If you touch Rust, run `cargo fmt` and `cargo clippy` inside `src-tauri/`.
 5. Write a clear commit message describing the *why*, not just the *what*.
 
+### Scrolling and zooming in a new widget
+
+Every wheel and trackpad gesture is routed by `src/canvas/wheel.ts`, which
+decides from the region under the pointer: the canvas pans, surfaces that
+don't scroll zoom, and content that scrolls keeps the gesture. A new widget
+gets this from `WidgetFrame` with no extra work: until you click into it, the
+whole widget zooms; once you have, anything inside it with native
+`overflow: auto` scrolls and everything else zooms. Add
+`data-wheel="content"` only to an element that scrolls some other way or
+handles the wheel itself (a terminal, an editor, a chart). The comment at the
+top of `wheel.ts` lists every region.
+
 ## Opening a pull request
 
 - Fill in the pull request template.

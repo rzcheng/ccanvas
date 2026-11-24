@@ -99,7 +99,7 @@ export function SelectionBar() {
   }
 
   return (
-    <div className="selbar">
+    <div className="selbar" data-wheel="zoom">
       <div className="selbar__row">
         <span className="selbar__count">{selection.length} selected</span>
         <span className="selbar__sep" />

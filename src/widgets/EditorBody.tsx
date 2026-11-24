@@ -307,7 +307,7 @@ export function EditorBody({ el, active }: { el: WidgetElement; active: boolean 
         </button>
       </div>
       <div className="editor__stage">
-        <div className="editor__host" ref={hostRef} />
+        <div className="editor__host" ref={hostRef} data-wheel="content" />
         {!ready && <div className="editor__overlay">loading editor…</div>}
         {ready && !loaded && (
           <div className="editor__overlay editor__overlay--soft">

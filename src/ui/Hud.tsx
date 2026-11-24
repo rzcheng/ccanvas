@@ -69,7 +69,7 @@ export function Hud() {
   return (
     <>
       {mapOpen && <Minimap />}
-      <div className="hud">
+      <div className="hud" data-wheel="zoom">
         {hasTerms && (
           <div className="hud__menu-wrap" ref={arrangeRef}>
             <button

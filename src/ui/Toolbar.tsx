@@ -52,7 +52,7 @@ export function Toolbar() {
   }
 
   return (
-    <div className="toolbar">
+    <div className="toolbar" data-wheel="zoom">
       {LAUNCHERS.map(({ kind, Icon, label, keys }) => (
         <button
           key={kind}

@@ -176,7 +176,7 @@ File drag-and-drop needs the desktop app; the VS Code widget works here too.
 
 | Surface | Notes |
 | --- | --- |
-| **Infinite canvas** | Pan by dragging empty canvas, middle-dragging, or scrolling with two fingers; smooth zoom with ⌘/Ctrl-scroll or a pinch; dot grid; minimap (toggle it in the bottom-right controls) |
+| **Infinite canvas** | Pan by dragging empty canvas, middle-dragging, or scrolling with two fingers; smooth zoom with ⌘/Ctrl-scroll, a pinch, or scrolling over anything that doesn't scroll itself; dot grid; minimap (toggle it in the bottom-right controls) |
 | **Quick insert** | `Space` opens a command box at the cursor: type a widget name (`agent` `term` `files` `diff` `editor` `note` `music`), optionally followed by an agent's first prompt, a file path, or a note's text |
 | **Command palette** | ⌘/Ctrl-K to spawn widgets, arrange, switch tabs, open panels, insert prompts, run git, export, or jump to a widget |
 | **Widgets** | Claude agent · Terminal · File tree · Git panel · Editor (Monaco) · **VS Code** · Markdown note · Now playing (macOS), plus the Transcript (right-click an agent) and data, figure, and video viewers that open from the file tree or a path clicked in a terminal |
@@ -370,6 +370,7 @@ terminal untouched; on Windows and Linux they use Ctrl.
 | drag empty canvas / middle-drag / two-finger scroll | pan |
 | `Shift`-drag | box-select |
 | ⌘/Ctrl + scroll, or pinch | zoom to cursor |
+| scroll up/down over a widget you haven't clicked into, a title bar, or the app's bars | zoom (sideways pans) |
 | `Space` | command box at the cursor (`agent`, `term`, `files`, `diff`, `editor`, `note`) |
 | ⌘/Ctrl + `K` | open / close the command palette |
 | ⌘/Ctrl + `F` | search this canvas |

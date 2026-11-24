@@ -67,6 +67,7 @@ import {
   type Stack,
 } from '../lib/stacks'
 import { trackSnap } from '../lib/snapMotion'
+import { canScroll, routeWheel, wheelDelta, zoomFactor } from './wheel'
 import { inEmacs } from '../lib/terminal'
 import { IconStack } from '../ui/icons'
 
@@ -146,64 +147,10 @@ const REGISTRATION_CROSS = `url("data:image/svg+xml,${encodeURIComponent(
   "<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><path d='M7 1v12M1 7h12' stroke='rgb(250,249,245)' stroke-opacity='0.09' stroke-width='1'/></svg>",
 )}")`
 
-/** a terminal/agent widget that isn't the one currently clicked into */
-function isIdleTerminal(node: HTMLElement | null): boolean {
-  const id = node?.dataset.widgetId
-  if (!id) return false
-  const st = useStore.getState()
-  if (st.activeWidgetId === id) return false
-  const ws = selectActive(st)
-  const el = ws.elements.find((e) => e.id === id)
-  return (
-    el?.type === 'widget' &&
-    (el.kind === 'terminal' || el.kind === 'agent') &&
-    layerOf(el) === activeLayerId(ws)
-  )
-}
-
 /** set while a spread card's wheel is re-sent to its content, so the canvas lets it by */
 let forwardingWheel = false
 /** the scroller a forwarded gesture last moved: momentum stays on it, as native scrolling latches */
 let wheelLatch: { node: Element; t: number } | null = null
-
-const SCROLLS = /^(auto|scroll|overlay)$/
-function canScroll(n: Element, dx: number, dy: number): boolean {
-  const s = getComputedStyle(n)
-  const y =
-    dy !== 0 &&
-    SCROLLS.test(s.overflowY) &&
-    (dy > 0 ? n.scrollTop + n.clientHeight < n.scrollHeight - 1 : n.scrollTop > 0)
-  const x =
-    dx !== 0 &&
-    SCROLLS.test(s.overflowX) &&
-    (dx > 0 ? n.scrollLeft + n.clientWidth < n.scrollWidth - 1 : n.scrollLeft > 0)
-  return x || y
-}
-
-/** Monaco scrolls by moving its own layers, not native overflow: `.view-lines`
- *  is as wide as the scroll width, `.lines-content` sits at -scrollLeft. */
-function monacoCanScrollX(ed: Element, dx: number): boolean {
-  const sc = ed.querySelector<HTMLElement>('.editor-scrollable')
-  const content = sc?.querySelector<HTMLElement>('.lines-content')
-  const lines = content?.querySelector<HTMLElement>('.view-lines')
-  if (!sc || !content || !lines) return false
-  const left = -parseFloat(content.style.left) || 0
-  const max = (parseFloat(lines.style.width) || 0) - sc.clientWidth
-  return dx > 0 ? left < max - 1 : left > 0
-}
-
-/** whether anything between the pointer and its widget can scroll sideways by dx */
-function canScrollX(target: Element, widget: Element, dx: number): boolean {
-  const ed = target.closest('.monaco-editor')
-  if (ed && widget.contains(ed)) return monacoCanScrollX(ed, dx)
-  for (let n: Element | null = target; n && n !== widget; n = n.parentElement) {
-    if (canScroll(n, dx, 0)) return true
-  }
-  return false
-}
-
-/** who owns the current wheel gesture over a widget, until the wheel rests for 150 ms */
-let sideLatch: { canvas: boolean; t: number } | null = null
 
 /** A spread card's hit layer sits over its body (clicks choose, drags reorder),
  *  so the wheel lands there instead of on the widget. Re-send it to what's under
@@ -238,15 +185,7 @@ function forwardSpreadWheel(e: WheelEvent, card: HTMLElement) {
     forwardingWheel = false
   }
   if (taken) return
-  let dx = e.deltaX
-  let dy = e.deltaY
-  if (e.deltaMode === 1) {
-    dx *= 16
-    dy *= 16
-  } else if (e.deltaMode === 2) {
-    dx *= card.clientWidth
-    dy *= card.clientHeight
-  }
+  let { dx, dy } = wheelDelta(e, { w: card.clientWidth, h: card.clientHeight })
   // the card is scaled down: scroll in its own pixels so content tracks the finger
   const k = card.getBoundingClientRect().width / (card.offsetWidth || 1) || 1
   dx /= k
@@ -498,109 +437,51 @@ export function Canvas() {
     if (spreadGone) useStore.setState({ spread: null })
   }, [spreadGone])
 
-  // ---- native wheel (non-passive): smooth zoom + pan ----
+  // ---- the wheel: one listener for the whole app (see canvas/wheel.ts) ----
+  // Capture phase on the window, so a pan or zoom is taken before a widget
+  // under the pointer (xterm, Monaco) can scroll too.
   useEffect(() => {
     const node = rootRef.current
     if (!node) return
     const onWheel = (e: WheelEvent) => {
+      if (forwardingWheel) return
+      const st = useStore.getState()
+      // the layers overview has its own wheel
+      if (st.layerOverview) return
+      const target = e.target as HTMLElement | null
+      const inCanvas = !!target && node.contains(target)
       // the spread view holds the camera still; a plain scroll over a card
       // scrolls that widget's content
-      const sp = useStore.getState().spread
-      if (sp) {
-        if (forwardingWheel) return
+      if (st.spread) {
+        if (!inCanvas) return
         e.preventDefault()
         e.stopPropagation()
-        if (e.ctrlKey || e.metaKey || sp.closing) return
-        const card = (e.target as HTMLElement | null)?.closest?.('.widget--spread') as HTMLElement | null
+        if (e.ctrlKey || e.metaKey || st.spread.closing) return
+        const card = target?.closest?.('.widget--spread') as HTMLElement | null
         if (card) forwardSpreadWheel(e, card)
         return
       }
-      // focus mode: the focused widget scrolls itself; the dimmed board doesn't move
-      if (useStore.getState().focus) {
-        if (!(e.target as HTMLElement | null)?.closest?.('.widget--focus')) e.preventDefault()
+      // focus mode: the focused widget scrolls itself; nothing else moves
+      if (st.focus) {
+        if (inCanvas && !target?.closest?.('.widget--focus')) e.preventDefault()
         return
       }
-      const zoomGesture = e.ctrlKey || e.metaKey
-      const widgetNode = (e.target as HTMLElement | null)?.closest?.('.widget') as HTMLElement | null
-      const overWidget = !!widgetNode
-      // normalise delta across line / page wheel modes
-      let dx = e.deltaX
-      let dy = e.deltaY
-      if (e.deltaMode === 1) {
-        dx *= 16
-        dy *= 16
-      } else if (e.deltaMode === 2) {
-        dx *= node.clientWidth
-        dy *= node.clientHeight
-      }
-      // plain scroll over a widget → let that widget scroll its own content,
-      // except a terminal you haven't clicked into: that scroll moves the canvas.
-      // A sideways swipe the content can't follow pans the canvas too; each
-      // gesture keeps its first decision, momentum included.
-      const now = performance.now()
-      if (sideLatch && now - sideLatch.t > 150) sideLatch = null
-      if (sideLatch) sideLatch.t = now
-      if (overWidget && !zoomGesture && !isIdleTerminal(widgetNode)) {
-        if (!sideLatch) {
-          const ax = Math.abs(dx)
-          const ay = Math.abs(dy)
-          // too small to read the direction yet: leave it undecided
-          if (ax >= 4 || ay >= 4) {
-            const side = ax >= 4 && ax > ay * 1.5
-            sideLatch = { canvas: side && !canScrollX(e.target as Element, widgetNode, dx), t: now }
-          }
-        }
-        if (!sideLatch?.canvas) return
-      }
+      const a = routeWheel(e, { w: node.clientWidth, h: node.clientHeight })
+      if (a.do === 'native') return
       e.preventDefault()
-      // zooming or panning while hovering a widget: don't also scroll the widget under it
-      if (overWidget) e.stopPropagation()
-      const live = pendingCam.current ?? selectActive(useStore.getState()).camera
-      const pt = getPt(e)
-      if (zoomGesture) {
-        // gentle per-event step, clamped so a single notch never jumps far
-        const factor = Math.exp(-clamp(dy, -100, 100) * 0.0017)
-        scheduleCamera(zoomAt(live, pt, live.zoom * factor))
-      } else {
-        scheduleCamera({ ...live, x: live.x - dx, y: live.y - dy })
-      }
-    }
-    // capture phase so we can intercept before the widget when zooming
-    node.addEventListener('wheel', onWheel, { passive: false, capture: true })
-    return () => node.removeEventListener('wheel', onWheel, { capture: true })
-  }, [scheduleCamera])
-
-  // ---- wheel over the app's bars (tabs, toolbar, hud): zoom the canvas ----
-  // Nothing there scrolls up and down, so a vertical two-finger scroll (or a
-  // pinch) zooms around the middle of the view, the way ⌘-scroll does on the
-  // canvas. Anything in the bars that can scroll that way keeps the gesture.
-  useEffect(() => {
-    const onChromeWheel = (e: WheelEvent) => {
-      const t = e.target as Element | null
-      const bar = t?.closest?.('.topbar, .toolbar, .hud, .selbar, .attn')
-      if (!bar || rootRef.current?.contains(t)) return
-      const st = useStore.getState()
-      if (st.spread || st.focus || st.layerOverview) return
-      let dx = e.deltaX
-      let dy = e.deltaY
-      if (e.deltaMode === 1) {
-        dx *= 16
-        dy *= 16
-      } else if (e.deltaMode === 2) {
-        dx *= window.innerWidth
-        dy *= window.innerHeight
-      }
-      if (!e.ctrlKey && !e.metaKey && Math.abs(dx) > Math.abs(dy)) return
-      for (let n: Element | null = t; n && n !== bar.parentElement; n = n.parentElement) {
-        if (canScroll(n, 0, dy)) return
-      }
-      e.preventDefault()
+      e.stopPropagation()
+      if (a.do === 'hold') return
       const live = pendingCam.current ?? selectActive(st).camera
-      const factor = Math.exp(-clamp(dy, -100, 100) * 0.0017)
-      scheduleCamera(zoomAt(live, viewCenter(), live.zoom * factor))
+      if (a.do === 'pan') {
+        scheduleCamera({ ...live, x: live.x - a.dx, y: live.y - a.dy })
+      } else {
+        // around the pointer on the board; around the middle from the app's bars
+        const at = inCanvas ? getPt(e) : viewCenter()
+        scheduleCamera(zoomAt(live, at, live.zoom * zoomFactor(a.dy)))
+      }
     }
-    window.addEventListener('wheel', onChromeWheel, { passive: false })
-    return () => window.removeEventListener('wheel', onChromeWheel)
+    window.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    return () => window.removeEventListener('wheel', onWheel, { capture: true })
   }, [scheduleCamera])
 
   // topmost vector under a world point (text/images/frames/widgets self-pick)
@@ -1531,6 +1412,7 @@ export function Canvas() {
   return (
     <div
       ref={rootRef}
+      data-wheel="canvas"
       className={`canvas canvas--tool-${tool}${panning ? ' canvas--panning' : ''}${
         overview ? ' canvas--overview' : ''
       }`}
