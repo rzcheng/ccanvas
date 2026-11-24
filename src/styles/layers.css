@@ -428,6 +428,8 @@
 }
 .lr__meta {
   display: flex;
+  flex-wrap: wrap;
+  row-gap: 2px;
   gap: 9px;
   margin-top: 2px;
   font-family: var(--font-mono);
@@ -867,4 +869,52 @@
   .tb-layer__led {
     animation: none;
   }
+}
+
+/* dragging a card to another layer */
+.lo-layer.is-drop .lo-glass {
+  border-style: dashed;
+  border-color: var(--accent);
+}
+.lr.is-drop .lr__main {
+  border-left: 2px dashed var(--accent);
+  padding-left: 9px;
+}
+.pt.is-lifted,
+.pc.is-lifted {
+  opacity: 0.25;
+}
+.lo-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 60;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: var(--panel-hi);
+  border: 1px solid var(--accent-line);
+  box-shadow: var(--shadow-panel);
+  font-family: var(--font-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: calc(11px * var(--ts));
+  color: var(--ink);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.lo-ghost--on {
+  display: flex;
+}
+.lo-ghost em {
+  font-style: normal;
+  font-family: var(--font-mono);
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 500;
+  color: var(--accent-bright);
+  font-size: calc(10.5px * var(--ts));
 }

@@ -21,6 +21,7 @@ import {
   ovZ,
   ovZBase,
   glyphCounts,
+  widgetType,
   pathWithin,
   shortPath,
   type Glyph,
@@ -131,6 +132,8 @@ export function LayerOverview() {
   // The other layers' sheets are bare outlines for the first part of the open,
   // so their content is built a couple of frames in, not in the first frame.
   const [ready, setReady] = useState(false)
+  // dragging a card: the sheet (or rail label) it would drop on
+  const [dropIdx, setDropIdx] = useState(-1)
   const [renaming, setRenaming] = useState<string | null>(null)
   // a one-line note above the key hints ("⌫ again to merge…", "the base layer stays")
   const [note, setNote] = useState<string | null>(null)
@@ -173,7 +176,8 @@ export function LayerOverview() {
   const byLayer = useMemo(() => {
     const m = new Map<string, CanvasElement[]>()
     for (const l of layers) m.set(l.id, [])
-    for (const e of ws.elements) m.get(layerOf(e))?.push(e)
+    // in stacking order, like the live canvas (which stacks with z-index)
+    for (const e of [...ws.elements].sort((a, b) => a.z - b.z)) m.get(layerOf(e))?.push(e)
     return m
   }, [ws.elements, layers])
 
@@ -705,16 +709,77 @@ export function LayerOverview() {
   const hoverFocus = (i: number) => {
     if (performance.now() - C.current.lastMove < 60) setFocus(i)
   }
-  const onSheetClick = (i: number, e: React.MouseEvent) => {
-    e.stopPropagation()
+  // ---------- drag a card onto another sheet (or its rail label) ----------
+  const ghostRef = useRef<HTMLDivElement>(null)
+  const dragEndedAt = useRef(0)
+  const cardAt = (x: number, y: number) =>
     // inside a preserve-3d tree elementFromPoint can report the sheet's glass
     // while elementsFromPoint has the card first, so resolve from the full list
-    const card = document
-      .elementsFromPoint(e.clientX, e.clientY)
-      .find((n) => n instanceof HTMLElement && !!n.dataset.pid) as
+    document.elementsFromPoint(x, y).find((n) => n instanceof HTMLElement && !!n.dataset.pid) as
       | HTMLElement
       | undefined
-    dive(i, card?.dataset.pid)
+  const onSheetDown = (i: number, e: React.PointerEvent) => {
+    if (C.current.state !== 'open' || e.button !== 0) return
+    const card = cardAt(e.clientX, e.clientY)
+    const id = card?.dataset.pid
+    if (!card || !id) return
+    const sx = e.clientX
+    const sy = e.clientY
+    let on = false
+    let over = -1
+    const overAt = (x: number, y: number) => {
+      for (const n of document.elementsFromPoint(x, y)) {
+        const hit = (n as HTMLElement).closest?.('.lo-layer, .lr') as HTMLElement | null
+        if (!hit) continue
+        const idx = Number(hit.dataset.idx)
+        return Number.isFinite(idx) ? idx : -1
+      }
+      return -1
+    }
+    const move = (ev: PointerEvent) => {
+      if (!on) {
+        if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return
+        on = true
+        card.classList.add('is-lifted')
+        const g = ghostRef.current
+        if (g) {
+          g.firstChild!.textContent = card.querySelector('.pt__name, .pc__title')?.textContent ?? ''
+          g.classList.add('lo-ghost--on')
+        }
+      }
+      const g = ghostRef.current
+      if (g) g.style.transform = `translate(${ev.clientX + 14}px, ${ev.clientY + 12}px)`
+      const next = overAt(ev.clientX, ev.clientY)
+      if (next !== over) {
+        over = next
+        setDropIdx(over !== i ? over : -1)
+        if (g) g.lastChild!.textContent = over >= 0 && over !== i ? `→ ${layerNumber(over)} ${live.current.layers[over].name}` : ''
+        if (over >= 0) live.current.setFocus(over)
+      }
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      if (!on) return // a plain click: the sheet's click handler dives
+      dragEndedAt.current = performance.now()
+      card.classList.remove('is-lifted')
+      ghostRef.current?.classList.remove('lo-ghost--on')
+      setDropIdx(-1)
+      const ls = live.current.layers
+      if (over >= 0 && over !== i) useStore.getState().moveToLayer([id], ls[over].id)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+  }
+
+  const onSheetClick = (i: number, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (performance.now() - dragEndedAt.current < 80) return // the click that ends a drag
+    // inside a preserve-3d tree elementFromPoint can report the sheet's glass
+    // while elementsFromPoint has the card first, so resolve from the full list
+    dive(i, cardAt(e.clientX, e.clientY)?.dataset.pid)
   }
 
   // ---------- render ----------
@@ -729,26 +794,40 @@ export function LayerOverview() {
       className="lo"
       ref={rootRef}
       onClick={(e) => {
+        // the click that ends a card drag lands on the common ancestor: not a backdrop click
+        if (performance.now() - dragEndedAt.current < 80) return
         // the backdrop: back to the layer you were on
         if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('lo-view'))
           dive(curIdx)
       }}
     >
       <div className="lo-bg" ref={bgRef} />
-      <div className={`lo-view${frost ? ' lo--frost' : ''}`} onClick={() => dive(curIdx)}>
+      <div className="lo-ghost" ref={ghostRef}>
+        <span />
+        <em />
+      </div>
+      <div
+        className={`lo-view${frost ? ' lo--frost' : ''}`}
+        onClick={(e) => {
+          e.stopPropagation()
+          if (performance.now() - dragEndedAt.current >= 80) dive(curIdx)
+        }}
+      >
         <div className="lo-stage" ref={stageRef}>
           {layers.map((l, i) => (
             <div
               key={l.id}
               ref={(node) => void (rec(i).el = node)}
+              data-idx={i}
               className={`lo-layer${i === focus ? ' is-focus' : ''}${i === curIdx ? ' is-current' : ''}${
                 stats[i].waiting ? ' has-waiting' : ''
-              }`}
+              }${i === dropIdx ? ' is-drop' : ''}`}
             >
               <div
                 className="lo-sheet"
                 ref={(node) => void (rec(i).sheet = node)}
                 onPointerEnter={() => hoverFocus(i)}
+                onPointerDown={(e) => onSheetDown(i, e)}
                 onClick={(e) => onSheetClick(i, e)}
               >
                 <div className="lo-glass" ref={(node) => void (rec(i).glass = node)} />
@@ -778,7 +857,8 @@ export function LayerOverview() {
             <div
               key={l.id}
               ref={(node) => void (rec(i).item = node)}
-              className={`lr${isFocus ? ' is-focus' : ''}${st.waiting ? ' has-waiting' : ''}`}
+              data-idx={i}
+              className={`lr${isFocus ? ' is-focus' : ''}${st.waiting ? ' has-waiting' : ''}${i === dropIdx ? ' is-drop' : ''}`}
             >
               <div
                 className="lr__box"
@@ -915,6 +995,7 @@ export function LayerOverview() {
           <span>
             <span className="kbd">V</span> · map / detail
           </span>
+          <span>drag a card · move it to another layer</span>
           <span>
             <span className="kbd">⇧↑</span>
             <span className="kbd">⇧↓</span> · reorder
@@ -958,7 +1039,7 @@ function RailRow({ el, home, onHover }: { el: WidgetElement; home?: string; onHo
       {isTerm ? <span className={`pc__led pc__led--${s}`} /> : <span className="lr__ic" />}
       <span className="lr__t">{el.title}</span>
       {guest && <span className="lr__guest">↗ {guest}</span>}
-      <span className={`lr__s lr__s--${isTerm ? s : ''}`}>{isTerm ? (WORD[s] ?? s) : el.kind}</span>
+      <span className={`lr__s lr__s--${isTerm ? s : ''}`}>{isTerm ? (WORD[s] ?? s) : widgetType(el)}</span>
     </div>
   )
 }
