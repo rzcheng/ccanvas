@@ -315,10 +315,10 @@
    un-foreshortened against the tilt. Shown on the focused sheet only. */
 .pc__far {
   position: absolute;
-  left: 50%;
-  top: 50%;
+  left: var(--sx, 50%);
+  top: var(--sy, 50%);
   transform: translate(-50%, -50%) scaleY(var(--uy, 1));
-  max-width: 92%;
+  max-width: var(--sw, 92%);
   display: flex;
   align-items: center;
   gap: calc(6px / var(--fs, 1));
@@ -961,4 +961,7 @@
 }
 .lo-find::placeholder {
   color: var(--ink-ghost);
+}
+.pc__far--hidden {
+  visibility: hidden;
 }

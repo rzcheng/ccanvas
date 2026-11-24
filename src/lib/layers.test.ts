@@ -278,7 +278,7 @@ describe('labelSpots', () => {
   it('moves a covered label to a free part of its tile', () => {
     // b covers the lower-right of a, including its centre
     const s = labelSpots([box('a', 0, 0), box('b', 150, 120)], 120, 50)
-    expect(s.get('a')).toEqual([0.5, 0.24, 0.88])
+    expect(s.get('a')).toEqual([0.5, 0.3, 0.88])
     expect(s.get('b')).toEqual([0.5, 0.5, 0.88]) // topmost: always centred
   })
   it('falls back to a free half, at half width, when the middle is covered', () => {

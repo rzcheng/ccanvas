@@ -46,7 +46,7 @@ export const LayerProxy = memo(function LayerProxy({
   spot?: [number, number, number] | null
 }) {
   if (el.type === 'widget')
-    return rect ? <ProxyRect el={el} /> : mode === 'map' ? <WidgetTile el={el} dim={dim} spot={spot} /> : <WidgetProxy el={el} dim={dim} />
+    return rect ? <ProxyRect el={el} /> : mode === 'map' ? <WidgetTile el={el} dim={dim} spot={spot} /> : <WidgetProxy el={el} dim={dim} spot={spot} />
   if (el.type === 'frame')
     return (
       <div
@@ -76,7 +76,7 @@ function ProxyRect({ el }: { el: WidgetElement }) {
   )
 }
 
-function WidgetProxy({ el, dim }: { el: WidgetElement; dim?: boolean }) {
+function WidgetProxy({ el, dim, spot }: { el: WidgetElement; dim?: boolean; spot?: [number, number, number] | null }) {
   const isTerm = el.kind === 'terminal' || el.kind === 'agent'
   const Icon = KIND_ICON[el.kind]
   return (
@@ -94,7 +94,10 @@ function WidgetProxy({ el, dim }: { el: WidgetElement; dim?: boolean }) {
         {el.kind === 'agent' && <ProxyContext el={el} />}
       </div>
       <div className="pc__body">{isTerm ? <TermLines el={el} /> : <OtherLines el={el} />}</div>
-      <div className="pc__far">
+      <div
+        className={`pc__far${spot === null ? ' pc__far--hidden' : ''}`}
+        style={spot ? ({ '--sx': `${spot[0] * 100}%`, '--sy': `${spot[1] * 100}%`, '--sw': `${spot[2] * 100}%` } as React.CSSProperties) : undefined}
+      >
         {isTerm ? (
           <ProxyLed id={el.id} />
         ) : (

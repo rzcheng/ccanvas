@@ -424,14 +424,14 @@ export function ovFit(els: CanvasElement[], W: number, H: number): Camera {
  *  left and right halves, where a name truncates to fit. */
 const SPOTS: Array<[number, number, number]> = [
   [0.5, 0.5, 0.88],
-  [0.5, 0.24, 0.88],
-  [0.5, 0.76, 0.88],
+  [0.5, 0.3, 0.88],
+  [0.5, 0.7, 0.88],
   [0.27, 0.5, 0.46],
   [0.73, 0.5, 0.46],
-  [0.27, 0.24, 0.46],
-  [0.73, 0.24, 0.46],
-  [0.27, 0.76, 0.46],
-  [0.73, 0.76, 0.46],
+  [0.27, 0.3, 0.46],
+  [0.73, 0.3, 0.46],
+  [0.27, 0.7, 0.46],
+  [0.73, 0.7, 0.46],
 ]
 
 type Box = { x: number; y: number; w: number; h: number }
