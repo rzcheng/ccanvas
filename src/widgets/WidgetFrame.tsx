@@ -186,8 +186,10 @@ export const WidgetFrame = memo(function WidgetFrame({
     onStartMove(e, el.id)
   }
 
-  // only widgets that aren't live or self-managed (i.e. web) keep the shield
-  const shielded = !isLive && !isNote && (!active || tool !== 'select')
+  // only widgets that aren't live or self-managed (i.e. web) keep the shield,
+  // and never while focused (it's the one thing on screen to work in)
+  const focusedHere = useStore((s) => s.focus?.id === el.id)
+  const shielded = !isLive && !isNote && !focusedHere && (!active || tool !== 'select')
 
   // live bodies: a single click selects + focuses the widget and keeps the
   // event from reaching the canvas (which would deselect / start a marquee)

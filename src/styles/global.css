@@ -1280,35 +1280,36 @@ body.is-panning * {
   opacity: 0.4;
   cursor: default;
 }
-/* text-bearing nav buttons (proxy toggle, open-external) auto-size */
-.web__toggle {
-  width: auto;
-  padding: 0 9px;
-  font-family: var(--font-mono);
-  font-size: calc(10.5px * var(--ts));
-}
-.web__toggle--on {
-  color: var(--k-web);
-  border-color: rgba(88, 180, 201, 0.5);
-  background: rgba(88, 180, 201, 0.12);
-}
 /* file button lit while a local file is loaded */
 .web__nav--on {
   color: var(--k-web);
   border-color: rgba(88, 180, 201, 0.5);
   background: rgba(88, 180, 201, 0.12);
 }
-/* live-reload indicator shown in file mode */
-.web__live {
+/* the reload glyph breathes while the focused browser is loading */
+.web__nav--busy svg {
+  animation: web-live-pulse 1.2s ease-in-out infinite;
+}
+/* small quiet chips in the bar: "live" (file mode), "preview" (remote, on the canvas) */
+.web__tag {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   flex: none;
   padding: 0 8px;
   height: 24px;
+  border: 1px solid transparent;
   border-radius: var(--r-sm);
+  background: none;
   font-family: var(--font-mono);
   font-size: calc(10.5px * var(--ts));
+  color: var(--ink-faint);
+}
+button.web__tag:hover {
+  color: var(--ink-dim);
+  border-color: var(--line);
+}
+.web__tag--live {
   color: var(--k-web);
   background: rgba(88, 180, 201, 0.1);
 }
@@ -1349,6 +1350,28 @@ body.is-panning * {
   border: none;
   background: #fff;
   width: 100%;
+}
+/* where the focused native browser is drawn; shows through while it's hidden */
+.web__native {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  background: var(--panel);
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--ts));
+}
+/* one quiet line under the bar when focus mode can only show the preview */
+.web__note {
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-faint);
+  font-size: calc(11px * var(--ts));
+}
+.web__empty svg {
+  width: 26px;
+  height: 26px;
+  margin-bottom: 6px;
 }
 .web__empty {
   flex: 1;

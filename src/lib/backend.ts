@@ -9,8 +9,8 @@ import { listen } from '@tauri-apps/api/event'
 
 const BASE = 'http://127.0.0.1:7531'
 // The web widget proxy is served from its own port so a proxied page never
-// shares an origin with the API.
-const PROXY_BASE = 'http://127.0.0.1:7532'
+// shares an origin with the API. The desktop app runs its own (web_proxy.rs).
+const NODE_PROXY_BASE = 'http://127.0.0.1:7532'
 
 /** Running inside the Tauri desktop shell? */
 export function isTauri(): boolean {
@@ -407,9 +407,10 @@ export async function openExternal(url: string): Promise<void> {
   window.open(url, '_blank', 'noopener')
 }
 
-/** URL that routes through the backend proxy (strips X-Frame-Options/CSP). */
-export function proxyUrl(target: string): string {
-  return `${PROXY_BASE}/proxy?url=${encodeURIComponent(target)}`
+/** URL that routes `target` through the preview proxy at `base` (see
+ *  previewProxy), which strips X-Frame-Options/CSP so the page can be framed. */
+export function proxyUrl(base: string, target: string): string {
+  return `${base}/proxy?url=${encodeURIComponent(target)}`
 }
 
 /**
@@ -562,16 +563,23 @@ export async function probeMedia(base: string, path: string): Promise<MediaInfo>
 }
 
 /**
- * Is the HTTP proxy reachable? The proxy is part of the Node server (served on
- * its own port, 7532), so unlike backendOnline() this always probes HTTP — the
- * desktop app only has it when `npm run server` is also running.
+ * Where the web widget's canvas preview of remote sites is served from, or
+ * null if nowhere. Always its own loopback origin, never the app's or the
+ * API's, so a proxied page can't call either:
+ *   • Tauri — the in-process proxy (web_proxy.rs), started on app launch.
+ *   • Web   — the Node server's proxy on port 7532 (`npm run server`).
  */
-export async function proxyAvailable(): Promise<boolean> {
+let tauriProxy: Promise<string | null> | null = null
+export async function previewProxy(): Promise<string | null> {
+  if (isTauri()) {
+    tauriProxy ??= invoke<string | null>('web_proxy_url').catch(() => null)
+    return tauriProxy
+  }
   try {
     await health(700)
-    return true
+    return NODE_PROXY_BASE
   } catch {
-    return false
+    return null
   }
 }
 
