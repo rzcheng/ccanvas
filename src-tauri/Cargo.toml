@@ -28,6 +28,10 @@ portable-pty = "0.9"
 notify = "6"
 base64 = "0.22"
 plist = "1"
+# the web widget's preview proxy (web_proxy.rs): the same TLS build the
+# updater already uses (rustls on ring), so no extra crates
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

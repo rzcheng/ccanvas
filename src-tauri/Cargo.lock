@@ -85,6 +85,8 @@ dependencies = [
  "notify",
  "plist",
  "portable-pty",
+ "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "tauri",
