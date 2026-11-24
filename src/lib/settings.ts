@@ -98,6 +98,8 @@ export const useSettings = create<SettingsStore>((set, get) => ({
 // ----- palette -----
 
 export function applyPalette(id: PaletteId) {
+  // no DOM in unit tests (they import the store, which imports settings)
+  if (typeof document === 'undefined') return
   if (id === 'claude') delete document.documentElement.dataset.palette
   else document.documentElement.dataset.palette = id
 }
@@ -117,6 +119,7 @@ export const useTextScale = () => useSettings((s) => textScale(s.textSize))
 
 // the stylesheets size text as calc(Npx * var(--ts))
 function applyTextSize(id: TextSizeId) {
+  if (typeof document === 'undefined') return
   document.documentElement.style.setProperty('--ts', String(textScale(id)))
 }
 applyTextSize(useSettings.getState().textSize)
