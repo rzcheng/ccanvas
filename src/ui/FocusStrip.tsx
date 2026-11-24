@@ -15,25 +15,32 @@ import { slotRef } from './focusSlots'
 
 export function FocusStrip() {
   const focusId = useStore((s) => s.focus?.id ?? null)
+  // after focus ends the strip fades out while the widget flies home
+  const leavingId = useStore((s) => (s.focus && !s.focus.id ? (s.focus.returning[s.focus.returning.length - 1] ?? null) : null))
+  const shownId = focusId ?? leavingId
   // re-render when widgets come, go or are renamed
   const ws = useStore(selectActive)
   // terminals keep ⌘1–9's numbering; mirrors follow, unnumbered (read-only,
   // so not in the ⌘N / cycle order you type into)
-  const terms = focusId ? orderedTerminals() : []
-  const mirrors = focusId ? orderedMirrors() : []
+  const terms = shownId ? orderedTerminals() : []
+  const mirrors = shownId ? orderedMirrors() : []
   const numbered = Math.min(9, terms.length)
   const jacks = [...terms.slice(0, numbered), ...mirrors]
   const all = [...terms, ...mirrors]
   const allIds = all.map((t) => t.id)
   const waiting = useAgents((s) => allIds.filter((id) => id !== focusId && s.status[id] === 'waiting').join(','))
-  if (!focusId) return null
-  const el = ws.elements.find((e) => e.id === focusId)
+  if (!shownId) return null
+  const el = ws.elements.find((e) => e.id === shownId)
   if (!el || el.type !== 'widget') return null
   const waitingIds = waiting ? waiting.split(',') : []
   const exit = () => useStore.getState().exitFocus()
 
   return (
-    <div className="focus-strip" style={{ height: FOCUS_STRIP_H }} onPointerDown={(e) => e.stopPropagation()}>
+    <div
+      className={`focus-strip${focusId ? '' : ' focus-strip--leaving'}`}
+      style={{ height: FOCUS_STRIP_H }}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
       <button className="focus-strip__back" title="Back to canvas (⌘⇧↵ or Esc)" onClick={exit}>
         <IconBack />
         Canvas

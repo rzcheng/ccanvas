@@ -7048,6 +7048,33 @@ button.web__tag:hover {
 .widget--focus-on {
   border-color: var(--line-hard);
 }
+/* the title bar (or stack rail) sits in a wrapper that can tuck it away: in
+   focus mode it folds up as the widget flies in and unfolds as it flies home,
+   in step with lib/focusMotion.ts (280 ms in, 240 ms out, ease-out) */
+.widget__head {
+  display: grid;
+  grid-template-rows: 1fr;
+  flex-shrink: 0;
+  transition: grid-template-rows 240ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+.widget__head-in {
+  min-height: 0;
+  overflow: hidden;
+  transition: opacity 200ms ease-out;
+}
+.widget__head--tucked {
+  grid-template-rows: 0fr;
+  transition-duration: 280ms;
+}
+.widget__head--tucked .widget__head-in {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .widget__head,
+  .widget__head-in {
+    transition: none;
+  }
+}
 /* focused, a widget has no title bar: the focus strip sits on top of it as
    its one bar, so the two read as a single card */
 .widget--focus-on {
@@ -7076,6 +7103,16 @@ button.web__tag:hover {
   from {
     opacity: 0;
     transform: translateY(-8px);
+  }
+}
+.focus-strip--leaving {
+  pointer-events: none;
+  animation: focus-strip-out 0.16s ease-in both;
+}
+@keyframes focus-strip-out {
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
   }
 }
 .focus-strip__back {

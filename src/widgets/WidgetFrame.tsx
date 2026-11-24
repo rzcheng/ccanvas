@@ -5,7 +5,7 @@ import type { WidgetElement } from '../lib/types'
 import { WIDGET_ACCENT, AGENT_COLORS, claudeColorName } from '../lib/types'
 import { useStore, selectActive } from '../store/workspace'
 import { elementBounds, edgeLines, snapValue } from '../lib/geometry'
-import { IconClose, IconLock, IconTag, IconSettings, IconPullOut, IconExternal, IconFocus, IconUnfocus } from '../ui/icons'
+import { IconClose, IconLock, IconTag, IconSettings, IconPullOut, IconExternal, IconFocus } from '../ui/icons'
 import { flyFocus, cancelFlight } from '../lib/focusMotion'
 import { toggleFocus } from '../lib/view'
 import { KIND_ICON, StatusGlyph, WidgetSlotIcon } from './widgetIcons'
@@ -713,7 +713,19 @@ export const WidgetFrame = memo(function WidgetFrame({
         </div>
       ) : snapPreview ? (
         <StackRail stack={snapPreview.stack} ghostIds={snapPreview.ghostIds} onGrab={grab} />
-      ) : focusRole ? null : stackFront ? (
+      ) : (
+      // focused, the header tucks away as the widget flies in (its parts show
+      // in the focus strip instead) and grows back as it flies home
+      <div className={`widget__head${focusRole === 'on' ? ' widget__head--tucked' : ''}`}>
+      <div className="widget__head-in">
+      {focusRole === 'on' ? (
+        <div className="widget__bar" aria-hidden>
+          <span className="widget__icon">
+            <WidgetSlotIcon el={el} />
+          </span>
+          <span className="widget__title">{el.title}</span>
+        </div>
+      ) : stackFront ? (
         <StackRail stack={stack!} onGrab={grab} />
       ) : (
       <div
@@ -731,15 +743,18 @@ export const WidgetFrame = memo(function WidgetFrame({
         <span className="widget__bar-spacer" />
         <div className="widget__actions">
           <button
-            className={`widget__btn${focusRole === 'on' ? ' widget__btn--on' : ''}`}
-            title={focusRole === 'on' ? 'Back to canvas (⌘⇧↵)' : 'Focus (⌘⇧↵)'}
+            className="widget__btn"
+            title="Focus (⌘⇧↵)"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => toggleFocus(el.id)}
           >
-            {focusRole === 'on' ? <IconUnfocus /> : <IconFocus />}
+            <IconFocus />
           </button>
           {actionButtons}
         </div>
+      </div>
+      )}
+      </div>
       </div>
       )}
       {focusRole === 'on' && (
