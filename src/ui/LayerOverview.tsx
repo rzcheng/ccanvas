@@ -714,7 +714,7 @@ export function LayerOverview() {
     const onMove = (e: PointerEvent) => {
       const c = C.current
       c.lastMove = performance.now()
-      if (!c.reduced) queueMag(e.clientY - c.top)
+      if (!c.reduced && !dragCleanup.current) queueMag(e.clientY - c.top)
     }
     const onLeave = () => queueMag(null)
     const onResize = () => {
@@ -740,6 +740,7 @@ export function LayerOverview() {
   // hover moves the focus only after a real pointer move: a sheet sliding
   // under a still cursor (after ↑/↓) must not steal the keyboard's focus
   const hoverFocus = (i: number) => {
+    if (dragCleanup.current) return // dragging a card: the stack holds still
     if (performance.now() - C.current.lastMove < 60) setFocus(i)
   }
   // ---------- drag a card onto another sheet (or its rail label) ----------
@@ -790,7 +791,8 @@ export function LayerOverview() {
         over = next
         setDropIdx(over !== i ? over : -1)
         if (g) g.lastChild!.textContent = over >= 0 && over !== i ? `→ ${layerNumber(over)} ${live.current.layers[over].name}` : ''
-        if (over >= 0) live.current.setFocus(over)
+        // no refocus while dragging: it re-lays out the stack and slides the
+        // target out from under the pointer, so the drop would miss it
       }
     }
     const detach = () => {
