@@ -11,7 +11,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { isTauri } from './backend'
+import { isTauri, backendToken } from './backend'
 
 export type Term = {
   /** true when we re-attached to an already-running shell (it survived a
@@ -111,12 +111,17 @@ async function connectTauri(opts: PtyOpts, h: PtyHandlers): Promise<Term | null>
   }
 }
 
-function connectWebSocket(opts: PtyOpts, h: PtyHandlers): Promise<Term | null> {
+async function connectWebSocket(opts: PtyOpts, h: PtyHandlers): Promise<Term | null> {
+  // the bridge refuses sockets without its token; re-read it in case the
+  // backend restarted since we last asked
+  const token = await backendToken(true)
+  if (!token) return null
   return new Promise((resolve) => {
     let ws: WebSocket
     const query =
       `?id=${encodeURIComponent(opts.id)}&cols=${opts.cols}&rows=${opts.rows}` +
-      (opts.cwd ? `&cwd=${encodeURIComponent(opts.cwd)}` : '')
+      (opts.cwd ? `&cwd=${encodeURIComponent(opts.cwd)}` : '') +
+      `&token=${encodeURIComponent(token)}`
     try {
       ws = new WebSocket(WS_URL + query)
     } catch {

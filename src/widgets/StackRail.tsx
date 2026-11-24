@@ -9,7 +9,7 @@ import { useAgents, useDisplayStatus } from '../lib/agents'
 import { stacksOf, type Stack } from '../lib/stacks'
 import { IconStack, IconSpread, IconFocus, IconUnfocus } from '../ui/icons'
 import { toggleFocus } from '../lib/view'
-import { KIND_ICON, StatusIcon, showsStatus } from './widgetIcons'
+import { WidgetSlotIcon } from './widgetIcons'
 
 const accentOf = (w: WidgetElement) =>
   w.color ?? (w.kind === 'terminal' || w.kind === 'agent' ? 'var(--accent)' : WIDGET_ACCENT[w.kind])
@@ -149,9 +149,7 @@ function StackTab({
   ghost?: boolean
   railRef: React.RefObject<HTMLDivElement>
 }) {
-  const Icon = KIND_ICON[m.kind]
   const status = useDisplayStatus(m.id)
-  const hasStatus = showsStatus(m)
   const attn = !front && status === 'waiting'
 
   // click → bring to front; drag sideways → reorder; drag off the rail → pull
@@ -239,7 +237,7 @@ function StackTab({
       title={m.title}
       onPointerDown={onPointerDown}
     >
-      <span className="stack-rail__tab-icon">{hasStatus ? <StatusIcon id={m.id} kind={m.kind} /> : <Icon />}</span>
+      <span className="stack-rail__tab-icon"><WidgetSlotIcon el={m} /></span>
       <span className="stack-rail__tab-title">{m.title}</span>
     </div>
   )

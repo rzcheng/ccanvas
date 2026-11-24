@@ -92,17 +92,25 @@
   border: calc(1px * var(--sk, 2)) solid var(--line-hard);
   box-shadow: inset 0 calc(1px * var(--sk, 2)) 0 rgba(255, 255, 255, 0.05);
 }
-.lo-sheet.is-open .lo-glass {
-  border-color: color-mix(in srgb, var(--accent) 70%, var(--line-hard));
-  box-shadow:
-    0 0 0 calc(1px * var(--sk, 2)) color-mix(in srgb, var(--accent) 25%, transparent),
-    inset 0 calc(1px * var(--sk, 2)) 0 rgba(255, 255, 255, 0.07);
+/* the open sheet's accent edge: its own element, so it fades in and out
+   with the opening, closing and a dive (opacity per frame) instead of
+   switching. No layer of its own: one per sheet, canvas-sized, would all be
+   allocated on the overview's first frame. */
+.lo-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: calc(1px * var(--sk, 2)) solid color-mix(in srgb, var(--accent) 70%, var(--line-hard));
+  box-shadow: 0 0 0 calc(1px * var(--sk, 2)) color-mix(in srgb, var(--accent) 25%, transparent);
+  opacity: 0;
+  pointer-events: none;
 }
 /* The shadow under a sheet is a gradient, not a blurred box-shadow: a sheet
    is the whole canvas scaled down, so a blur sized for the screen is ~2.5×
-   wider on the sheet, and any repaint (the opening, a roll) redrew it. */
-.lo-sheet::before {
-  content: '';
+   wider on the sheet, and any repaint (the opening, a roll) redrew it. Its
+   opacity is written as it changes (deeper under the open sheet, none while
+   a sheet is the canvas). */
+.lo-shadow {
   position: absolute;
   left: 4%;
   right: 4%;
@@ -110,14 +118,8 @@
   bottom: -9%;
   border-radius: 50%;
   background: radial-gradient(closest-side, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.22) 62%, transparent);
-  opacity: 0.75;
-  pointer-events: none;
-}
-.lo-sheet.is-open::before {
-  opacity: 1;
-}
-.lo-sheet.is-handover::before {
   opacity: 0;
+  pointer-events: none;
 }
 /* a sheet's content moving on its own gets a layer for that time only */
 .lo-world.is-flying {
@@ -145,9 +147,8 @@
   top: 0;
   transform-origin: 0 0;
 }
-/* landing: frames, text and images give way to the real canvas */
-.lo-sheet.is-handover .pc-frame,
-.lo-sheet.is-handover .pc-text,
+/* landing: images give way to the real canvas (a stand-in is a grey box);
+   frames and free text are drawn like the canvas's own, so they stay */
 .lo-sheet.is-handover .pc-image {
   opacity: 0;
   transition: opacity 120ms ease;
@@ -155,22 +156,58 @@
 
 /* ---------- tiles: a widget at its own position and size ----------
    Three faces (see LayerProxy): the block (.pt__fill), the text (screen-sized
-   through --fs, faded by the sheet's --txt), and the widget look (--m: a
-   title bar like the real one). --h wipes the fill away top-down. */
+   through --fs, faded by the sheet's --txt), and the widget look (--m: the
+   real widget's body, frame and title bar, crossfaded over the block). --h
+   wipes the widget look away top-down; --w is the text's wash. */
 .pt {
   position: absolute;
   --m: 0;
   --h: 0;
+  --w: 1;
+  --dim: 1;
   --k2: var(--accent);
+  opacity: var(--dim);
 }
-.pt__fill {
+.pt__fill,
+.pt__real {
   position: absolute;
   inset: 0;
+}
+.pt__fill {
+  transform: scaleY(calc(1 - var(--h)));
+  transform-origin: 50% 100%;
   border-radius: calc(7px / var(--fs, 1));
   background: color-mix(in srgb, var(--panel-2) 55%, var(--bg));
   border: calc(1px / var(--fs, 1)) solid var(--line);
-  transform: scaleY(calc(1 - var(--h)));
-  transform-origin: 50% 100%;
+  opacity: calc(1 - var(--m));
+}
+/* the widget's own body colour and frame (WidgetFrame). Handing over, it
+   slides down off the tile (--h) behind a soft edge, so the real widget's
+   content fills in from the top, a line at a time. */
+.pt__real {
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--bg);
+  opacity: var(--m);
+  transform: translateY(calc(var(--h) * (100% + 28px)));
+}
+.pt__real::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  bottom: 100%;
+  height: 28px;
+  background: linear-gradient(to bottom, transparent, var(--bg));
+  opacity: clamp(0, var(--h) * 30, 1);
+  pointer-events: none;
+}
+/* the cover slides off the tile: clip it there (only while handing over) */
+.lo-sheet.is-handover .pt {
+  overflow: hidden;
+}
+.pt--tagged .pt__real {
+  border-color: color-mix(in srgb, var(--k2) 45%, var(--line));
 }
 .pt--working .pt__fill,
 .pt--connecting .pt__fill {
@@ -184,12 +221,6 @@
 .pt--rect .pt__fill {
   background: color-mix(in srgb, var(--k2) 22%, var(--panel));
 }
-/* turning into the widget: its body's colour and its frame */
-.pt.is-real .pt__fill {
-  border-radius: var(--r-md);
-  border: 1px solid var(--line);
-  background: var(--bg);
-}
 .pt__bar {
   position: absolute;
   left: 0;
@@ -199,7 +230,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 10px;
+  padding: 0 6px 0 10px;
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-bottom-color: var(--line-soft);
@@ -207,12 +238,37 @@
   opacity: calc(var(--m) * clamp(0, (1 - var(--h)) * 2.5, 1));
   pointer-events: none;
 }
+/* a labelled terminal or agent: tinted like its real title bar */
+.pt--tagged .pt__bar {
+  background: color-mix(in srgb, var(--k2) 24%, var(--panel-2));
+  border-color: color-mix(in srgb, var(--k2) 45%, var(--line));
+  border-bottom-color: var(--line-soft);
+}
+.pt--tagged .pt__bt {
+  color: color-mix(in srgb, var(--k2) 25%, var(--ink));
+}
+.pt__cwd {
+  flex: 0 1 auto;
+  max-width: 45%;
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--ts));
+  color: var(--ink-ghost);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pt__cwd::before {
+  content: '·';
+  margin-right: 6px;
+}
 .pt__bar .pt__ic {
   width: 13px;
   height: 13px;
   color: var(--k2);
 }
 .pt__bt {
+  flex: 0 1 auto;
+  max-width: 55%;
   min-width: 0;
   font-family: var(--font-sans);
   font-size: calc(13px * var(--ts));
@@ -260,12 +316,16 @@
   color: var(--ink-faint);
 }
 .pt__tt {
+  position: relative;
   min-width: 0;
   font-family: var(--font-sans);
   font-size: calc(14px * var(--ts) / 1.1 / var(--fs, 1));
   font-weight: 600;
   line-height: 1.28;
   color: var(--ink);
+  overflow: hidden;
+}
+.pt__tt > i {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -274,6 +334,7 @@
 }
 .pt__tm,
 .pt__tl {
+  position: relative;
   font-family: var(--font-mono);
   font-size: calc(11.5px * var(--ts) / 1.1 / var(--fs, 1));
   line-height: 1.4;
@@ -297,6 +358,80 @@
 .pt--waiting .pt__tl {
   color: var(--led-waiting);
 }
+.pt__tt > i,
+.pt__tm > i,
+.pt__tl > i {
+  font-style: normal;
+}
+.pt__tm > i,
+.pt__tl > i {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The wash (--w, 0 → 1, one value per tile) types the text in: the title,
+   then the type line, then the last line, a character at a time on the
+   empty tile, with a block cursor that hops down the lines and rests at the
+   end of the last one for a beat. Backwards, it backspaces, bottom line
+   first. Each line's own progress (--p) comes from --w in CSS, and the
+   words are cut with clip-path only: no text changes, no layout, and JS
+   writes one value per tile. The clips and the cursor exist only on a
+   sheet whose text is washing (.is-washing), so a sheet at rest has none.
+   Mono lines step exactly a character (1ch); the title, in a proportional
+   face, steps in even slices of its length (--n characters). */
+.pt__top {
+  --s: 0;
+  --d: 0.3;
+}
+.pt__tm {
+  --s: 0.3;
+  --d: 0.24;
+}
+.pt__tl {
+  --s: 0.54;
+  --d: 0.28;
+}
+.pt__top,
+.pt__tm,
+.pt__tl {
+  --p: clamp(0, (var(--w) - var(--s)) / var(--d), 1);
+}
+.pt__tt {
+  --f: calc(round(down, var(--p) * var(--n, 1), 1) / var(--n, 1));
+}
+.pt__tm,
+.pt__tl {
+  --x: round(down, var(--p) * var(--n, 0), 1);
+}
+.pt__top > .pt__ic {
+  opacity: clamp(0, var(--p) * 4, 1);
+}
+.lo-sheet.is-washing .pt__tt > i {
+  clip-path: inset(0 calc((1 - var(--f)) * 100%) 0 0);
+}
+.lo-sheet.is-washing .pt__tm > i,
+.lo-sheet.is-washing .pt__tl > i {
+  clip-path: inset(0 max(0px, calc(100% - var(--x) * 1ch)) 0 0);
+}
+/* the cursor: the cell after the last character, while its line types;
+   on the last line it stays until the tile's wash is nearly done */
+.lo-sheet.is-washing .pt__tm::after,
+.lo-sheet.is-washing .pt__tl::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.1em;
+  width: 100%;
+  height: 1.2em;
+  background: color-mix(in srgb, var(--ink) 78%, transparent);
+  clip-path: inset(0 calc(100% - (var(--x) + 1) * 1ch) 0 calc(var(--x) * 1ch));
+  opacity: calc(clamp(0, var(--p) * 1000, 1) * clamp(0, (1 - var(--p)) * 1000, 1));
+  pointer-events: none;
+}
+.lo-sheet.is-washing .pt__tl::after {
+  opacity: calc(clamp(0, var(--p) * 1000, 1) * clamp(0, (0.96 - var(--w)) * 1000, 1));
+}
 /* the spinner turns only on the open sheet (a moving part inside a slat
    would repaint it every frame) */
 .lo-sheet:not(.is-open) .pt .status-icon svg {
@@ -307,10 +442,10 @@
 }
 /* find (/): non-matching widgets fade */
 .pt.is-dim {
-  opacity: 0.18;
+  --dim: 0.18;
 }
 .pt.is-lifted {
-  opacity: 0.25;
+  --dim: 0.25;
 }
 
 /* ---------- the rail: flat, fixed width, one label per sheet ----------
@@ -474,26 +609,29 @@
   background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 25%, transparent));
 }
 
-/* frames, text and images on a sheet */
+/* frames, text and images on a sheet, drawn like the canvas's own
+   (.frame-el, .text-el), so they stay put as the canvas hands over */
 .pc-frame {
   position: absolute;
   border: 1.5px dashed var(--line-hard);
-  border-radius: var(--r-md);
+  border-radius: 10px;
 }
 .pc-frame span {
   position: absolute;
-  left: 8px;
+  left: 0;
   top: -22px;
-  font-family: var(--font-label);
+  padding: 1px 4px;
+  font-family: var(--font-mono);
   font-size: calc(12px * var(--ts));
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-weight: 500;
+  white-space: nowrap;
 }
 .pc-text {
   position: absolute;
+  padding: 2px 3px;
   white-space: pre;
-  font-family: var(--font-sans);
-  line-height: 1.4;
+  font-family: var(--font-mono);
+  line-height: 1.35;
 }
 .pc-image {
   position: absolute;

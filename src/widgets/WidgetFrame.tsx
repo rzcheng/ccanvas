@@ -6,7 +6,7 @@ import { elementBounds, edgeLines, snapValue } from '../lib/geometry'
 import { IconClose, IconLock, IconTag, IconSettings, IconPullOut, IconExternal, IconFocus, IconUnfocus } from '../ui/icons'
 import { flyFocus, cancelFlight } from '../lib/focusMotion'
 import { toggleFocus } from '../lib/view'
-import { KIND_ICON, StatusGlyph, StatusIcon, showsStatus } from './widgetIcons'
+import { KIND_ICON, StatusGlyph, WidgetSlotIcon } from './widgetIcons'
 import { useAgents, useDisplayStatus, sendTo, sendPrompt, isLive as isSessionLive, type AgentMetrics } from '../lib/agents'
 import { useAgentContext } from '../lib/context'
 import { useSyncSessionTitle } from '../lib/sessionTitle'
@@ -31,6 +31,7 @@ import { TranscriptBody } from './TranscriptBody'
 import { VideoBody } from './VideoBody'
 import { MediaInfoBody } from './MediaInfoBody'
 import { ClaudeBody } from './ClaudeBody'
+import { NowPlayingBody } from './NowPlayingBody'
 import { MirrorAsk, MirrorWaitChip } from './MirrorStatus'
 import { openInClaude } from '../lib/desktopSessions'
 import { WidgetErrorBoundary } from '../ui/WidgetErrorBoundary'
@@ -60,6 +61,8 @@ export type SpreadCard = {
 
 const MIN_W = 220
 const MIN_H = 150
+type Corner = 'nw' | 'ne' | 'sw' | 'se'
+const CORNERS: Corner[] = ['nw', 'ne', 'sw', 'se']
 
 // Memoised: the canvas re-renders on every camera move, and re-rendering every
 // widget body (terminals, long transcripts) per frame made pan/zoom stutter.
@@ -105,7 +108,6 @@ export const WidgetFrame = memo(function WidgetFrame({
   useSyncSessionTitle(el)
 
   const active = activeWidgetId === el.id
-  const Icon = KIND_ICON[el.kind]
   const stackFront = !!stack && stack.front.id === el.id
   // stacked behind another member: stays mounted (live) but out of sight
   const stackHidden = !!stack && !stackFront && !spreadCard
@@ -135,11 +137,13 @@ export const WidgetFrame = memo(function WidgetFrame({
     el.kind === 'transcript' ||
     el.kind === 'claude' ||
     el.kind === 'video' ||
-    el.kind === 'mediainfo'
+    el.kind === 'mediainfo' ||
+    el.kind === 'nowplaying'
   // notes are also single-click, but manage their own pointer handling
   // (toggle a checkbox vs. enter edit) so they don't use the generic capture
   const isNote = el.kind === 'note'
-  const folder = el.cwd
+  // a folder means nothing to the music widget
+  const folder = el.cwd && el.kind !== 'nowplaying'
     ? el.cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop()
     : null
 
@@ -288,46 +292,55 @@ export const WidgetFrame = memo(function WidgetFrame({
     setRenaming(false)
   }
 
-  // ---- resize (bottom-right grip) ----
+  // ---- resize (a grip on each corner; the opposite corner stays put) ----
   const resizeRef = useRef<{
+    corner: Corner
     px: number
     py: number
+    x: number
+    y: number
     w: number
     h: number
     zoom: number
   } | null>(null)
 
-  const onResizeDown = (e: React.PointerEvent) => {
+  const onResizeDown = (e: React.PointerEvent, corner: Corner) => {
     if (el.locked) return
     e.stopPropagation()
     ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
     select()
     beginHistory()
     const zoom = selectActive(useStore.getState()).camera.zoom
-    resizeRef.current = { px: e.clientX, py: e.clientY, w: el.w, h: el.h, zoom }
+    resizeRef.current = { corner, px: e.clientX, py: e.clientY, x: el.x, y: el.y, w: el.w, h: el.h, zoom }
   }
   const onResizeMove = (e: React.PointerEvent) => {
     const r = resizeRef.current
     if (!r) return
-    const dw = (e.clientX - r.px) / r.zoom
-    const dh = (e.clientY - r.py) / r.zoom
+    const right = r.corner === 'se' || r.corner === 'ne'
+    const bottom = r.corner === 'se' || r.corner === 'sw'
+    const dw = ((e.clientX - r.px) / r.zoom) * (right ? 1 : -1)
+    const dh = ((e.clientY - r.py) / r.zoom) * (bottom ? 1 : -1)
     let w = Math.max(MIN_W, r.w + dw)
     let h = Math.max(MIN_H, r.h + dh)
-    // snap the dragged right/bottom edges to other elements' edges/centers
+    // snap the dragged edges to other elements' edges/centers
     const st = useStore.getState()
     const others = selectActive(st)
       .elements.filter((o) => o.id !== el.id && !(stack && (o as WidgetElement).stackId === stack.id))
       .map(elementBounds)
     const { xs, ys } = edgeLines(others)
     const tol = 6 / r.zoom
-    const sx = snapValue(el.x + w, xs, tol)
-    const sy = snapValue(el.y + h, ys, tol)
-    if (sx != null) w = Math.max(MIN_W, sx - el.x)
-    if (sy != null) h = Math.max(MIN_H, sy - el.y)
+    const sx = snapValue(right ? r.x + w : r.x + r.w - w, xs, tol)
+    const sy = snapValue(bottom ? r.y + h : r.y + r.h - h, ys, tol)
+    if (sx != null) w = Math.max(MIN_W, right ? sx - r.x : r.x + r.w - sx)
+    if (sy != null) h = Math.max(MIN_H, bottom ? sy - r.y : r.y + r.h - sy)
     st.setSnapGuides({ vx: sx, hy: sy })
+    const x = right ? r.x : r.x + r.w - w
+    const y = bottom ? r.y : r.y + r.h - h
     // every member of a stack shares one box
     st.mutateElements(stack ? stack.members.map((m) => m.id) : [el.id], (wd) => {
       const ww = wd as WidgetElement
+      ww.x = x
+      ww.y = y
       ww.w = w
       ww.h = h
     })
@@ -554,7 +567,7 @@ export const WidgetFrame = memo(function WidgetFrame({
         >
           <span className="spread-bar__num">{spreadCard.index + 1}</span>
           <span className="widget__icon">
-            {showsStatus(el) ? <StatusIcon id={el.id} kind={el.kind} /> : <Icon />}
+            <WidgetSlotIcon el={el} />
           </span>
           <span className="widget__title">{el.title}</span>
           {folder && <span className="widget__cwd">{folder}</span>}
@@ -586,7 +599,7 @@ export const WidgetFrame = memo(function WidgetFrame({
         }}
       >
         <span className="widget__icon">
-          {showsStatus(el) ? <StatusIcon id={el.id} kind={el.kind} /> : <Icon />}
+          <WidgetSlotIcon el={el} />
         </span>
         {renaming ? (
           <input
@@ -727,6 +740,7 @@ export const WidgetFrame = memo(function WidgetFrame({
           {el.kind === 'video' && <VideoBody el={el} active={active} />}
           {el.kind === 'mediainfo' && <MediaInfoBody el={el} />}
           {el.kind === 'claude' && <ClaudeBody el={el} />}
+          {el.kind === 'nowplaying' && <NowPlayingBody el={el} visible={visible} far={far && !focusRole} />}
           {isTerminal && (
             <TerminalBody el={el} active={active} visible={visible} tabShown={tabShown} hidden={stackHidden} />
           )}
@@ -773,16 +787,20 @@ export const WidgetFrame = memo(function WidgetFrame({
 
       {el.mirrorOf === 'desktop' && <MirrorAsk el={el} />}
 
-      {!el.locked && !spreadCard && !focusRole && (
-        <div
-          className="widget__resize"
-          title="Resize"
-          onPointerDown={onResizeDown}
-          onPointerMove={onResizeMove}
-          onPointerUp={onResizeUp}
-          onPointerCancel={onResizeUp}
-        />
-      )}
+      {!el.locked &&
+        !spreadCard &&
+        !focusRole &&
+        CORNERS.map((c) => (
+          <div
+            key={c}
+            className={`widget__resize widget__resize--${c}`}
+            title="Resize"
+            onPointerDown={(e) => onResizeDown(e, c)}
+            onPointerMove={onResizeMove}
+            onPointerUp={onResizeUp}
+            onPointerCancel={onResizeUp}
+          />
+        ))}
     </div>
     </>
   )

@@ -88,6 +88,7 @@ running agent.
 | 🪞 **Desktop sessions, mirrored** | The **Desktop sessions** panel lists the chats you're running in the Claude desktop app (Code tab); pick some, or *Add all running*, and each becomes a read-only, live-following transcript on the canvas, with a context meter and a row in the Agents roster. Right-click a mirror → *Fork into terminal* to branch it. macOS desktop app only; it reads the desktop app's internal session files |
 | 🗂️ **Layers** | A tab can hold a stack of layers, and each layer can be its own project, with its own folder and its own view. Press `L` and the canvas tilts back into a stack of every layer; click one to dive in. Agents on hidden layers keep running. See [Layers](#layers) |
 | 📛 **Agent titles that stay in sync** | A Claude agent widget adopts the name you `/rename` inside the session, or the title Claude generates after the first prompt, instead of sitting at "claude agent" forever |
+| 🎵 **Now playing** | A small widget for whatever the Spotify app (or Apple Music) is playing: artwork, track, artist, a progress line, and play/pause, previous and next. `Space` → `music` (or `spotify`), or *Now playing* in the palette. It reads the apps over AppleScript, never opens one that isn't running, and polls only while the widget is on screen. The first time, macOS asks whether ccanvas may control Spotify; if you said no, allow it under System Settings → Privacy & Security → Automation. Nothing about what you're playing is saved with the canvas. macOS desktop app only for now |
 | 🪶 **A slimmer toolbar** | Fewer buttons, same power — the vector-drawing tools and GitHub-issue widgets from upstream are gone from the chrome; the surface is just Claude, a shell, and the files between them |
 
 <img src="docs/divider.svg" alt="" width="100%" height="20" />
@@ -146,9 +147,16 @@ terminals + folders come from an optional local backend (run it in a second
 terminal, or `npm start` to run both at once):
 
 ```bash
-npm run server     # ws + http on 127.0.0.1:7531
+npm run server     # ws + http on 127.0.0.1:7531 (web proxy on :7532)
 npm start          # runs the pty server and the web app together
 ```
+
+The backend can run programs and read and write files, so it only answers the
+app itself: requests from any other origin are refused, and every route needs a
+token that changes each launch and is only handed to the app's origin. If you
+serve the web app from somewhere other than `127.0.0.1:5173` or
+`localhost:5173`, list that origin in `CCANVAS_ORIGINS` (comma-separated), e.g.
+`CCANVAS_ORIGINS=http://localhost:3000 npm run server`.
 
 The backend gives the browser what the sandbox can't: a real shell per terminal
 widget (via `node-pty`; prebuilt binaries ship for Windows/macOS) and a native
@@ -169,9 +177,9 @@ File drag-and-drop needs the desktop app; the VS Code widget works here too.
 | Surface | Notes |
 | --- | --- |
 | **Infinite canvas** | Pan by dragging empty canvas, middle-dragging, or scrolling with two fingers; smooth zoom with ⌘/Ctrl-scroll or a pinch; dot grid; minimap (toggle it in the bottom-right controls) |
-| **Quick insert** | `Space` opens a command box at the cursor: type a widget name (`agent` `term` `files` `diff` `editor` `note`), optionally followed by an agent's first prompt, a file path, or a note's text |
+| **Quick insert** | `Space` opens a command box at the cursor: type a widget name (`agent` `term` `files` `diff` `editor` `note` `music`), optionally followed by an agent's first prompt, a file path, or a note's text |
 | **Command palette** | ⌘/Ctrl-K to spawn widgets, arrange, switch tabs, open panels, insert prompts, run git, export, or jump to a widget |
-| **Widgets** | Claude agent · Terminal · File tree · Git panel · Editor (Monaco) · **VS Code** · Markdown note, plus the Transcript (right-click an agent) and data, figure, and video viewers that open from the file tree or a path clicked in a terminal |
+| **Widgets** | Claude agent · Terminal · File tree · Git panel · Editor (Monaco) · **VS Code** · Markdown note · Now playing (macOS), plus the Transcript (right-click an agent) and data, figure, and video viewers that open from the file tree or a path clicked in a terminal |
 | **Drag & drop** | Drop a file from the OS onto a terminal or agent to paste its path in — the way you'd hand Claude a screenshot |
 | **Agent orchestration** | Per-agent status dot (idle, working, waiting, just finished), an *N waiting* inbox, idle notifications, broadcast to many, per-agent model/prompt/flags, and colour labels you can filter the canvas by |
 | **Context meter** | Each agent's bar shows how full its context window is (read from its session transcript), with a one-click **compact** past 70% |
@@ -280,13 +288,19 @@ several groups of agents, on one canvas without them crowding each other.
   and each layer remembers its own view, so switching returns you to where
   you were.
 - **Switch.** Press `L` (or `⌃⌘↑` from anywhere, even inside a terminal) to
-  open the layers overview: the canvas settles back into an accordion of
+  open the layers overview: each widget dims to a tile where it stands (its
+  title bar doesn't change), then the canvas settles back into an accordion of
   every layer around the one you're on, which faces you while the rest fold
-  into thin slats above and below it, higher layers higher up. Hover, scroll
-  or press `↑` / `↓` to roll the accordion through the stack, then click a
-  sheet or slat, press `⏎`, or press its digit to dive in: the sheet eases
-  flat onto the canvas, its name glides into the layer chip, and its tiles
-  turn back into the live widgets. `Esc` or `L` goes back the same way. `⌥↑` / `⌥↓` and `⌥1`–`⌥9` switch
+  into thin slats above and below it, higher layers higher up. As it
+  settles, the tiles' text types in down the sheet, a character at a time,
+  line after line, behind a block cursor. Hover,
+  scroll or press `↑` / `↓` to roll the accordion through the stack, then
+  click a sheet or slat, press `⏎`, or press its digit to dive in: the text
+  backspaces out, the sheet eases flat onto the canvas, its name
+  glides into the layer chip, and its tiles turn back into the live widgets,
+  their content wiping in from the top. `Esc` or `L` goes back the same way,
+  and `L` turns the move around at any point, so tapping it quickly goes in
+  and out from wherever it is. `⌥↑` / `⌥↓` and `⌥1`–`⌥9` switch
   instantly.
 - **See what's where.** Each sheet draws its widgets as tiles where they sit.
   The open sheet's tiles show the status icon (a spinner while an agent

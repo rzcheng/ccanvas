@@ -36,6 +36,7 @@ export type WidgetKind =
   | 'video'
   | 'mediainfo'
   | 'claude'
+  | 'nowplaying'
 
 type Base = {
   id: string
@@ -337,6 +338,7 @@ export const WIDGET_ACCENT: Record<WidgetKind, string> = {
   video: '#e0708a',
   mediainfo: '#e0899b',
   claude: '#d98a5a',
+  nowplaying: '#7fb58a',
 }
 
 /** Agent accent colours, each mapped to a valid Claude Code `/color` name. */

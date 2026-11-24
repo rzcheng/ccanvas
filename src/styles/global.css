@@ -1117,32 +1117,69 @@ body.is-panning * {
   box-shadow: inset 0 0 0 1.5px var(--accent, #6ea8fe);
 }
 
-/* bottom-right resize grip */
+/* resize grips, one per corner: each keeps the opposite corner put */
 .widget__resize {
   position: absolute;
-  right: 0;
-  bottom: 0;
   width: 16px;
   height: 16px;
   z-index: 6;
-  cursor: nwse-resize;
 }
+/* the top two are smaller: just their bracket, clear of the title bar's
+   icon and nearly all of its last button */
+.widget__resize--nw { left: 0; top: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+.widget__resize--ne { right: 0; top: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.widget__resize--sw { left: 0; bottom: 0; cursor: nesw-resize; }
+.widget__resize--se { right: 0; bottom: 0; cursor: nwse-resize; }
 .widget__resize::after {
   content: '';
   position: absolute;
-  right: 3px;
-  bottom: 3px;
   width: 7px;
   height: 7px;
-  border-right: 2px solid var(--line-hard);
-  border-bottom: 2px solid var(--line-hard);
+  border: 0 solid var(--line-hard);
+}
+.widget__resize--nw::after {
+  left: 3px;
+  top: 3px;
+  border-left-width: 2px;
+  border-top-width: 2px;
+  border-top-left-radius: 3px;
+}
+.widget__resize--ne::after {
+  right: 3px;
+  top: 3px;
+  border-right-width: 2px;
+  border-top-width: 2px;
+  border-top-right-radius: 3px;
+}
+.widget__resize--sw::after {
+  left: 3px;
+  bottom: 3px;
+  border-left-width: 2px;
+  border-bottom-width: 2px;
+  border-bottom-left-radius: 3px;
+}
+.widget__resize--se::after {
+  right: 3px;
+  bottom: 3px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
   border-bottom-right-radius: 3px;
+}
+/* the bottom-right grip always shows; the other three stay quiet until
+   you're on the widget, like the title bar's buttons */
+.widget__resize:not(.widget__resize--se)::after {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.widget:hover .widget__resize::after,
+.widget--selected .widget__resize::after,
+.widget--active .widget__resize::after {
+  opacity: 1;
 }
 .widget--selected .widget__resize::after,
 .widget--active .widget__resize::after {
   border-color: var(--k);
 }
-
 /* interaction shield: covers iframe/terminal until focused so drag works */
 .widget__shield {
   position: absolute;
@@ -5387,6 +5424,301 @@ body.is-panning * {
   overflow: hidden;
   word-break: break-word;
   min-height: 0;
+}
+
+/* ============================================================
+   Now playing (widgets/NowPlayingBody.tsx): square artwork, the track
+   in cream, the artist dim, a faint source label, a 2px progress line
+   and ghost transport buttons.
+   ============================================================ */
+.np {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  padding: 12px 14px 10px 12px;
+  overflow: hidden;
+  /* the artwork sizes off the body's height and width (cq units) */
+  container-type: size;
+}
+.np__art {
+  /* square: as tall as the body allows, never more than ~half its width */
+  width: min(46cqw, calc(100cqh - 22px));
+  aspect-ratio: 1;
+  min-height: 0;
+  align-self: center;
+  flex-shrink: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  color: var(--ink-ghost);
+}
+.np__art svg {
+  width: 34%;
+  height: 34%;
+}
+.np__art img,
+.np-card__art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  user-select: none;
+}
+.np__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+}
+.np__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  margin-bottom: auto;
+  max-height: 100%;
+}
+/* a big Now playing (focus mode) keeps its text by the controls */
+@container (min-height: 260px) {
+  .np__meta {
+    margin-bottom: 10px;
+  }
+}
+.np__track,
+.np__artist,
+.np__source {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.np__track {
+  font-family: var(--font-sans);
+  font-size: calc(14.5px * var(--ts));
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ink);
+}
+.np__artist {
+  font-family: var(--font-sans);
+  font-size: calc(12.5px * var(--ts));
+  color: var(--ink-dim);
+}
+.np__source {
+  margin-top: 4px;
+  font-family: var(--font-label);
+  font-size: calc(9.5px * var(--ts));
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-ghost);
+}
+.np__progress {
+  height: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.np__fill {
+  height: 100%;
+  background: var(--k);
+  transform-origin: 0 50%;
+  transform: scaleX(0);
+}
+.np__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.np__time {
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--ts));
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+  min-width: 4ch;
+}
+.np__time:last-child {
+  text-align: right;
+}
+.np__controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.np__btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition: color 0.12s, background-color 0.12s;
+}
+.np__btn svg {
+  width: 13px;
+  height: 13px;
+}
+.np__btn--main svg {
+  width: 16px;
+  height: 16px;
+}
+.np__btn:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+.np__btn:active {
+  background: color-mix(in srgb, var(--ink) 13%, transparent);
+}
+.np--empty .np__main {
+  justify-content: center;
+  gap: 4px;
+}
+.np--empty .np__track {
+  color: var(--ink-dim);
+  white-space: normal;
+}
+.np__hint {
+  font-family: var(--font-sans);
+  font-size: calc(12px * var(--ts));
+  line-height: 1.4;
+  color: var(--ink-faint);
+}
+.np__link {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--font-sans);
+  font-size: calc(12px * var(--ts));
+  color: var(--k);
+  cursor: pointer;
+}
+.np__link:hover {
+  text-decoration: underline;
+}
+
+/* zoomed far out: artwork and title, in screen px (see .term-card) */
+.np-card {
+  --px: calc(1px / var(--z, 1));
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: min(calc(var(--px) * 12), 6%);
+  padding: min(calc(var(--px) * 12), 8%);
+  background: var(--panel);
+  overflow: hidden;
+}
+.np-card__art {
+  height: 100%;
+  aspect-ratio: 1;
+  flex-shrink: 0;
+  border-radius: calc(var(--px) * 4);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--panel-2);
+  color: var(--ink-ghost);
+}
+.np-card__art svg {
+  width: 40%;
+  height: 40%;
+}
+.np-card__controls {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4%;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  opacity: 0;
+  transition: opacity 0.14s;
+}
+.np-card:hover .np-card__controls,
+.np-card__controls:focus-within {
+  opacity: 1;
+}
+.np-card__controls .np__btn {
+  width: auto;
+  height: min(calc(var(--px) * 34), 46%);
+  aspect-ratio: 1;
+  color: var(--ink);
+}
+.np-card__controls .np__btn svg {
+  width: 46%;
+  height: 46%;
+}
+.np-card__controls .np__btn--main {
+  height: min(calc(var(--px) * 42), 58%);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+.np-card__controls .np__btn--main svg {
+  width: 50%;
+  height: 50%;
+}
+.np-card__title {
+  min-width: 0;
+  font-family: var(--font-label);
+  font-weight: 700;
+  font-size: min(calc(var(--px) * 17), 64px);
+  line-height: 1.3;
+  color: var(--ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+/* the title-bar icon: three level bars that bob while music plays */
+.np-glyph--playing .np-levels__bar {
+  fill: currentColor;
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: np-level 0.82s ease-in-out infinite alternate;
+}
+.np-glyph--playing .np-levels__bar:nth-child(2) {
+  animation-duration: 0.64s;
+  animation-delay: -0.35s;
+}
+.np-glyph--playing .np-levels__bar:nth-child(3) {
+  animation-duration: 0.95s;
+  animation-delay: -0.6s;
+}
+@keyframes np-level {
+  from {
+    transform: scaleY(0.3);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .np-glyph--playing .np-levels__bar {
+    animation: none;
+  }
+  .np-glyph--playing .np-levels__bar:nth-child(1) {
+    transform: scaleY(0.55);
+  }
+  .np-glyph--playing .np-levels__bar:nth-child(3) {
+    transform: scaleY(0.75);
+  }
 }
 
 /* ============================================================

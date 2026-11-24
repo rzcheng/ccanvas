@@ -24,7 +24,9 @@ import {
   IconVideo,
   IconClaude,
   IconInfo,
+  IconMusic,
 } from '../ui/icons'
+import { useNowPlaying } from '../lib/nowplaying'
 
 export const KIND_ICON: Record<WidgetKind, (p: { className?: string; size?: number }) => JSX.Element> = {
   terminal: IconTerminal,
@@ -48,6 +50,7 @@ export const KIND_ICON: Record<WidgetKind, (p: { className?: string; size?: numb
   video: IconVideo,
   mediainfo: IconInfo,
   claude: IconClaude,
+  nowplaying: IconMusic,
 }
 
 // ---- status icons ----
@@ -123,4 +126,30 @@ export function StatusIcon({ id, kind, className }: { id: string; kind: WidgetKi
   const status = useDisplayStatus(id)
   const Icon = KIND_ICON[kind]
   return <StatusGlyph status={status} icon={<Icon />} className={className} />
+}
+
+// Now playing: three level bars that bob while music plays, the kind icon
+// otherwise. Same rule as the spinner: motion only while something's going on.
+const LEVELS = (
+  <svg viewBox="0 0 16 16">
+    <rect x="2" y="2.5" width="3" height="11" rx="1" className="np-levels__bar" />
+    <rect x="6.5" y="2.5" width="3" height="11" rx="1" className="np-levels__bar" />
+    <rect x="11" y="2.5" width="3" height="11" rx="1" className="np-levels__bar" />
+  </svg>
+)
+export function NowPlayingGlyph({ className = '' }: { className?: string }) {
+  const playing = useNowPlaying((s) => s.np.kind === 'track' && s.np.track.playing)
+  return (
+    <span className={`status-icon np-glyph${playing ? ' np-glyph--playing' : ''} ${className}`} title={playing ? 'playing' : undefined}>
+      {playing ? LEVELS : <IconMusic />}
+    </span>
+  )
+}
+
+/** The icon slot for any widget: its live status where it has one, else its kind icon. */
+export function WidgetSlotIcon({ el }: { el: WidgetElement }) {
+  if (showsStatus(el)) return <StatusIcon id={el.id} kind={el.kind} />
+  if (el.kind === 'nowplaying') return <NowPlayingGlyph />
+  const Icon = KIND_ICON[el.kind]
+  return <Icon />
 }

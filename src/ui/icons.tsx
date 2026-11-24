@@ -443,6 +443,39 @@ export const IconVideo = (p: P) => (
   </S>
 )
 
+// A beamed pair of notes — the Now playing widget.
+export const IconMusic = (p: P) => (
+  <S {...p}>
+    <path d="M9 18V5.5l11-2V16" />
+    <circle cx="6.5" cy="18" r="2.5" />
+    <circle cx="17.5" cy="16" r="2.5" />
+  </S>
+)
+
+// Transport controls for Now playing: solid shapes, so they read small.
+export const IconPlay = (p: P) => (
+  <S {...p}>
+    <path d="M8 5.5v13l10.5-6.5L8 5.5z" fill="currentColor" />
+  </S>
+)
+export const IconPause = (p: P) => (
+  <S {...p}>
+    <path d="M8 5.5v13M16 5.5v13" strokeWidth="3" />
+  </S>
+)
+export const IconPrevTrack = (p: P) => (
+  <S {...p}>
+    <path d="M6 5.5v13" strokeWidth="2.2" />
+    <path d="M18.5 5.5v13L9 12l9.5-6.5z" fill="currentColor" />
+  </S>
+)
+export const IconNextTrack = (p: P) => (
+  <S {...p}>
+    <path d="M18 5.5v13" strokeWidth="2.2" />
+    <path d="M5.5 5.5v13L15 12 5.5 5.5z" fill="currentColor" />
+  </S>
+)
+
 // A ring of rays — the Claude workspace tab (echoes the app mark / agent star).
 export const IconClaude = (p: P) => (
   <S {...p}>

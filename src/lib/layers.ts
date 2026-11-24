@@ -164,6 +164,7 @@ export function widgetGlyph(el: CanvasElement): Glyph | null {
     case 'web':
     case 'vscode':
     case 'video':
+    case 'nowplaying':
       return 'web'
     case 'note':
       return 'note'
@@ -185,6 +186,8 @@ export function widgetType(el: CanvasElement): string {
       return 'git'
     case 'vscode':
       return 'vs code'
+    case 'nowplaying':
+      return 'music'
     case 'web': {
       const u = (el.url ?? '').replace(/^\w+:\/\//, '').split('/')[0]
       return u || 'web'

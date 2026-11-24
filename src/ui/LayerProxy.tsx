@@ -15,9 +15,14 @@ import { pathWithin, widgetGlyph, widgetType } from '../lib/layers'
 //  • the block (the fill): coloured by status, all that shows on a slat;
 //  • the text (status icon, two-line title, meta and last line), faded by
 //    the sheet's --txt, so it shows only while the sheet is nearly flat;
-//  • the widget (--m): a 30px title bar like the real one grows in and the
-//    text fades, as a dive lands. Then --h wipes the fill away top-down to
-//    hand over to the real widget underneath.
+//  • the widget (--m): the real widget's look (its body colour, frame and
+//    title bar, tint and folder included) crossfades in over the block, so
+//    nothing snaps. Then --h wipes it away top-down to hand over to the real
+//    widget underneath.
+//
+// --w, the tile's wash, types the text in a character at a time, line after
+// line, with a block cursor (layers.css); each line carries its length
+// (--n) for that. Run backwards, it backspaces.
 
 const STATUS_WORD: Record<string, string> = {
   working: 'working',
@@ -66,6 +71,7 @@ export const LayerProxy = memo(function LayerProxy({
         style={{ left: el.x, top: el.y, width: el.w, height: el.h, ['--k2' as string]: accentOf(el) }}
       >
         <div className="pt__fill" />
+        <div className="pt__real" />
       </div>
     ) : (
       <WidgetTile el={el} mode={mode} dim={dim} ord={ord} noText={noText} home={home} />
@@ -94,6 +100,9 @@ export const LayerProxy = memo(function LayerProxy({
 function glyphFor(el: WidgetElement) {
   return widgetGlyph(el) === 'mirror' ? IconDesktop : KIND_ICON[el.kind]
 }
+
+/** A line's length, for typing it in a character at a time. */
+const chars = (s: string) => ({ ['--n' as string]: Math.min(s.length, 120) })
 
 /** A few lines of what a non-terminal widget shows. */
 function otherLines(el: WidgetElement): string[] {
@@ -144,29 +153,39 @@ function WidgetTile({
     ? [lastLine || STATUS_WORD[st!] || '', ...(mode === 'detail' && el.cwd ? [baseName(el.cwd)] : [])]
     : otherLines(el)
   const shownLines = mode === 'detail' ? lines.slice(0, 4) : lines.slice(0, 1)
+  // the real title bar: a labelled terminal or agent is tinted, and the
+  // folder follows the title (WidgetFrame)
+  const tagged = (el.kind === 'terminal' || el.kind === 'agent') && !!el.color
+  const folder = el.cwd ? el.cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() : null
   return (
     <div
-      className={`pt${st ? ` pt--${st}` : ''}${dim ? ' is-dim' : ''}`}
+      className={`pt${st ? ` pt--${st}` : ''}${dim ? ' is-dim' : ''}${tagged ? ' pt--tagged' : ''}`}
       data-pid={el.id}
       data-ord={ord}
       style={{ left: el.x, top: el.y, width: el.w, height: el.h, ['--k2' as string]: accentOf(el) }}
     >
       <div className="pt__fill" />
+      <div className="pt__real" />
       <div className="pt__bar">
         {icon}
         <span className="pt__bt">{el.title}</span>
+        {folder && <span className="pt__cwd">{folder}</span>}
       </div>
       {!noText && (
         <div className="pt__txt">
           <div className="pt__top">
             {icon}
-            <span className="pt__tt">{el.title}</span>
+            <span className="pt__tt" style={chars(el.title)}>
+              <i>{el.title}</i>
+            </span>
           </div>
-          <span className="pt__tm">{meta}</span>
+          <span className="pt__tm" style={chars(meta)}>
+            <i>{meta}</i>
+          </span>
           <span className="pt__tls">
             {shownLines.map((l, i) => (
-              <span key={i} className="pt__tl">
-                {l}
+              <span key={i} className="pt__tl" style={chars(l)}>
+                <i>{l}</i>
               </span>
             ))}
           </span>

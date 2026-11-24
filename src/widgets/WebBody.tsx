@@ -59,7 +59,9 @@ export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) 
     setSrc(el.url ?? '')
   }, [el.url, el.path])
 
-  // the proxy lives on the Node server (port 7531); probe whether it's running
+  // the proxy is part of the Node server; probe whether it's running. It serves
+  // pages from its own port (7532), so a proxied page's scripts can't call the
+  // backend API as same-origin even with allow-same-origin below.
   useEffect(() => {
     let alive = true
     void proxyAvailable().then((on) => {

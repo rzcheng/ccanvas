@@ -60,15 +60,29 @@ import '../styles/layers.css'
 // writes transforms and opacities to refs, and only while something moves.
 // Nothing else animates: no layout, no filters.
 //
-// Phases: preroll (the live widgets fold into tiles over the still canvas)
-// → intro (pull back into a deck, fan out) → live → dive | outro → handover
-// (the tiles wipe away over the real, already-mounted widgets) → unmount.
+// Phases: fly → live → dive → handover → unmount, or live → fly → unmount.
+// Fly is opening and closing as one reversible move (see `fly`): each tile
+// fades in over its live widget, at the same pixel spot and looking like it,
+// so the canvas stands still while its widgets dim to blocks; then the
+// canvas pulls back into the accordion and, as it settles, its text washes
+// in. Closing runs back down the same path, ending with the tiles wiping
+// away over the real, already-mounted widgets. L turns it around at any
+// moment, from wherever it is. A dive flies the chosen sheet flat, then
+// hands over the same way.
+//
+// Text arrives and leaves as a wash, never all at once: per tile (--w, in
+// reading order) and per line, top line first, typed in a character at a
+// time behind a block cursor; it leaves by backspacing (layers.css).
 
 const T = {
-  preroll: 50,
-  intro: 480,
+  preroll: 70, // the tiles fade in over the widgets
+  intro: 480, // the pull-back, the whole way (shorter from part way)
+  outro: 420,
+  washIn: 260,
+  washOut: 110,
+  uncover: 120, // a reopen takes the wipe back
   dive: 440,
-  handover: 160,
+  handover: 200,
   fade: 120, // reduced motion: crossfades only
   hover: 70,
   snap: 140,
@@ -88,7 +102,7 @@ function slowFactor(): number {
   }
 }
 
-type Phase = 'preroll' | 'intro' | 'live' | 'dive' | 'outro' | 'handover' | 'gone'
+type Phase = 'fly' | 'live' | 'dive' | 'handover' | 'gone'
 
 type Rec = {
   sheet?: HTMLDivElement | null
@@ -98,17 +112,31 @@ type Rec = {
   world?: HTMLDivElement | null
   lab?: HTMLDivElement | null
   lead?: HTMLDivElement | null
+  ring?: HTMLDivElement | null
+  shadow?: HTMLDivElement | null
   /** the tiles, cached for the morph and the hand-over */
   tiles?: HTMLElement[] | null
   // last values written, so a frame touches only what changed
   txt?: number
   m?: number
   h?: number
+  w?: number
+  /** the content's opacity (it fades in over the canvas) */
+  x?: number
+  washing?: boolean
   open?: boolean
+  /** the accent edge and the shadow, as last written */
+  ringOp?: number
+  shadowOp?: number
+  /** the accent edge when a dive or close began, which it fades from */
+  ring0?: number
   surf?: number
   tz?: number
   labOpen?: boolean
   flying?: boolean
+  /** the label's last opacity, and what it was when a dive began */
+  lop?: number
+  lop0?: number
 }
 
 function camT(c: Camera): string {
@@ -185,7 +213,22 @@ export function LayerOverview() {
 
   // everything the loop shares; a ref, never state, so motion never re-renders
   const C = useRef({
-    phase: 'preroll' as Phase,
+    phase: 'fly' as Phase,
+    /** fly: +1 opening, −1 closing */
+    dir: 1 as 1 | -1,
+    /** fly: the open amount (0 the canvas, 1 the accordion), eased along a
+     *  decelerating segment from aFrom to aTo that restarts on a reversal */
+    a: 0,
+    aFrom: 0,
+    aTo: 0,
+    aT0: 0,
+    aDur: 0,
+    /** fly: the tiles' cover over the widgets, the closing wipe, the text wash */
+    x: 0,
+    H: 0,
+    w: 0,
+    /** the wash when a dive began, which it leaves from */
+    w0: 1,
     t0: 0,
     pos: curIdx,
     vel: 0,
@@ -220,8 +263,6 @@ export function LayerOverview() {
     cams: [] as Camera[],
     /** the accordion the intro opens to, or the outro closes from */
     acc: [] as Pose[],
-    /** the layer-you're-on sheet's camera when a close began */
-    outCam: null as Camera | null,
     diveTo: -1,
     diveCam: null as Camera | null,
     selectId: undefined as string | undefined,
@@ -230,6 +271,9 @@ export function LayerOverview() {
     /** handover: which sheet lands, and on what camera */
     landIdx: -1,
     landCam: null as Camera | null,
+    /** the header and footer's last opacity, and what it was when a dive began */
+    chrome: 0,
+    chrome0: 0,
     order: layers.map((l) => l.id).join(','),
   })
   const later = (fn: () => void, ms: number) => {
@@ -294,6 +338,13 @@ export function LayerOverview() {
     const c = C.current
     c.phase = p
     c.t0 = now
+    if (p === 'dive') {
+      // the chrome and labels fade out from where they are, so a dive taken
+      // during the opening doesn't flash them up first (a close needs no
+      // such care: it runs back down the opening's own path)
+      c.chrome0 = c.chrome
+      for (const r of recs.current.values()) r.lop0 = r.lop ?? 0
+    }
     const root = rootRef.current
     toggle(root, 'lo--live', p === 'live')
   }
@@ -335,24 +386,7 @@ export function LayerOverview() {
 
     // phase ends
     let el = (now - c.t0) / c.slow
-    if (c.phase === 'preroll' && el >= T.preroll) {
-      startIntro(now)
-      el = 0
-    }
-    if (c.phase === 'intro' && el >= T.intro) {
-      setPhase('live', now)
-      c.pos = c.target = c.here
-      c.vel = 0
-      useStore.getState().setLayerOverview('open')
-      el = 0
-    }
-    if (c.phase === 'outro' && el >= T.intro) {
-      commit()
-      c.landIdx = c.here
-      c.landCam = c.startCam
-      setPhase('handover', now)
-      el = 0
-    }
+    if (c.phase === 'fly' && fly(now, dt)) return
     if (c.phase === 'dive' && el >= T.dive) {
       commit()
       c.landIdx = c.diveTo
@@ -378,6 +412,10 @@ export function LayerOverview() {
     const cams: Array<Camera | null> = ls.map(() => null)
     const morph = ls.map(() => 0)
     const surf = ls.map(() => 1) // the sheet's own surface (0 = see-through)
+    const wash = ls.map(() => 1) // the text's wash (layers.css), per sheet
+    const cover = ls.map(() => 1) // the sheet's content fades in over the canvas
+    const ring = ls.map(() => 0) // the accent edge
+    const shadow = ls.map(() => 0.75)
     let hand = -1 // the hand-over's progress, on sheet `handIdx`
     let handIdx = -1
     let bgOp = 1
@@ -388,30 +426,18 @@ export function LayerOverview() {
     let glideT = 0
     // Tile text only while sheets hold their size: while one grows or shrinks
     // its text needs a new counter-scale every frame, and each one repaints
-    // the whole canvas-sized sheet. So it waits for the deck, and leaves early
-    // on a dive (the title bars carry the names in).
+    // the whole canvas-sized sheet. So it washes in as the deck settles, and
+    // washes out early on a dive (the title bars carry the names in).
     let textGate = 1
 
-    if (phase === 'preroll') {
-      textGate = 0
-      const u = clamp01(el / T.preroll)
-      for (let i = 0; i < N; i++) poses.push(ovFlat(i === c.here))
-      cams[c.here] = c.startCam
-      morph[c.here] = 1
-      hand = 1 - u
-      handIdx = c.here
-      surf[c.here] = 0
-      bgOp = 0
-      chromeOp = 0
-      labOp = 0
-      dist = ls.map((_, i) => i - c.here)
-    } else if (phase === 'intro') {
-      // One decelerating move, no swing: the canvas settles straight into the
-      // open sheet, and the other layers spread a short way out from behind
-      // it as they fade in, nearest first.
-      const t = clamp01(el / T.intro)
-      textGate = clamp01((t - 0.55) / 0.3)
-      const a = easeOut(clamp01(t / 0.85))
+    if (phase === 'fly') {
+      // One decelerating move, no swing, either way: the canvas settles
+      // straight into the open sheet and the other layers spread a short way
+      // out from behind it as they fade in, nearest first; back, the layer
+      // you're on settles flat and the rest draw in and fade.
+      const a = c.a
+      textGate = c.w > 0 ? 1 : 0
+      wash.fill(c.w)
       const home = c.acc[c.here]
       for (let i = 0; i < N; i++) {
         const to = c.acc[i]
@@ -424,46 +450,28 @@ export function LayerOverview() {
           continue
         }
         const d = i - c.here
-        const b = easeOut(clamp01((t - 0.08 - Math.min(Math.abs(d), 4) * 0.025) / 0.75))
+        const b = clamp01((a - 0.06 - Math.min(Math.abs(d), 4) * 0.03) / 0.75)
         const from = { ...to, y: lerp(home?.y ?? to.y, to.y, 0.6), z: to.z - 20 * L.zk, op: 0 }
         poses.push(mixPose(from, to, b))
       }
       cams[c.here] = lerpCam(c.startCam, fitOf(ls[c.here].id), a)
+      // the tiles fade in over the widgets, stand in for them in flight (the
+      // widget look giving way to the block), and wipe away over them at the
+      // end of a close
+      cover[c.here] = easeOut(c.x)
+      morph[c.here] = 1 - clamp01(a / 0.7)
+      hand = c.H
+      handIdx = c.here
       // the sheet's own surface fades in as it leaves the canvas
-      surf[c.here] = clamp01(t / 0.2)
-      morph[c.here] = 1 - easeOut(clamp01(t / 0.25))
-      chromeOp = clamp01((t - 0.2) / 0.4)
-      labOp = clamp01((t - 0.4) / 0.45)
-      dist = ls.map((_, i) => i - c.here)
-    } else if (phase === 'outro') {
-      // Back onto the canvas, also decelerating, from wherever the sheets
-      // are: the layer you're on settles flat, the rest draw in and fade.
-      // The live canvas repaints now, under the still-covering overview,
-      // rather than as the motion lands.
-      commit()
-      const t = clamp01(el / T.intro)
-      textGate = 1 - clamp01(t / 0.2)
-      const a = easeOut(clamp01(t / 0.85))
-      const home = c.acc[c.here]
-      for (let i = 0; i < N; i++) {
-        const from = c.acc[i]
-        if (!from) {
-          poses.push(ovFlat(false))
-          continue
-        }
-        if (i === c.here) {
-          poses.push(mixPose(from, ovFlat(true), a))
-          continue
-        }
-        const to = { ...from, y: lerp(home?.y ?? from.y, from.y, 0.6), z: from.z - 20 * L.zk, op: 0 }
-        poses.push(mixPose(from, to, easeOut(clamp01(t / 0.55))))
-      }
-      cams[c.here] = lerpCam(c.outCam ?? fitOf(ls[c.here].id), c.startCam, a)
-      surf[c.here] = 1 - clamp01((t - 0.75) / 0.25)
-      morph[c.here] = easeOut(clamp01((t - 0.55) / 0.45))
-      chromeOp = 1 - clamp01(t / 0.35)
-      labOp = 1 - clamp01(t / 0.25)
-      dist = ls.map((_, i) => i - c.here)
+      surf[c.here] = clamp01(a / 0.5)
+      for (let i = 0; i < N; i++) ring[i] = (rec(ls[i].id).ring0 ?? 0) * clamp01((a - 0.7) / 0.3)
+      shadow[c.here] = 0.75 * clamp01(a / 0.4) + 0.25 * ring[c.here]
+      // the backdrop is the canvas's own grid: it drops in once the tiles
+      // cover the widgets, and fades as they wipe away
+      bgOp = c.H > 0 ? 1 - clamp01(c.H / 0.35) : a > 0 || c.x >= 1 ? 1 : 0
+      chromeOp = clamp01((a - 0.3) / 0.5)
+      labOp = clamp01((a - 0.5) / 0.45)
+      dist = ls.map((_, i) => i - c.pos)
     } else if (phase === 'live') {
       let moving = false
       if (c.reduced) {
@@ -495,13 +503,22 @@ export function LayerOverview() {
         if (k >= 1) c.born.delete(id)
       }
       dist = at.map((e) => e - c.pos)
+      // the open sheet's edge and deeper shadow: switched as a roll passes
+      // (they share the sheet's own layer, so a fade would repaint it every
+      // frame); they fade only as the overview opens, closes or dives
+      for (let i = 0; i < N; i++) {
+        ring[i] = Math.abs(dist[i]) < 0.5 ? 1 : 0
+        shadow[i] = 0.75 + 0.25 * ring[i]
+      }
       more = moving || c.off.size > 0 || c.born.size > 0 || c.sNow !== L0.s
     } else if (phase === 'dive') {
       // The overview still covers the canvas: switch layer at once, so the
       // real widgets do their one heavy repaint now, not as the sheet lands.
       commit()
       const t = clamp01(el / T.dive)
-      textGate = 1 - clamp01(t / 0.3)
+      const w = c.w0 * (1 - easeOut(clamp01(t / 0.22)))
+      textGate = w > 0 ? 1 : 0
+      wash.fill(w)
       const j = c.diveTo
       // no lift and no swing: the sheet eases flat onto the canvas, the rest
       // drift a little and fade
@@ -517,13 +534,15 @@ export function LayerOverview() {
         const away = { ...start, y: start.y - Math.sign(d) * 60, z: start.z - 40 * L.zk, op: 0 }
         poses.push(mixPose(start, away, easeOut(clamp01(t / 0.5))))
       }
-      morph[j] = easeOut(clamp01((t - 0.45) / 0.5))
+      morph[j] = easeOut(clamp01((t - 0.42) / 0.45))
       // and the sheet becomes the canvas as it lands
       surf[j] = 1 - clamp01((t - 0.8) / 0.2)
-      chromeOp = 1 - clamp01(t / 0.4)
-      labOp = (1 - clamp01(t / 0.3)) * 0.9
+      fadeRings(ring, t)
+      shadow[j] = (1 - clamp01((t - 0.3) / 0.5)) * (0.75 + 0.25 * ring[j])
+      chromeOp = c.chrome0 * (1 - clamp01(t / 0.4))
+      labOp = 1 - clamp01(t / 0.3) // of each label's opacity when the dive began
       glideIdx = j
-      glideT = easeOut(t)
+      glideT = f // the dived layer's name travels with its sheet
       dist = ls.map((_, i) => i - j)
     } else if (phase === 'handover') {
       textGate = 0
@@ -534,6 +553,7 @@ export function LayerOverview() {
         cams[j] = c.landCam
         morph[j] = 1
         surf[j] = 0
+        shadow[j] = 0
       }
       hand = u
       handIdx = j
@@ -554,7 +574,9 @@ export function LayerOverview() {
       r.sheet.style.opacity = p.op.toFixed(3)
       const d = dist[i] ?? 0
       r.sheet.style.zIndex = String(
-        (phase === 'dive' && i === c.diveTo) || ((phase === 'preroll' || phase === 'handover') && i === handIdx)
+        (phase === 'dive' && i === c.diveTo) ||
+          (phase === 'handover' && i === handIdx) ||
+          (phase === 'fly' && i === c.here && c.a < 0.05)
           ? 200
           : 100 - Math.round(Math.abs(d) * 10),
       )
@@ -570,6 +592,16 @@ export function LayerOverview() {
       if (r.open !== open) {
         r.open = open
         toggle(r.sheet, 'is-open', open)
+      }
+      const rg = Math.round(ring[i] * 50) / 50
+      if (r.ringOp !== rg && r.ring) {
+        r.ringOp = rg
+        r.ring.style.opacity = String(rg)
+      }
+      const sh = Math.round(shadow[i] * 50) / 50
+      if (r.shadowOp !== sh && r.shadow) {
+        r.shadowOp = sh
+        r.shadow.style.opacity = String(sh)
       }
       if (r.surf !== surf[i]) {
         r.surf = surf[i]
@@ -600,13 +632,26 @@ export function LayerOverview() {
         r.world.style.setProperty('--tz', String(tz))
       }
       lastCams[i] = cam ?? fitOf(id)
-      applyTiles(r, morph[i], i === handIdx ? hand : 0)
+      // the clips and the cursor exist only while this sheet's text washes
+      const washing = wash[i] > 0 && wash[i] < 1 && (r.txt ?? 0) > 0
+      if (r.washing !== washing) {
+        r.washing = washing
+        toggle(r.sheet, 'is-washing', washing)
+      }
+      // one opacity on the content's layer, not one per tile
+      const cv = Math.round(cover[i] * 100) / 100
+      if (r.x !== cv && r.world) {
+        r.x = cv
+        r.world.style.opacity = cv < 1 ? String(cv) : ''
+      }
+      applyTiles(r, morph[i], i === handIdx && hand > 0 ? hand : 0, wash[i])
     }
     c.poses = poses
     c.cams = lastCams
 
     // ---- the backdrop and the chrome ----
     if (bgRef.current) bgRef.current.style.opacity = bgOp.toFixed(3)
+    c.chrome = chromeOp
     for (const node of [headRef.current, footRef.current]) if (node) node.style.opacity = chromeOp.toFixed(3)
 
     // ---- the rail: flat labels pushed apart, a leader to each sheet ----
@@ -614,33 +659,43 @@ export function LayerOverview() {
 
     if (more) kick()
   }
+  /** A dive or close: every accent edge fades from where it was. */
+  const fadeRings = (ring: number[], t: number) => {
+    const k = 1 - easeOut(clamp01(t / 0.3))
+    live.current.layers.forEach((l, i) => (ring[i] = (rec(l.id).ring0 ?? 0) * k))
+  }
+  const holdRings = () => {
+    for (const r of recs.current.values()) r.ring0 = r.ringOp ?? 0
+  }
   const frameRef = useRef(frame)
   frameRef.current = frame
 
-  /** Blocks → widgets (--m), and the hand-over wipe (--h), in reading order. */
-  const applyTiles = (r: Rec, m: number, h: number) => {
+  /** Blocks → widgets (--m), the hand-over wipe (--h) and the text's wash
+   *  (--w), each in reading order. */
+  const applyTiles = (r: Rec, m: number, h: number, w: number) => {
     // re-query after a render (tiles may have mounted); tiles that just
-    // mounted already rest at 0, so a sheet at rest needs no writes
-    if (r.m === m && r.h === h && (r.tiles || (m === 0 && h === 0))) return
+    // mounted already rest (m 0, h 0, w 1), so a sheet at rest needs no writes
+    const rest = m === 0 && h === 0 && w === 1
+    if (r.m === m && r.h === h && r.w === w && (r.tiles || rest)) return
     const root = r.world
     if (!root) return
     const fresh = !r.tiles
     const tiles = (r.tiles ??= Array.from(root.querySelectorAll<HTMLElement>('.pt')))
     const cnt = tiles.length
     const spread = 0.35
-    const each = (v: number, ord: number) =>
-      v <= 0 ? 0 : v >= 1 ? 1 : clamp01((v - (ord / Math.max(1, cnt - 1)) * spread) / (1 - spread))
+    const each = (v: number, ord: number, k = spread) =>
+      v <= 0 ? 0 : v >= 1 ? 1 : clamp01((v - (ord / Math.max(1, cnt - 1)) * k) / (1 - k))
     for (const tile of tiles) {
       const ord = Number(tile.dataset.ord) || 0
-      if (fresh || r.m !== m) {
-        const mi = each(m, ord)
-        tile.style.setProperty('--m', mi.toFixed(3))
-        tile.classList.toggle('is-real', mi > 0.5)
-      }
-      if (fresh || r.h !== h) tile.style.setProperty('--h', each(h, ord).toFixed(3))
+      if (fresh || r.m !== m) tile.style.setProperty('--m', each(m, ord).toFixed(3))
+      // each widget fills in quickly, then settles: eased per tile
+      if (fresh || r.h !== h) tile.style.setProperty('--h', easeOut(each(h, ord)).toFixed(3))
+      // the wash runs down the sheet in reading order
+      if (fresh || r.w !== w) tile.style.setProperty('--w', each(w, ord, 0.4).toFixed(3))
     }
     r.m = m
     r.h = h
+    r.w = w
   }
 
   const placeLabels = (
@@ -656,16 +711,19 @@ export function LayerOverview() {
     const ls = live.current.layers
     const x0 = OV.RAIL_X + c.railW + 4
     if (phase === 'dive') {
-      // the dived layer's name glides to the layer chip; the rest fade
+      // the dived layer's name glides toward the layer chip, on the sheet's
+      // own easing, and is gone a little before the sheet lands; the rest
+      // (and every leader) fade sooner
       ls.forEach((l, i) => {
         const r = rec(l.id)
         if (!r.lab) return
+        const op0 = r.lop0 ?? 0
         if (i === glideIdx) {
           const y = c.labY.get(l.id) ?? 0
           r.lab.style.transform = `translate3d(${c.glide.dx * glideT}px, ${y + c.glide.dy * glideT}px, 0) translateY(-50%)`
-          r.lab.style.opacity = String(1 - clamp01((glideT - 0.75) / 0.25))
-        } else r.lab.style.opacity = labOp.toFixed(3)
-        if (r.lead) r.lead.style.opacity = (i === glideIdx ? 0 : labOp).toFixed(3)
+          r.lab.style.opacity = (op0 * (1 - clamp01((glideT - 0.4) / 0.5))).toFixed(3)
+        } else r.lab.style.opacity = (op0 * labOp).toFixed(3)
+        if (r.lead) r.lead.style.opacity = (op0 * labOp).toFixed(3)
       })
       return
     }
@@ -692,8 +750,9 @@ export function LayerOverview() {
       c.labY.set(m.id, y)
       const { lab, lead } = m.r
       // labels fade in as their sheet settles: nearest first during the opening
-      const stagger = phase === 'intro' ? clamp01(labOp * 1.6 - Math.abs(m.d) * 0.15) : labOp
+      const stagger = phase === 'fly' ? clamp01(labOp * 1.6 - Math.abs(m.d) * 0.15) : labOp
       const op = stagger * Math.max(0.35, 1 - Math.abs(m.d) * 0.18)
+      m.r.lop = op
       if (lab) {
         lab.style.transform = `translate3d(0, ${y.toFixed(1)}px, 0) translateY(-50%)`
         lab.style.opacity = op.toFixed(3)
@@ -708,13 +767,52 @@ export function LayerOverview() {
     })
   }
 
-  const startIntro = (now: number) => {
+  /** One frame of opening or closing. The open amount heads for 1 or 0
+   *  along a decelerating segment, restarted from where it is whenever L
+   *  turns it around; the tiles' cover, the closing wipe and the text wash
+   *  each step toward where `dir` says, in order: cover the widgets, then
+   *  pull back, then the text; back, the text, the flight, then the wipe.
+   *  Returns true once closed (the overview unmounts). */
+  const fly = (now: number, dt: number): boolean => {
     const c = C.current
-    const ls = live.current.layers
-    const L = c.L!
-    setPhase('intro', now)
-    // the accordion it opens to
-    c.acc = ovPoses(L, ls.map((_, i) => i), c.here)
+    const ms = dt * 1000
+    if (c.dir > 0) {
+      if (c.H > 0) c.H = Math.max(0, c.H - ms / T.uncover)
+      else if (c.x < 1) c.x = Math.min(1, c.x + ms / T.preroll)
+      if (c.x >= 1 && c.H <= 0 && c.aTo !== 1) aimA(1, now)
+    } else {
+      if (c.aTo !== 0) aimA(0, now)
+      // flat on the canvas again: the tiles give way to the real widgets
+      // (a close that never finished covering them just fades them back)
+      if (c.a <= 0) {
+        if (c.H > 0 || c.x >= 1) c.H = Math.min(1, c.H + ms / T.handover)
+        else c.x = Math.max(0, c.x - ms / T.preroll)
+      }
+    }
+    const k = c.aDur > 0 ? clamp01((now - c.aT0) / c.slow / c.aDur) : 1
+    c.a = lerp(c.aFrom, c.aTo, easeOut(k))
+    // the text washes in once the deck has nearly settled, and out at once
+    const wTo = c.dir > 0 && c.a > 0.8 ? 1 : 0
+    c.w = wTo > c.w ? Math.min(1, c.w + ms / T.washIn) : Math.max(0, c.w - ms / T.washOut)
+    if (c.dir > 0 && c.aTo === 1 && k >= 1 && c.w >= 1) {
+      setPhase('live', now)
+      c.vel = 0
+      useStore.getState().setLayerOverview('open')
+    } else if (c.dir < 0 && (c.H >= 1 || (c.x <= 0 && c.a <= 0))) {
+      setPhase('gone', now)
+      useStore.getState().setLayerOverview(false)
+      return true
+    }
+    return false
+  }
+  /** Start the open amount toward `to` from where it is: a whole move takes
+   *  the full time, a part of one proportionally less (but never snaps). */
+  const aimA = (to: number, now: number) => {
+    const c = C.current
+    c.aFrom = c.a
+    c.aTo = to
+    c.aT0 = now
+    c.aDur = (to > c.a ? T.intro : T.outro) * Math.max(0.4, Math.abs(to - c.a))
   }
 
   // ---------- actions ----------
@@ -744,7 +842,9 @@ export function LayerOverview() {
     later(() => useStore.getState().setLayerOverview(false), T.fade)
   }
 
-  /** Esc / L / the backdrop: the opening, backwards, onto the layer you're on. */
+  /** Esc / L / the backdrop: the opening, backwards, onto the layer you're
+   *  on, from wherever it has got to. The live canvas repaints now, under
+   *  the still-covering overview, rather than as the motion lands. */
   const close = () => {
     const c = C.current
     const L = live.current
@@ -752,34 +852,52 @@ export function LayerOverview() {
       if (c.phase === 'live') fadeOut()
       return
     }
-    const now = performance.now()
-    if (c.phase === 'intro') {
-      // close from wherever the opening has got to
-      c.acc = c.poses.map((p) => ({ ...p }))
-      c.outCam = c.cams[c.here] ?? null
-      c.committed = false
-      setPhase('outro', now)
+    if (c.phase === 'fly') {
+      if (c.dir < 0) return
+      c.dir = -1
+      commit()
       kick()
       return
     }
     if (c.phase !== 'live') return
+    const now = performance.now()
     // the layer you're on may have changed (its layer removed)
     c.here = L.curIdx
     c.startCam = L.ws.camera
+    // the accordion as it stands (rolled or not) is where it closes from
     c.acc = c.poses.map((p) => ({ ...p }))
-    c.outCam = c.cams[c.here] ?? null
+    c.a = c.aFrom = c.aTo = 1
+    c.aDur = 0
+    c.x = 1
+    c.H = 0
+    c.w = 1
     c.diveTo = -1
     c.committed = false
     window.clearTimeout(c.hoverT)
-    setPhase('outro', now)
-    sampleTransition('close', T.intro + T.handover)
+    holdRings()
+    c.dir = -1
+    setPhase('fly', now)
+    commit()
+    sampleTransition('close', T.outro + T.handover)
     kick()
   }
+
+  /** L while closing: back out to the overview, from wherever it is. */
+  const reopen = () => {
+    const c = C.current
+    if (c.phase !== 'fly' || c.dir > 0) return
+    c.dir = 1
+    c.committed = false
+    kick()
+  }
+  const flip = () => (C.current.phase === 'fly' && C.current.dir < 0 ? reopen() : close())
 
   /** Dive into layer j (and select one of its widgets). */
   const dive = (j: number, selectId?: string) => {
     const c = C.current
-    if (c.phase !== 'live' && c.phase !== 'intro') return
+    // from the accordion, or an opening that has the widgets covered
+    const flying = c.phase === 'fly' && c.dir > 0 && c.x >= 1 && c.H <= 0 && c.a > 0
+    if (c.phase !== 'live' && !flying) return
     const L = live.current
     j = Math.max(0, Math.min(L.n - 1, j))
     const target = L.layers[j].id
@@ -789,6 +907,7 @@ export function LayerOverview() {
     c.diveCam = cam
     c.selectId = selectId
     c.committed = false
+    c.w0 = c.phase === 'live' ? 1 : c.w
     window.clearTimeout(c.hoverT)
     if (c.reduced) {
       commit()
@@ -803,6 +922,7 @@ export function LayerOverview() {
       const b = chip.getBoundingClientRect()
       c.glide = { dx: b.left - a.left, dy: b.top + b.height / 2 - (a.top + a.height / 2) }
     } else c.glide = { dx: 0, dy: -40 }
+    holdRings()
     setPhase('dive')
     sampleTransition('dive', T.dive + T.handover)
     kick()
@@ -895,8 +1015,10 @@ export function LayerOverview() {
       return
     }
     // frame 0: your sheet sits exactly over the live canvas, see-through, so
-    // the live widgets show; then the tiles cover them, bottom up
-    setPhase('preroll', commitAt)
+    // the live widgets show; then the tiles fade in over them
+    c.acc = ovPoses(c.L!, live.current.layers.map((_, i) => i), c.here)
+    for (const l of live.current.layers) rec(l.id).ring0 = l.id === live.current.curId ? 1 : 0
+    setPhase('fly', commitAt)
     c.last = commitAt
     frame(commitAt)
     kick()
@@ -923,7 +1045,7 @@ export function LayerOverview() {
   // and new tiles may have mounted, so the next frame re-applies everything
   useLayoutEffect(() => {
     for (const r of recs.current.values()) {
-      r.open = r.labOpen = r.surf = undefined
+      r.open = r.labOpen = r.surf = r.washing = undefined
       r.tiles = null
     }
     C.current.labH.clear()
@@ -991,8 +1113,8 @@ export function LayerOverview() {
   }, [order])
 
   // ---------- input: keys, wheel, pointer, resize ----------
-  const live = useRef({ dive, go, close, newLayer, toggleView, reorder, remove, curIdx, curId, n, layers, ws, byLayer, setRenaming, setQuery })
-  live.current = { dive, go, close, newLayer, toggleView, reorder, remove, curIdx, curId, n, layers, ws, byLayer, setRenaming, setQuery }
+  const live = useRef({ dive, go, close, flip, newLayer, toggleView, reorder, remove, curIdx, curId, n, layers, ws, byLayer, setRenaming, setQuery })
+  live.current = { dive, go, close, flip, newLayer, toggleView, reorder, remove, curIdx, curId, n, layers, ws, byLayer, setRenaming, setQuery }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1009,7 +1131,9 @@ export function LayerOverview() {
       if (e.ctrlKey && e.metaKey && e.code === 'ArrowDown') return done(), Lv.dive(at)
       if (e.metaKey || e.ctrlKey || e.altKey) return
       if (k === '/' && c.phase === 'live') return done(), Lv.setQuery('')
-      if (k === 'Escape' || k === 'l' || k === 'L') return done(), Lv.close()
+      if (k === 'Escape') return done(), Lv.close()
+      // L turns the move around at any moment: tap it fast, in and out
+      if (k === 'l' || k === 'L') return done(), Lv.flip()
       if (/^[1-9]$/.test(k)) {
         done()
         if (+k <= Lv.n) Lv.dive(+k - 1)
@@ -1227,6 +1351,7 @@ export function LayerOverview() {
             onPointerDown={(e) => onSheetDown(i, e)}
             onClick={(e) => onSheetClick(i, e)}
           >
+            <div className="lo-shadow" ref={(node) => void (rec(l.id).shadow = node)} />
             <div className="lo-base" ref={(node) => void (rec(l.id).base = node)} />
             <div className="lo-face" ref={(node) => void (rec(l.id).face = node)}>
               <div className="lo-glass" ref={(node) => void (rec(l.id).glass = node)} />
@@ -1242,6 +1367,7 @@ export function LayerOverview() {
                 )}
               </div>
             </div>
+            <div className="lo-ring" ref={(node) => void (rec(l.id).ring = node)} />
             <div className="lo-attn" />
           </div>
         ))}

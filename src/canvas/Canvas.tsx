@@ -40,7 +40,7 @@ import {
 } from '../ui/ContextMenu'
 import { IconExternal, IconLayers } from '../ui/icons'
 import { FocusStrip } from '../ui/FocusStrip'
-import { focusBox } from '../lib/view'
+import { focusBox, viewCenter } from '../lib/view'
 import { ElementView } from './ElementView'
 import { TextElement } from './TextElement'
 import {
@@ -98,6 +98,7 @@ const QUICK_COMMANDS: QuickCommand[] = [
   { name: 'diff', target: 'diff', desc: 'git panel', aliases: ['git'] },
   { name: 'editor', target: 'editor', desc: 'file editor', aliases: ['edit', 'code'] },
   { name: 'note', target: 'note', desc: 'markdown note', aliases: ['md', 'markdown'] },
+  { name: 'music', target: 'nowplaying', desc: 'now playing', aliases: ['nowplaying', 'spotify', 'song'] },
 ]
 
 // every trigger word (canonical + aliases) → target
@@ -567,6 +568,39 @@ export function Canvas() {
     // capture phase so we can intercept before the widget when zooming
     node.addEventListener('wheel', onWheel, { passive: false, capture: true })
     return () => node.removeEventListener('wheel', onWheel, { capture: true })
+  }, [scheduleCamera])
+
+  // ---- wheel over the app's bars (tabs, toolbar, hud): zoom the canvas ----
+  // Nothing there scrolls up and down, so a vertical two-finger scroll (or a
+  // pinch) zooms around the middle of the view, the way ⌘-scroll does on the
+  // canvas. Anything in the bars that can scroll that way keeps the gesture.
+  useEffect(() => {
+    const onChromeWheel = (e: WheelEvent) => {
+      const t = e.target as Element | null
+      const bar = t?.closest?.('.topbar, .toolbar, .hud, .selbar, .attn')
+      if (!bar || rootRef.current?.contains(t)) return
+      const st = useStore.getState()
+      if (st.spread || st.focus || st.layerOverview) return
+      let dx = e.deltaX
+      let dy = e.deltaY
+      if (e.deltaMode === 1) {
+        dx *= 16
+        dy *= 16
+      } else if (e.deltaMode === 2) {
+        dx *= window.innerWidth
+        dy *= window.innerHeight
+      }
+      if (!e.ctrlKey && !e.metaKey && Math.abs(dx) > Math.abs(dy)) return
+      for (let n: Element | null = t; n && n !== bar.parentElement; n = n.parentElement) {
+        if (canScroll(n, 0, dy)) return
+      }
+      e.preventDefault()
+      const live = pendingCam.current ?? selectActive(st).camera
+      const factor = Math.exp(-clamp(dy, -100, 100) * 0.0017)
+      scheduleCamera(zoomAt(live, viewCenter(), live.zoom * factor))
+    }
+    window.addEventListener('wheel', onChromeWheel, { passive: false })
+    return () => window.removeEventListener('wheel', onChromeWheel)
   }, [scheduleCamera])
 
   // topmost vector under a world point (text/images/frames/widgets self-pick)

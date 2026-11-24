@@ -118,6 +118,7 @@ const WIDGET_SIZE: Record<WidgetKind, { w: number; h: number }> = {
   video: { w: 560, h: 380 },
   mediainfo: { w: 340, h: 440 },
   claude: { w: 1120, h: 720 },
+  nowplaying: { w: 420, h: 170 },
 }
 const WIDGET_TITLE: Record<WidgetKind, string> = {
   terminal: 'terminal',
@@ -141,6 +142,7 @@ const WIDGET_TITLE: Record<WidgetKind, string> = {
   video: 'video',
   mediainfo: 'media info',
   claude: 'claude workspace',
+  nowplaying: 'Now playing',
 }
 
 /** Expand a set of ids to include every sibling sharing a groupId. */
