@@ -6,6 +6,7 @@ import {
   track,
   wheelDelta,
   zoomFactor,
+  SWIPE_GAIN,
   type Gesture,
   type Tracked,
   type WheelInput,
@@ -19,10 +20,10 @@ const g = (region: Gesture['region'], axis: Gesture['axis'], sideToCanvas = fals
 })
 
 describe('axisOf', () => {
-  it('needs a nearly straight swipe (within about 18°) to call it up/down', () => {
+  it('needs a nearly straight swipe (within about 22°) to call it up/down', () => {
     expect(axisOf(0, -12)).toBe('y')
-    expect(axisOf(5, 20)).toBe('y')
-    expect(axisOf(8, 20)).toBe('xy')
+    expect(axisOf(8, 20)).toBe('y')
+    expect(axisOf(10, 20)).toBe('xy')
     expect(axisOf(30, 4)).toBe('x')
     expect(axisOf(30, 25)).toBe('xy')
     expect(axisOf(0, 0)).toBe('xy')
@@ -78,11 +79,19 @@ describe('track', () => {
     expect(run([ev(0, 0, 20), ev(20, 0, 20, { x: 140 })], ['canvas', 'zoom'])[1].region).toBe('zoom')
     expect(run([ev(0, 0, 20), ev(20, 0, 2, { pinch: true })], ['canvas', 'zoom'])[1].region).toBe('zoom')
   })
-  it('turns a zoom into a pan when the fingers drift sideways, never back', () => {
-    const gs = run([ev(0, 0, -20), ev(10, 8, -10), ev(20, 8, -10), ev(30, 0, -20)])
+  it('turns a zoom into a pan when the fingers drift well sideways, never back', () => {
+    const gs = run([ev(0, 0, -20), ev(10, 15, -15), ev(20, 15, -15), ev(30, 15, -15), ev(40, 0, -20)])
     expect(gs[0].axis).toBe('y')
-    expect(gs[2].axis).toBe('xy')
     expect(gs[3].axis).toBe('xy')
+    expect(gs[4].axis).toBe('xy')
+  })
+  it('keeps zooming through the small wobble of a straight swipe', () => {
+    const gs = run([ev(0, 0, -20), ev(10, 4, -12), ev(20, -3, -12), ev(30, 5, -12), ev(40, 2, -12)])
+    expect(gs.map((g) => g.axis)).toEqual(['y', 'y', 'y', 'y', 'y'])
+  })
+  it('pans a fast fling even when it is straight up/down', () => {
+    expect(run([ev(0, 1, -40)])[0].axis).toBe('xy')
+    expect(run([ev(0, 0, -10), ev(8, 1, -12)])[1].axis).toBe('y')
   })
   it('zooms straight away on a mouse wheel notch', () => {
     expect(run([ev(0, 0, 4.000244140625, { mouse: true })])[0].axis).toBe('y')
@@ -94,7 +103,7 @@ describe('decide', () => {
     expect(decide(g('canvas', 'y'), 5, 12, false)).toEqual({ do: 'pan', dx: 5, dy: 12 })
   })
   it('zooms on a surface that does not scroll', () => {
-    expect(decide(g('zoom', 'y'), 1, -20, false)).toEqual({ do: 'zoom', dy: -20 })
+    expect(decide(g('zoom', 'y'), 1, -20, false)).toEqual({ do: 'zoom', dy: -20 * SWIPE_GAIN })
   })
   it('pans a diagonal swipe on a zoom surface the way the fingers move', () => {
     expect(decide(g('zoom', 'xy'), 12, -14, false)).toEqual({ do: 'pan', dx: 12, dy: -14 })

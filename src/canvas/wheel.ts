@@ -9,9 +9,9 @@
 //   canvas    the board itself: scrolling pans, a pinch (or ⌘-scroll) zooms.
 //   zoom      a surface that doesn't scroll: the app's bars, widget title bars,
 //             a widget you haven't clicked into (WidgetFrame locks its body),
-//             Now playing. Straight up/down zooms the canvas around the
-//             pointer; a diagonal or sideways swipe pans it the way the
-//             fingers move (sideways only scrolls something under the pointer
+//             Now playing. A steady, straight up/down swipe zooms the canvas
+//             around the pointer; a fast fling or a diagonal or sideways
+//             swipe pans it the way the fingers move (sideways only scrolls something under the pointer
 //             that scrolls that way, like the tab strip).
 //   content   something that scrolls itself: xterm, Monaco, the plot. It gets
 //             the wheel; a sideways swipe it can't follow pans the canvas; a
@@ -64,16 +64,21 @@ const AXIS_MIN = 16
 /** … or this long after it starts, whatever has arrived by then */
 const HOLD_MS = 60
 /** a zoom turns into a pan once it has moved this far since deciding … */
-const DRIFT_MIN = 24
-/** … with sideways movement past this share of the vertical */
-const DRIFT_RATIO = 0.4
+const DRIFT_MIN = 40
+/** … with sideways movement past this share of the vertical (about 37°) */
+const DRIFT_RATIO = 0.75
+/** a swipe moving this many px per event when its direction is read is a
+ *  fling across the board, so it pans even if it's straight up/down */
+const FAST_PER_EVENT = 24
+/** a straight swipe on a zoom surface zooms this much more than ⌘-scroll */
+export const SWIPE_GAIN = 1.4
 
-/** The direction of a movement: 'y' within about 18° of straight up/down,
+/** The direction of a movement: 'y' within about 22° of straight up/down,
  *  'x' within about 34° of sideways, 'xy' between (and for no movement). */
 export function axisOf(dx: number, dy: number): 'x' | 'y' | 'xy' {
   const ax = Math.abs(dx)
   const ay = Math.abs(dy)
-  if (ay > 0 && ay >= ax * 3) return 'y'
+  if (ay > 0 && ay >= ax * 2.4) return 'y'
   if (ax > ay * 1.5) return 'x'
   return 'xy'
 }
@@ -107,9 +112,10 @@ export type Tracked = Gesture & {
   x: number
   y: number
   pinch: boolean
-  /** movement summed while the direction is undecided */
+  /** movement summed, and events counted, while the direction is undecided */
   sx: number
   sy: number
+  n: number
   /** movement since the direction was decided, for the zoom-to-pan fallback */
   ddx: number
   ddy: number
@@ -142,6 +148,7 @@ export function track(
         pinch: ev.pinch,
         sx: 0,
         sy: 0,
+        n: 0,
         ddx: 0,
         ddy: 0,
       }
@@ -149,8 +156,14 @@ export function track(
   if (g.axis === null) {
     g.sx += ev.dx
     g.sy += ev.dy
+    g.n++
+    const dist = Math.hypot(g.sx, g.sy)
     if (ev.mouse) g.axis = 'y'
-    else if (Math.hypot(g.sx, g.sy) >= AXIS_MIN || ev.t - g.t0 >= HOLD_MS) g.axis = axisOf(g.sx, g.sy)
+    else if (dist >= AXIS_MIN || ev.t - g.t0 >= HOLD_MS) {
+      g.axis = axisOf(g.sx, g.sy)
+      // a fast swipe is a fling across the board, never a zoom
+      if (g.axis === 'y' && dist / g.n >= FAST_PER_EVENT) g.axis = 'xy'
+    }
     if (g.axis === 'x') g.sideToCanvas = !sideScrolls(g.sx)
   } else if (g.axis === 'y' && !ev.mouse) {
     g.ddx += ev.dx
@@ -169,7 +182,7 @@ export function decide(g: Gesture, dx: number, dy: number, pinch: boolean): Whee
       return { do: 'pan', dx, dy }
     case 'zoom':
       if (g.axis === null) return { do: 'hold' }
-      if (g.axis === 'y') return { do: 'zoom', dy }
+      if (g.axis === 'y') return { do: 'zoom', dy: dy * SWIPE_GAIN }
       if (g.axis === 'xy') return { do: 'pan', dx, dy }
       return g.sideToCanvas ? { do: 'pan', dx, dy: 0 } : { do: 'native' }
     case 'content':
@@ -264,7 +277,7 @@ export function routeWheel(e: WheelEvent, page: { w: number; h: number }): Wheel
   current = track(
     current,
     {
-      t: e.timeStamp,
+      t: e.timeStamp || performance.now(),
       x: e.clientX,
       y: e.clientY,
       dx,
