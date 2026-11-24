@@ -1390,13 +1390,18 @@ export function Canvas() {
   const spreadCards = new Map<string, SpreadCard>()
   if (spread && spreadStack) {
     const f = spreadStack.front
-    const rects = spreadRects(spreadStack.members.length, viewW, viewH, f.w / Math.max(1, f.h))
+    const n = spreadStack.members.length
+    const aspect = f.w / Math.max(1, f.h)
+    const rects = spreadRects(n, viewW, viewH, aspect)
     // while a card is dragged the others show where they'd go; the dragged
-    // card keeps its own slot and is moved from there by the pointer
-    const slots = previewSlots(spreadStack.members.map((m) => m.id), spread.drag)
+    // card keeps its own slot and is moved from there by the pointer. One
+    // being pulled out leaves the rest to close up as a spread of their own.
+    const drag = spread.drag
+    const slots = previewSlots(spreadStack.members.map((m) => m.id), drag)
+    const rest = drag && drag.to == null ? spreadRects(n - 1, viewW, viewH, aspect) : rects
     spreadStack.members.forEach((m, i) => {
       const at = slots.get(m.id)!
-      const r = rects[at.base]
+      const r = m.id === drag?.id ? rects[at.base] : rest[at.base]
       spreadCards.set(m.id, {
         tx: (r.x - cam.x) / cam.zoom - m.x,
         ty: (r.y - cam.y) / cam.zoom - m.y,
@@ -1546,7 +1551,9 @@ export function Canvas() {
             )}
             {isActiveTab && spreadStack && (
               <div
-                className={`stack-scrim${spread?.closing ? ' stack-scrim--closing' : ''}`}
+                className={`stack-scrim${spread?.closing ? ' stack-scrim--closing' : ''}${
+                  spread?.drag && spread.drag.to == null ? ' stack-scrim--pull' : ''
+                }`}
                 style={{
                   left: -cam.x / cam.zoom,
                   top: -cam.y / cam.zoom,

@@ -280,8 +280,8 @@ export type SpreadState = {
   hi: number
   /** true while the cards fly back into the stack before the view closes */
   closing: boolean
-  /** a card being dragged and the slot it would take. Only a preview; the
-   *  order changes on release. */
+  /** a card being dragged: the slot it would take, or null while it is being
+   *  pulled out of the stack. Only a preview; the order changes on release. */
   drag?: { id: string; to: number | null }
 }
 

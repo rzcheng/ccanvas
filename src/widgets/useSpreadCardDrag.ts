@@ -1,40 +1,77 @@
 // Dragging a card in a stack's spread view.
 //
 // A click on a card focuses it. A drag picks it up: the card follows the
-// pointer and the others slide to show where it would go.
+// pointer and the others slide to show where it would go. Drag it well off the
+// grid and it turns into a pull-out: it lifts off (shrinks a little), the rest
+// close up and the board brightens; let go there and the widget leaves the
+// stack, landing on the canvas under the pointer at its own size, while the
+// spread closes. Drag it back over the grid first and it is a reorder again.
 //
 // The slots are measured once, at the start; until the card is let go the new
 // order is only a preview in the store (`spread.drag`), so no card ever moves
 // under the pointer mid-drag. The geometry lives in lib/spreadDrag.ts.
 //
-// Motion is transforms only: the dragged card's `translate` is set here each
-// frame and the others ride their CSS transform transition.
+// Motion is transforms only: the dragged card's `translate` and `scale` are set
+// here each frame, the others ride their CSS transform transition, and the
+// landing is a FLIP from the card to the widget's spot on the canvas.
 
 import { useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import type { WidgetElement } from '../lib/types'
 import { useStore, selectActive } from '../store/workspace'
 import { spreadRects, stacksOf, type Stack } from '../lib/stacks'
-import { moveTo, targetSlot, type Pt } from '../lib/spreadDrag'
+import {
+  PULL_SCALE,
+  boundsOf,
+  dropOrigin,
+  isPulling,
+  moveTo,
+  targetSlot,
+  type Pt,
+} from '../lib/spreadDrag'
 
 /** true while a spread card is being dragged (hover shouldn't move the highlight) */
 let active = false
 export const isSpreadDragging = () => active
 
-export type CardPhase = 'idle' | 'drag' | 'settle'
+export type CardPhase = 'idle' | 'drag' | 'pull' | 'settle'
 
 const PHASE_CLASS: Record<CardPhase, string> = {
   idle: '',
   drag: ' widget--spread-drag',
+  pull: ' widget--spread-drag widget--spread-pull',
   settle: ' widget--spread-settle',
 }
-const ALL_CLASSES = ['widget--spread-drag', 'widget--spread-settle']
+const ALL_CLASSES = ['widget--spread-drag', 'widget--spread-pull', 'widget--spread-settle']
 
 /** matches the spread's CSS transition */
 const SETTLE_MS = 340
+const LAND_MS = 340
+const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
 
 const reduceMotion = () =>
   typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches
+
+/** Animate `node` from the screen rect it had (`from`) to where it is now. */
+function flipFrom(node: HTMLElement, from: DOMRect, zoom: number, z: number) {
+  if (reduceMotion() || typeof node.animate !== 'function') return
+  const to = node.getBoundingClientRect()
+  if (!to.width || !to.height || !from.width || !from.height) return
+  const dx = (from.left - to.left) / zoom
+  const dy = (from.top - to.top) / zoom
+  const sx = from.width / to.width
+  const sy = from.height / to.height
+  node.animate(
+    [
+      { transformOrigin: '0 0', transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`, zIndex: z },
+      { transformOrigin: '0 0', transform: 'none', zIndex: z },
+    ],
+    { duration: LAND_MS, easing: EASE },
+  )
+}
+
+const widgetNode = (id: string) =>
+  document.querySelector<HTMLElement>(`.widget[data-widget-id="${CSS.escape(id)}"]`)
 
 export function useSpreadCardDrag(
   el: WidgetElement,
@@ -67,6 +104,7 @@ export function useSpreadCardDrag(
     const rootBox = root.getBoundingClientRect()
     // the spread's slots (canvas-local screen px), fixed for the whole drag
     const slots = spreadRects(ids.length, root.clientWidth, root.clientHeight, live.front.w / Math.max(1, live.front.h))
+    const grid = boundsOf(slots)
     // the point you hold the card by, in the widget's own px
     const r0 = node.getBoundingClientRect()
     const perPx = r0.width / me.w || 1
@@ -80,7 +118,10 @@ export function useSpreadCardDrag(
     let started = false
     let ptr = start
     let to: number | null = from
+    let pulling = false
+    let s = 1
     let raf = 0
+    let last = 0
     let unsub: (() => void) | null = null
 
     const local = (): Pt => ({ x: ptr.x - rootBox.left, y: ptr.y - rootBox.top })
@@ -89,28 +130,43 @@ export function useSpreadCardDrag(
       return { x: (p.x - cam.x) / zoom, y: (p.y - cam.y) / zoom }
     }
 
-    // which slot the card is over (judged by its centre)
+    // where the pointer says the card is going: a slot, or out of the stack
     const evaluate = () => {
       const p = local()
       const kz = k * zoom
       const rect = { x: p.x - grab.x * kz, y: p.y - grab.y * kz, w: me.w * kz, h: me.h * kz }
-      const next = targetSlot(slots, { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 }, to)
+      const pull = isPulling(rect, p, grid, pulling)
+      if (pull !== pulling) {
+        pulling = pull
+        node.classList.toggle('widget--spread-pull', pull)
+        setPhase(pull ? 'pull' : 'drag')
+      }
+      const next = pulling ? null : targetSlot(slots, { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 }, to)
       if (next !== to) {
         to = next
         useStore.getState().setSpreadDrag({ id: el.id, to })
       }
     }
 
-    // keep the held point under the pointer
-    const paint = () => {
+    // keep the held point under the pointer, at the card's current lift
+    const paint = (now: number) => {
+      const goal = pulling ? PULL_SCALE : 1
+      if (reduceMotion()) s = goal
+      else s += (goal - s) * (1 - Math.exp(-Math.min(50, now - last) / 70))
+      if (Math.abs(goal - s) < 0.002) s = goal
+      last = now
       const P = world()
-      node.style.translate = `${P.x - base.x - k * grab.x}px ${P.y - base.y - k * grab.y}px`
+      const tx = P.x - base.x - s * k * grab.x
+      const ty = P.y - base.y - s * k * grab.y
+      node.style.translate = `${tx}px ${ty}px`
+      node.style.scale = s === 1 ? '' : String(s)
+      return s !== goal
     }
 
-    const frame = () => {
+    const frame = (now: number) => {
       raf = 0
       evaluate()
-      paint()
+      if (paint(now)) raf = requestAnimationFrame(frame)
     }
 
     const detach = () => {
@@ -131,6 +187,7 @@ export function useSpreadCardDrag(
 
     const clearInline = () => {
       node.style.translate = ''
+      node.style.scale = ''
     }
 
     // the spread closed under us (Escape, undo, a layer switch): just let go
@@ -144,7 +201,7 @@ export function useSpreadCardDrag(
 
     // back into a slot (maybe a new one): commit the order, glide home
     const settle = () => {
-      node.classList.remove('widget--spread-drag')
+      node.classList.remove('widget--spread-drag', 'widget--spread-pull')
       node.classList.add('widget--spread-settle')
       flushSync(() => {
         setPhase('settle')
@@ -164,6 +221,35 @@ export function useSpreadCardDrag(
         () => setPhase((p) => (p === 'settle' ? 'idle' : p)),
         reduceMotion() ? 0 : SETTLE_MS,
       )
+    }
+
+    // out of the stack: land on the canvas under the pointer, close the spread
+    const land = () => {
+      const st = useStore.getState()
+      const own = me.stackRestore ?? { w: me.w, h: me.h }
+      const at = dropOrigin(world(), grab, { w: me.w, h: me.h }, own)
+      const fromRect = node.getBoundingClientRect()
+      const others = ids
+        .filter((id) => id !== el.id)
+        .map((id) => {
+          const n = widgetNode(id)
+          return n ? { n, r: n.getBoundingClientRect() } : null
+        })
+        .filter((o): o is { n: HTMLElement; r: DOMRect } => !!o)
+      node.classList.remove(...ALL_CLASSES)
+      flushSync(() => {
+        setPhase('idle')
+        st.setSpreadDrag(null)
+        st.beginHistory()
+        st.unstackWidget(el.id, at)
+        st.closeSpread(null)
+        st.setSelection([el.id])
+      })
+      clearInline()
+      flipFrom(node, fromRect, zoom, 10450)
+      // a stack of two dissolves at once: the one left behind has no spread
+      // transition to ride home on, so it gets a flight of its own
+      for (const o of others) if (!o.n.classList.contains('widget--spread')) flipFrom(o.n, o.r, zoom, 10300)
     }
 
     const onMove = (ev: PointerEvent) => {
@@ -190,6 +276,7 @@ export function useSpreadCardDrag(
           const sp = s2.spread
           if (!sp || sp.stackId !== stack.id || sp.closing) abort()
         })
+        last = performance.now()
       }
       if (!raf) raf = requestAnimationFrame(frame)
     }
@@ -202,9 +289,12 @@ export function useSpreadCardDrag(
         return
       }
       ptr = { x: ev.clientX, y: ev.clientY }
-      if (ev.type === 'pointercancel') to = from
-      else evaluate()
-      settle()
+      if (ev.type === 'pointercancel') {
+        to = from
+        pulling = false
+      } else evaluate()
+      if (pulling) land()
+      else settle()
     }
 
     window.addEventListener('pointermove', onMove)

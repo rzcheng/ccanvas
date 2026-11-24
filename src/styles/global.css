@@ -6956,12 +6956,16 @@ body.is-panning * {
     opacity: 0;
   }
 }
+.stack-scrim--pull {
+  /* a card being pulled out: the board shows through, where it will land */
+  opacity: 0.62;
+}
 .widget--spread {
   transform-origin: 0 0;
   /* transform (the slot) and translate/scale (the drag offset) share one
      curve, so a card let go glides to its slot in a straight line */
   transition: transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1), translate 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
-    box-shadow 0.15s, border-color 0.15s;
+    scale 0.32s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.15s, border-color 0.15s, opacity 0.15s;
   box-shadow: 0 30px 60px -24px rgba(0, 0, 0, 0.85), 0 2px 6px -2px rgba(0, 0, 0, 0.55);
 }
 .widget--spread-hi {
@@ -6975,6 +6979,12 @@ body.is-panning * {
   transition: box-shadow 0.15s, border-color 0.15s;
   cursor: grabbing;
   box-shadow: 0 50px 90px -24px rgba(0, 0, 0, 0.9), 0 0 0 2px var(--accent);
+}
+/* dragged off the grid: lifted clear of the stack, about to land on the board */
+.widget--spread.widget--spread-pull {
+  border-color: var(--line-hard);
+  box-shadow: 0 60px 110px -30px rgba(0, 0, 0, 0.95), 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+  opacity: 0.94;
 }
 /* let go: gliding into its slot, still above the others */
 .widget--spread.widget--spread-settle {
