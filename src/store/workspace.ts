@@ -99,7 +99,7 @@ function makeWorkspace(name: string, dir?: string): Workspace {
 const WIDGET_SIZE: Record<WidgetKind, { w: number; h: number }> = {
   terminal: { w: 520, h: 340 },
   agent: { w: 540, h: 380 },
-  web: { w: 480, h: 360 },
+  web: { w: 800, h: 560 },
   note: { w: 320, h: 240 },
   files: { w: 300, h: 420 },
   diff: { w: 680, h: 460 },
@@ -123,7 +123,7 @@ const WIDGET_SIZE: Record<WidgetKind, { w: number; h: number }> = {
 const WIDGET_TITLE: Record<WidgetKind, string> = {
   terminal: 'terminal',
   agent: 'claude agent',
-  web: 'web preview',
+  web: 'web',
   note: 'note',
   files: 'files',
   diff: 'git diff',

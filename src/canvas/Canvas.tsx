@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { hostOf, looksLikeLocalFile, normalizeUrl } from '../lib/weburl'
 import { isDesktopMirror, forkIntoTerminal, openInClaude } from '../lib/desktopSessions'
 import { useStore, selectActive, withGroupSiblings } from '../store/workspace'
 import type {
@@ -99,6 +100,7 @@ const QUICK_COMMANDS: QuickCommand[] = [
   { name: 'diff', target: 'diff', desc: 'git panel', aliases: ['git'] },
   { name: 'editor', target: 'editor', desc: 'file editor', aliases: ['edit', 'code'] },
   { name: 'note', target: 'note', desc: 'markdown note', aliases: ['md', 'markdown'] },
+  { name: 'web', target: 'web', desc: 'web page', aliases: ['browser', 'url', 'site'] },
   { name: 'music', target: 'nowplaying', desc: 'now playing', aliases: ['nowplaying', 'spotify', 'song'] },
 ]
 
@@ -1321,7 +1323,13 @@ export function Canvas() {
         target === 'plot')
     )
       init.path = rest
-    if (rest && target === 'web') init.url = rest
+    if (rest && target === 'web') {
+      if (looksLikeLocalFile(rest)) init.path = rest
+      else {
+        init.url = normalizeUrl(rest)
+        init.title = hostOf(init.url)
+      }
+    }
     if (rest && target === 'runner') init.cmd = rest
     const id = spawnWidget(target, world.x, world.y, init)
     if (rest && target === 'note')
