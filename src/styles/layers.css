@@ -90,16 +90,38 @@
     color-mix(in srgb, var(--panel) 92%, var(--bg))
   );
   border: calc(1px * var(--sk, 2)) solid var(--line-hard);
-  box-shadow:
-    0 calc(30px * var(--sk, 2)) calc(60px * var(--sk, 2)) calc(-30px * var(--sk, 2)) rgba(0, 0, 0, 0.9),
-    inset 0 calc(1px * var(--sk, 2)) 0 rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 calc(1px * var(--sk, 2)) 0 rgba(255, 255, 255, 0.05);
 }
 .lo-sheet.is-open .lo-glass {
   border-color: color-mix(in srgb, var(--accent) 70%, var(--line-hard));
   box-shadow:
-    0 calc(60px * var(--sk, 2)) calc(120px * var(--sk, 2)) calc(-40px * var(--sk, 2)) rgba(0, 0, 0, 0.95),
     0 0 0 calc(1px * var(--sk, 2)) color-mix(in srgb, var(--accent) 25%, transparent),
     inset 0 calc(1px * var(--sk, 2)) 0 rgba(255, 255, 255, 0.07);
+}
+/* The shadow under a sheet is a gradient, not a blurred box-shadow: a sheet
+   is the whole canvas scaled down, so a blur sized for the screen is ~2.5×
+   wider on the sheet, and any repaint (the opening, a roll) redrew it. */
+.lo-sheet::before {
+  content: '';
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  top: 12%;
+  bottom: -9%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.22) 62%, transparent);
+  opacity: 0.75;
+  pointer-events: none;
+}
+.lo-sheet.is-open::before {
+  opacity: 1;
+}
+.lo-sheet.is-handover::before {
+  opacity: 0;
+}
+/* a sheet's content moving on its own gets a layer for that time only */
+.lo-world.is-flying {
+  will-change: transform;
 }
 .lo-sheet.is-drop .lo-glass {
   border-style: dashed;

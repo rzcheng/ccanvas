@@ -264,10 +264,10 @@ export function layerLed(st: LayerStats): LedStatus | null {
 export const OV = {
   OPEN_TILT: 12, // deg
   SLAT_TILT: 68,
-  DECK_TILT: 52, // the closed deck the canvas pulls back into on open
+  DECK_TILT: 40, // the closed deck the canvas pulls back into on open
   GAP: 26, // screen px between slats
   GAP_MIN: 16, // a tall stack tightens the gap before it shrinks the sheets
-  LIFT: 80, // z of the open sheet
+  LIFT: 56, // z of the open sheet
   SLAT_Z: -30,
   FAR_Z: 18, // further back per step past the first slat
   PERSP: 1700, // px
@@ -358,7 +358,7 @@ export function ovDeck(L: OvLayout, d: number, shift = 0): Pose {
     y: L.cy + shift - d * 5,
     z: -ad * 6 * L.zk,
     tilt: OV.DECK_TILT,
-    scale: L.s * 0.94,
+    scale: L.s * 0.97,
     op: 1,
     shade: Math.min(0.6, ad * 0.12),
   }

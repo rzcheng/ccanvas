@@ -67,9 +67,9 @@ import '../styles/layers.css'
 // (the tiles wipe away over the real, already-mounted widgets) → unmount.
 
 const T = {
-  preroll: 110,
-  intro: 820,
-  dive: 720,
+  preroll: 50,
+  intro: 680,
+  dive: 640,
   handover: 200,
   fade: 120, // reduced motion: crossfades only
   hover: 70,
@@ -110,6 +110,7 @@ type Rec = {
   surf?: number
   tz?: number
   labOpen?: boolean
+  flying?: boolean
 }
 
 function camT(c: Camera): string {
@@ -386,8 +387,14 @@ export function LayerOverview() {
     let dist: number[] = [] // each sheet's distance from the open one, for labels
     let glideIdx = -1
     let glideT = 0
+    // Tile text only while sheets hold their size: while one grows or shrinks
+    // its text needs a new counter-scale every frame, and each one repaints
+    // the whole canvas-sized sheet. So it waits for the deck, and leaves early
+    // on a dive (the title bars carry the names in).
+    let textGate = 1
 
     if (phase === 'preroll') {
+      textGate = 0
       const u = clamp01(el / T.preroll)
       for (let i = 0; i < N; i++) poses.push(ovFlat(i === c.here))
       cams[c.here] = c.startCam
@@ -402,6 +409,7 @@ export function LayerOverview() {
     } else if (phase === 'intro' || phase === 'outro') {
       let t = clamp01(el / T.intro)
       if (phase === 'outro') t = 1 - t
+      textGate = clamp01((t - 0.62) / 0.25)
       const a = easeInOut(clamp01(t / 0.34))
       for (let i = 0; i < N; i++) {
         const d = i - c.here
@@ -409,7 +417,7 @@ export function LayerOverview() {
         const p = mixPose(ovFlat(i === c.here), ovDeck(L, d, c.deckShift), a)
         if (i !== c.here) p.op = clamp01((t - 0.12) / 0.2)
         // 2) fan out from where you are, nearest first
-        const b = easeOut(clamp01((t - 0.27 - Math.abs(d) * 0.055) / 0.46))
+        const b = easeOut(clamp01((t - 0.27 - Math.abs(d) * 0.04) / 0.46))
         poses.push(mixPose(p, c.acc[i] ?? p, b))
       }
       cams[c.here] = lerpCam(c.startCam, fitOf(ls[c.here].id), a)
@@ -447,7 +455,7 @@ export function LayerOverview() {
         const k = c.reduced ? 1 : clamp01((now - t0) / c.slow / T.born)
         if (i >= 0) {
           const e = easeOut(k)
-          poses[i] = { ...poses[i], y: poses[i].y - (1 - e) * 90, z: poses[i].z + (1 - e) * 160 * L.zk, op: e }
+          poses[i] = { ...poses[i], y: poses[i].y - (1 - e) * 50, z: poses[i].z + (1 - e) * 90 * L.zk, op: e }
         }
         if (k >= 1) c.born.delete(id)
       }
@@ -455,13 +463,14 @@ export function LayerOverview() {
       more = moving || c.off.size > 0 || c.born.size > 0 || c.sNow !== L0.s
     } else if (phase === 'dive') {
       const t = clamp01(el / T.dive)
+      textGate = 1 - clamp01(t / 0.35)
       const j = c.diveTo
       for (let i = 0; i < N; i++) {
         const start = c.poses[i] ?? ovFlat(false)
         if (i === j) {
           // lift out, flatten, then grow to the window
           const lift = easeOut(clamp01(t / 0.4))
-          const p = { ...start, z: start.z + 140 * L.zk * lift * (1 - t), tilt: lerp(start.tilt, Math.min(start.tilt, 8), lift) }
+          const p = { ...start, z: start.z + 60 * L.zk * lift * (1 - t), tilt: lerp(start.tilt, Math.min(start.tilt, 8), lift) }
           const f = easeInOut(clamp01((t - 0.1) / 0.9))
           poses.push(mixPose(p, ovFlat(true), f))
           cams[i] = lerpCam(c.cams[i] ?? fitOf(ls[i].id), c.diveCam!, f)
@@ -472,9 +481,9 @@ export function LayerOverview() {
         const k = easeInOut(clamp01((t - (0.18 - Math.min(Math.abs(d), 3) * 0.05)) / 0.55))
         const away = {
           ...start,
-          y: start.y - Math.sign(d) * 420,
-          z: start.z - 260 * L.zk,
-          tilt: Math.min(85, start.tilt + 12),
+          y: start.y - Math.sign(d) * 220,
+          z: start.z - 140 * L.zk,
+          tilt: Math.min(80, start.tilt + 6),
           op: 0,
         }
         poses.push(mixPose(start, away, k))
@@ -491,6 +500,7 @@ export function LayerOverview() {
       // real widgets have painted by the time the tiles wipe away
       if (t >= 0.85) commit()
     } else if (phase === 'handover') {
+      textGate = 0
       const u = clamp01(el / T.handover)
       const j = c.landIdx
       for (let i = 0; i < N; i++) poses.push(ovFlat(i === j))
@@ -524,7 +534,7 @@ export function LayerOverview() {
       )
       if (r.face) {
         r.face.style.opacity = (1 - p.shade).toFixed(3)
-        const txt = Math.round(ovText(p.tilt) * 50) / 50
+        const txt = Math.round(ovText(p.tilt) * textGate * 50) / 50
         if (r.txt !== txt) {
           r.txt = txt
           r.face.style.setProperty('--txt', String(txt))
@@ -546,11 +556,20 @@ export function LayerOverview() {
         r.world.style.transition = 'none'
         r.world.style.transform = camT(cam)
       }
+      // a sheet's content moving on its own (its camera easing during the
+      // opening or a dive) gets its own layer for that time, so the move
+      // doesn't repaint the sheet; at rest it folds back into the sheet
+      const flying = !!cam && phase !== 'live'
+      if (r.flying !== flying && r.world) {
+        r.flying = flying
+        toggle(r.world, 'is-flying', flying)
+      }
       // while a sheet grows to (or shrinks from) the canvas, its tile text
       // keeps the size it has in the accordion: a counter-scale, not a font size
       const fit = fitOf(id)
       const tz = cam ? Math.round(((fit.zoom * L.s) / Math.max(1e-3, cam.zoom * p.scale)) * 1000) / 1000 : 1
-      if (r.tz !== tz && r.world) {
+      // hidden text needs no counter-scale (and writing one restyles every tile)
+      if (r.tz !== tz && r.world && (r.txt ?? 0) > 0) {
         r.tz = tz
         r.world.style.setProperty('--tz', String(tz))
       }
