@@ -160,6 +160,82 @@ function isIdleTerminal(node: HTMLElement | null): boolean {
   )
 }
 
+/** set while a spread card's wheel is re-sent to its content, so the canvas lets it by */
+let forwardingWheel = false
+/** the scroller a forwarded gesture last moved: momentum stays on it, as native scrolling latches */
+let wheelLatch: { node: Element; t: number } | null = null
+
+const SCROLLS = /^(auto|scroll|overlay)$/
+function canScroll(n: Element, dx: number, dy: number): boolean {
+  const s = getComputedStyle(n)
+  const y =
+    dy !== 0 &&
+    SCROLLS.test(s.overflowY) &&
+    (dy > 0 ? n.scrollTop + n.clientHeight < n.scrollHeight - 1 : n.scrollTop > 0)
+  const x =
+    dx !== 0 &&
+    SCROLLS.test(s.overflowX) &&
+    (dx > 0 ? n.scrollLeft + n.clientWidth < n.scrollWidth - 1 : n.scrollLeft > 0)
+  return x || y
+}
+
+/** A spread card's hit layer sits over its body (clicks choose, drags reorder),
+ *  so the wheel lands there instead of on the widget. Re-send it to what's under
+ *  the pointer: widgets that scroll themselves (xterm, Monaco) cancel the copy;
+ *  otherwise move the nearest native scroller, as the browser would have. */
+function forwardSpreadWheel(e: WheelEvent, card: HTMLElement) {
+  const under = document
+    .elementsFromPoint(e.clientX, e.clientY)
+    .find((n) => card.contains(n) && !n.classList.contains('widget__spread-hit'))
+  if (!under) return
+  const copy = new WheelEvent('wheel', {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    deltaX: e.deltaX,
+    deltaY: e.deltaY,
+    deltaZ: e.deltaZ,
+    deltaMode: e.deltaMode,
+    clientX: e.clientX,
+    clientY: e.clientY,
+    screenX: e.screenX,
+    screenY: e.screenY,
+    buttons: e.buttons,
+    shiftKey: e.shiftKey,
+    altKey: e.altKey,
+  })
+  forwardingWheel = true
+  let taken: boolean
+  try {
+    taken = !under.dispatchEvent(copy)
+  } finally {
+    forwardingWheel = false
+  }
+  if (taken) return
+  let dx = e.deltaX
+  let dy = e.deltaY
+  if (e.deltaMode === 1) {
+    dx *= 16
+    dy *= 16
+  } else if (e.deltaMode === 2) {
+    dx *= card.clientWidth
+    dy *= card.clientHeight
+  }
+  // the card is scaled down: scroll in its own pixels so content tracks the finger
+  const k = card.getBoundingClientRect().width / (card.offsetWidth || 1) || 1
+  dx /= k
+  dy /= k
+  const now = performance.now()
+  let sc: Element | null =
+    wheelLatch && now - wheelLatch.t < 150 && card.contains(wheelLatch.node) ? wheelLatch.node : null
+  for (let n: Element | null = under; !sc && n && card.contains(n); n = n.parentElement) {
+    if (canScroll(n, dx, dy)) sc = n
+  }
+  if (!sc) return
+  wheelLatch = { node: sc, t: now }
+  sc.scrollBy({ left: dx, top: dy, behavior: 'instant' })
+}
+
 /** The world layers' CSS transform. The translate is snapped to whole device
  *  pixels: a fractional offset puts every glyph between pixels, which blurs
  *  text, most visibly on 1x displays. (Under ½ px, so hit-testing is unaffected.) */
@@ -401,10 +477,16 @@ export function Canvas() {
     const node = rootRef.current
     if (!node) return
     const onWheel = (e: WheelEvent) => {
-      // the spread view holds the camera still
-      if (useStore.getState().spread) {
+      // the spread view holds the camera still; a plain scroll over a card
+      // scrolls that widget's content
+      const sp = useStore.getState().spread
+      if (sp) {
+        if (forwardingWheel) return
         e.preventDefault()
         e.stopPropagation()
+        if (e.ctrlKey || e.metaKey || sp.closing) return
+        const card = (e.target as HTMLElement | null)?.closest?.('.widget--spread') as HTMLElement | null
+        if (card) forwardSpreadWheel(e, card)
         return
       }
       // focus mode: the focused widget scrolls itself; the dimmed board doesn't move
