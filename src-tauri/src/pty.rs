@@ -159,7 +159,19 @@ fn spawn_session(
         // doesn't speak (kitty graphics, iTerm2 extensions)
         cmd.env("TERM_PROGRAM", "ccanvas");
         cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
-        for k in ["LC_TERMINAL", "LC_TERMINAL_VERSION", "ITERM_SESSION_ID", "KITTY_WINDOW_ID", "KITTY_PID", "KITTY_PUBLIC_KEY", "GHOSTTY_BIN_DIR", "GHOSTTY_RESOURCES_DIR", "GHOSTTY_SHELL_FEATURES", "WEZTERM_PANE", "WEZTERM_EXECUTABLE"] {
+        for k in [
+            "LC_TERMINAL",
+            "LC_TERMINAL_VERSION",
+            "ITERM_SESSION_ID",
+            "KITTY_WINDOW_ID",
+            "KITTY_PID",
+            "KITTY_PUBLIC_KEY",
+            "GHOSTTY_BIN_DIR",
+            "GHOSTTY_RESOURCES_DIR",
+            "GHOSTTY_SHELL_FEATURES",
+            "WEZTERM_PANE",
+            "WEZTERM_EXECUTABLE",
+        ] {
             cmd.env_remove(k);
         }
         if std::env::var("LANG").map_or(true, |l| l.is_empty()) {
