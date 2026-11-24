@@ -302,8 +302,8 @@ several groups of agents, on one canvas without them crowding each other.
   overview marks it with its home folder.
 - **Arrange the stack.** In the overview, `⇧↑` / `⇧↓` move the focused layer
   up or down, `R` renames it, and `del` removes it: its widgets merge into the
-  layer below, and nothing closes (a layer with widgets asks twice). The base
-  layer stays.
+  layer below, and nothing closes (a layer with widgets asks twice; `⌘Z` puts
+  them back on a layer of their own). The base layer stays.
 - **Desktop mirrors sort themselves.** *Add* in the Desktop sessions panel puts
   each mirror on the layer whose folder holds that session's folder, and on
   the current layer otherwise.

@@ -176,3 +176,13 @@ describe('history and the focus-leak rule', () => {
     expect(w.layers!.some((l) => l.id === el('w9').layer)).toBe(true)
   })
 })
+
+describe('undoing a layer removal', () => {
+  it('puts the widgets back on their own (re-created) layer', () => {
+    useStore.getState().removeLayer('L-a')
+    expect(el('wa')).not.toHaveProperty('layer')
+    useStore.getState().undo()
+    expect(el('wa').layer).toBe('L-a')
+    expect(ws().layers!.some((l) => l.id === 'L-a')).toBe(true)
+  })
+})

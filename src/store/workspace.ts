@@ -1731,6 +1731,9 @@ export const useStore = create<Store>((set, get) => ({
     const i = ls.findIndex((l) => l.id === id)
     if (i < 0) return null
     const into = ls[i > 0 ? i - 1 : 1].id
+    // undoable: undo puts the widgets back on their own layer (normalizing
+    // re-creates its entry; the name and folder aren't in history)
+    get().beginHistory()
     // leaving the layer you're on: go to where its widgets are going
     if (activeLayerId(ws) === id) get().setActiveLayer(into)
     set((s) =>
