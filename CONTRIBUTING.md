@@ -85,7 +85,7 @@ for how the pieces fit together.
 
 Every wheel and trackpad gesture is routed by `src/canvas/wheel.ts`, which
 decides from the region under the pointer: the canvas pans, surfaces that
-don't scroll zoom, and content that scrolls keeps the gesture. A new widget
+don't scroll zoom on a straight up/down swipe (and pan on any other), and content that scrolls keeps the gesture. A new widget
 gets this from `WidgetFrame` with no extra work: until you click into it, the
 whole widget zooms; once you have, anything inside it with native
 `overflow: auto` scrolls and everything else zooms. Add

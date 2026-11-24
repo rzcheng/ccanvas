@@ -9,9 +9,10 @@
 //   canvas    the board itself: scrolling pans, a pinch (or ⌘-scroll) zooms.
 //   zoom      a surface that doesn't scroll: the app's bars, widget title bars,
 //             a widget you haven't clicked into (WidgetFrame locks its body),
-//             Now playing. Up/down zooms the canvas around the pointer;
-//             sideways pans it, unless something under the pointer scrolls
-//             sideways (the tab strip).
+//             Now playing. Straight up/down zooms the canvas around the
+//             pointer; a diagonal or sideways swipe pans it the way the
+//             fingers move (sideways only scrolls something under the pointer
+//             that scrolls that way, like the tab strip).
 //   content   something that scrolls itself: xterm, Monaco, the plot. It gets
 //             the wheel; a sideways swipe it can't follow pans the canvas; a
 //             pinch still zooms the canvas.
@@ -39,22 +40,26 @@ export type WheelAction =
 /** a gesture as decided at its start */
 export type Gesture = {
   region: WheelRegion
-  /** 'x' for a clearly sideways swipe, 'y' otherwise; null until it's moved far enough to tell */
-  axis: 'x' | 'y' | null
+  /** 'y' for a clearly up/down swipe, 'x' for a clearly sideways one, 'xy'
+   *  for a diagonal; null until it's moved far enough to tell */
+  axis: 'x' | 'y' | 'xy' | null
   /** a sideways gesture moves the canvas (nothing under the pointer scrolls that way) */
   sideToCanvas: boolean
 }
 
 export const REST_MS = 150
-/** px of movement before a gesture's direction is decided */
-const AXIS_MIN = 4
+/** px of movement (on either axis) before a gesture's direction is decided */
+const AXIS_MIN = 8
 
-/** 'x' when the movement is clearly sideways, 'y' otherwise, null while too small to tell */
-export function axisOf(dx: number, dy: number): 'x' | 'y' | null {
+/** The direction of a gesture: 'y' within about 27° of straight up/down,
+ *  'x' within about 34° of sideways, 'xy' between; null while too small to tell. */
+export function axisOf(dx: number, dy: number): Gesture['axis'] {
   const ax = Math.abs(dx)
   const ay = Math.abs(dy)
   if (ax < AXIS_MIN && ay < AXIS_MIN) return null
-  return ax > ay * 1.5 ? 'x' : 'y'
+  if (ay >= ax * 2) return 'y'
+  if (ax > ay * 1.5) return 'x'
+  return 'xy'
 }
 
 /** What one wheel event does, given its gesture. Pure: no DOM, no state. */
@@ -67,6 +72,7 @@ export function decide(g: Gesture, dx: number, dy: number, pinch: boolean): Whee
     case 'zoom':
       if (g.axis === null) return { do: 'hold' }
       if (g.axis === 'y') return { do: 'zoom', dy }
+      if (g.axis === 'xy') return { do: 'pan', dx, dy }
       return g.sideToCanvas ? { do: 'pan', dx, dy: 0 } : { do: 'native' }
     case 'content':
       return g.axis === 'x' && g.sideToCanvas ? { do: 'pan', dx, dy: 0 } : { do: 'native' }
@@ -148,8 +154,12 @@ export function regionAt(target: Element | null): { region: WheelRegion; root: E
   return { region: 'pass', root: null }
 }
 
-/** The gesture in progress: decided on its first event, kept until the wheel rests. */
-let current: (Gesture & { t: number; target: Element | null; root: Element | null }) | null = null
+/** The gesture in progress: its region is decided on its first event, its
+ *  direction once its first movements add up to enough to read (a diagonal
+ *  swipe often starts nearly straight), and both are kept until the wheel rests. */
+let current:
+  | (Gesture & { t: number; target: Element | null; root: Element | null; sx: number; sy: number })
+  | null = null
 
 /** Route one wheel event: what it should do, keeping the gesture it belongs to. */
 export function routeWheel(e: WheelEvent, page: { w: number; h: number }, now = performance.now()): WheelAction {
@@ -158,13 +168,15 @@ export function routeWheel(e: WheelEvent, page: { w: number; h: number }, now = 
   if (!current) {
     const target = e.target as Element | null
     const { region, root } = regionAt(target)
-    current = { region, root, target, axis: null, sideToCanvas: false, t: now }
+    current = { region, root, target, axis: null, sideToCanvas: false, t: now, sx: 0, sy: 0 }
   }
   current.t = now
   if (current.axis === null) {
-    current.axis = axisOf(dx, dy)
+    current.sx += dx
+    current.sy += dy
+    current.axis = axisOf(current.sx, current.sy)
     if (current.axis === 'x' && current.target && current.root)
-      current.sideToCanvas = !canScrollX(current.target, current.root, dx)
+      current.sideToCanvas = !canScrollX(current.target, current.root, current.sx)
   }
   return decide(current, dx, dy, e.ctrlKey || e.metaKey)
 }

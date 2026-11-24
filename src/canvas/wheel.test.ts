@@ -10,11 +10,14 @@ const g = (region: Gesture['region'], axis: Gesture['axis'], sideToCanvas = fals
 describe('axisOf', () => {
   it('waits until the movement is big enough to read', () => {
     expect(axisOf(2, -3)).toBeNull()
+    expect(axisOf(5, -7)).toBeNull()
   })
-  it('calls only a clearly sideways swipe sideways', () => {
-    expect(axisOf(30, 4)).toBe('x')
-    expect(axisOf(30, 25)).toBe('y')
+  it('tells up/down, sideways and diagonal apart', () => {
     expect(axisOf(0, -12)).toBe('y')
+    expect(axisOf(5, 20)).toBe('y')
+    expect(axisOf(30, 4)).toBe('x')
+    expect(axisOf(30, 25)).toBe('xy')
+    expect(axisOf(-12, 14)).toBe('xy')
   })
 })
 
@@ -24,6 +27,12 @@ describe('decide', () => {
   })
   it('zooms on a surface that does not scroll', () => {
     expect(decide(g('zoom', 'y'), 1, -20, false)).toEqual({ do: 'zoom', dy: -20 })
+  })
+  it('pans a diagonal swipe on a zoom surface the way the fingers move', () => {
+    expect(decide(g('zoom', 'xy'), 12, -14, false)).toEqual({ do: 'pan', dx: 12, dy: -14 })
+  })
+  it('lets scrolling content take a diagonal swipe', () => {
+    expect(decide(g('content', 'xy', true), 12, -14, false)).toEqual({ do: 'native' })
   })
   it('holds a zoom-surface gesture until its direction is known', () => {
     expect(decide(g('zoom', null), 1, 2, false)).toEqual({ do: 'hold' })

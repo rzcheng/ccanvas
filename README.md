@@ -370,7 +370,7 @@ terminal untouched; on Windows and Linux they use Ctrl.
 | drag empty canvas / middle-drag / two-finger scroll | pan |
 | `Shift`-drag | box-select |
 | ⌘/Ctrl + scroll, or pinch | zoom to cursor |
-| scroll up/down over a widget you haven't clicked into, a title bar, or the app's bars | zoom (sideways pans) |
+| scroll straight up/down over a widget you haven't clicked into, a title bar, or the app's bars | zoom (diagonal or sideways pans) |
 | `Space` | command box at the cursor (`agent`, `term`, `files`, `diff`, `editor`, `note`) |
 | ⌘/Ctrl + `K` | open / close the command palette |
 | ⌘/Ctrl + `F` | search this canvas |
