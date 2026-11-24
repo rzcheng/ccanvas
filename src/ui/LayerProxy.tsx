@@ -31,6 +31,7 @@ export const LayerProxy = memo(function LayerProxy({
   rect,
   mode = 'map',
   dim,
+  spot,
 }: {
   el: CanvasElement
   /** past the per-sheet cap, draw a coloured box only */
@@ -40,9 +41,12 @@ export const LayerProxy = memo(function LayerProxy({
   mode?: ProxyMode
   /** faded out: it doesn't match the overview's find */
   dim?: boolean
+  /** where its label goes (fractions of the tile), clear of tiles above;
+   *  null = covered everywhere, no label */
+  spot?: [number, number, number] | null
 }) {
   if (el.type === 'widget')
-    return rect ? <ProxyRect el={el} /> : mode === 'map' ? <WidgetTile el={el} dim={dim} /> : <WidgetProxy el={el} dim={dim} />
+    return rect ? <ProxyRect el={el} /> : mode === 'map' ? <WidgetTile el={el} dim={dim} spot={spot} /> : <WidgetProxy el={el} dim={dim} />
   if (el.type === 'frame')
     return (
       <div
@@ -111,7 +115,7 @@ function glyphFor(el: WidgetElement) {
 
 /** Map mode: a tinted tile with the widget's type glyph and status, sized
  *  for the screen (counter-scaled by --fs) so it reads at any zoom. */
-function WidgetTile({ el, dim }: { el: WidgetElement; dim?: boolean }) {
+function WidgetTile({ el, dim, spot }: { el: WidgetElement; dim?: boolean; spot?: [number, number, number] | null }) {
   const isTerm = el.kind === 'terminal' || el.kind === 'agent'
   const Icon = glyphFor(el)
   return (
@@ -121,7 +125,10 @@ function WidgetTile({ el, dim }: { el: WidgetElement; dim?: boolean }) {
       style={{ left: el.x, top: el.y, width: el.w, height: el.h, ['--k2' as string]: accentOf(el) }}
     >
       {isTerm ? <TileStatus id={el.id} /> : null}
-      <div className="pt__mark">
+      <div
+        className={`pt__mark${spot === null ? ' pt__mark--hidden' : ''}`}
+        style={spot ? ({ '--sx': `${spot[0] * 100}%`, '--sy': `${spot[1] * 100}%`, '--sw': `${spot[2] * 100}%` } as React.CSSProperties) : undefined}
+      >
         <span className="pt__icon">
           <Icon />
         </span>

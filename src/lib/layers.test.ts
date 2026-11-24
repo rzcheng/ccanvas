@@ -13,6 +13,7 @@ import {
   layerStatus,
   layersOf,
   glyphCounts,
+  labelSpots,
   matchesQuery,
   widgetGlyph,
   widgetType,
@@ -266,5 +267,27 @@ describe('glyphs, types and find', () => {
     expect(matchesQuery(ed, 'editor rust')).toBe(false)
     expect(matchesQuery(web, '5173')).toBe(true)
     expect(matchesQuery(mirror, 'desktop')).toBe(true)
+  })
+})
+
+describe('labelSpots', () => {
+  const box = (id: string, x: number, y: number, w = 400, h = 300) => ({ id, x, y, w, h })
+  it('centres a label nothing covers', () => {
+    expect(labelSpots([box('a', 0, 0)], 120, 50).get('a')).toEqual([0.5, 0.5, 0.88])
+  })
+  it('moves a covered label to a free part of its tile', () => {
+    // b covers the lower-right of a, including its centre
+    const s = labelSpots([box('a', 0, 0), box('b', 150, 120)], 120, 50)
+    expect(s.get('a')).toEqual([0.5, 0.24, 0.88])
+    expect(s.get('b')).toEqual([0.5, 0.5, 0.88]) // topmost: always centred
+  })
+  it('falls back to a free half, at half width, when the middle is covered', () => {
+    // b covers the right half of a, top to bottom
+    const s = labelSpots([box('a', 0, 0), box('b', 200, -10, 400, 400)], 150, 50)
+    expect(s.get('a')).toEqual([0.27, 0.5, 0.46])
+  })
+  it('hides the label of a fully covered tile', () => {
+    const s = labelSpots([box('a', 50, 50, 100, 100), box('b', 0, 0)], 60, 30)
+    expect(s.get('a')).toBeNull()
   })
 })

@@ -416,3 +416,49 @@ export function ovFit(els: CanvasElement[], W: number, H: number): Camera {
   const zoom = Math.min((W * 0.9) / Math.max(1, b.w), (H * 0.84) / Math.max(1, b.h), 1.4)
   return { zoom, x: W / 2 - (b.x + b.w / 2) * zoom, y: H / 2 - (b.y + b.h / 2) * zoom }
 }
+
+// ---------- tile labels that stay readable when widgets overlap ----------
+
+/** Candidate label spots [x, y, width] as fractions of the tile: full width
+ *  in the middle column first (centre, top, bottom), then half width in the
+ *  left and right halves, where a name truncates to fit. */
+const SPOTS: Array<[number, number, number]> = [
+  [0.5, 0.5, 0.88],
+  [0.5, 0.24, 0.88],
+  [0.5, 0.76, 0.88],
+  [0.27, 0.5, 0.46],
+  [0.73, 0.5, 0.46],
+  [0.27, 0.24, 0.46],
+  [0.73, 0.24, 0.46],
+  [0.27, 0.76, 0.46],
+  [0.73, 0.76, 0.46],
+]
+
+type Box = { x: number; y: number; w: number; h: number }
+
+/**
+ * Where to put each widget's label so tiles stacked above don't cover it:
+ * the first candidate spot whose label box (at most `lw` × `lh` world units,
+ * and at most the spot's share of the tile) no higher tile overlaps. `null`
+ * = no spot is free (the label hides). `els` must be in stacking order.
+ */
+export function labelSpots(
+  els: Array<Box & { id: string }>,
+  lw: number,
+  lh: number,
+): Map<string, [number, number, number] | null> {
+  const out = new Map<string, [number, number, number] | null>()
+  els.forEach((e, i) => {
+    const above = els.slice(i + 1)
+    if (!above.length) return out.set(e.id, SPOTS[0])
+    const free = SPOTS.find(([fx, fy, fw]) => {
+      const w = Math.min(lw, e.w * fw)
+      const h = Math.min(lh, e.h * 0.4)
+      const x = e.x + e.w * fx - w / 2
+      const y = e.y + e.h * fy - h / 2
+      return !above.some((a) => x < a.x + a.w && x + w > a.x && y < a.y + a.h && y + h > a.y)
+    })
+    out.set(e.id, free ?? null)
+  })
+  return out
+}

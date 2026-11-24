@@ -21,6 +21,7 @@ import {
   ovZ,
   ovZBase,
   glyphCounts,
+  labelSpots,
   matchesQuery,
   widgetType,
   pathWithin,
@@ -420,6 +421,8 @@ export function LayerOverview() {
     const cam = target === curId ? ws.camera : landingCamera(ws, target, root.clientWidth, root.clientHeight)
     c.state = 'diving'
     root.classList.remove('lo--open')
+    // a dive in the open's first frames: every sheet back in the render tree
+    for (let i = 0; i < n; i++) if (rec(i).el) rec(i).el!.style.visibility = ''
     for (const t of c.timers) window.clearTimeout(t)
     c.timers = []
     cancelAnimationFrame(c.magRaf)
@@ -546,6 +549,12 @@ export function LayerOverview() {
     root.classList.remove('lo--entering-start')
     const total = T.exDelay + T.expand + T.exStagger * (n - 1)
     busy('lo--entering', total, curIdx)
+    // the first frame builds only your sheet: the others stay out of the
+    // render tree until their outlines are due (they fade in from 90 ms)
+    for (let i = 0; i < n; i++) if (i !== curIdx && rec(i).el) rec(i).el!.style.visibility = 'hidden'
+    later(() => {
+      for (let i = 0; i < n; i++) if (rec(i).el) rec(i).el!.style.visibility = ''
+    }, 80)
     applySlab(curIdx)
     // build the other sheets' content once the open is under way
     requestAnimationFrame(() => requestAnimationFrame(() => setReady(true)))
@@ -597,6 +606,7 @@ export function LayerOverview() {
   const order = layers.map((l) => l.id).join(',')
   const prevOrder = useRef(order)
   useLayoutEffect(() => {
+    if (prevOrder.current === order) return // mount, or nothing moved
     const c = C.current
     const before = prevOrder.current.split(',').length
     prevOrder.current = order
@@ -816,6 +826,15 @@ export function LayerOverview() {
     return Math.max(2, Math.min(14, Math.floor((y - above - 62 * textScale()) / rowH)))
   }
 
+  /** A sheet's screen px per world unit, for laying out tile labels. Rounded
+   *  so it stays stable (and the sheets' memo holds) between renders. */
+  const labelScale = (id: string) => {
+    const W = rootRef.current?.clientWidth ?? window.innerWidth
+    const H = rootRef.current?.clientHeight ?? window.innerHeight
+    const k = C.current.g?.k ?? 0.5
+    return Math.round(ovFit(byLayer.get(id) ?? [], W, H).zoom * k * 1000) / 1000
+  }
+
   // ---------- find (/) ----------
   const q = query?.trim() ?? ''
   const matches = useMemo(() => {
@@ -895,6 +914,7 @@ export function LayerOverview() {
                   {(ready || i === curIdx) && (
                     <SheetContent
                       els={byLayer.get(l.id) ?? []}
+                      labelScale={labelScale(l.id)}
                       mode={view === 'detail' && i === focus ? 'detail' : 'map'}
                       matches={matches}
                     />
@@ -1126,17 +1146,35 @@ const SheetContent = memo(function SheetContent({
   els,
   mode,
   matches,
+  labelScale,
 }: {
   els: CanvasElement[]
   mode: ProxyMode
   matches: Set<string> | null
+  /** screen px per world unit on this sheet (fit zoom × k): sizes the label
+   *  boxes that overlapping tiles keep clear of each other */
+  labelScale: number
 }) {
+  const spots = useMemo(() => {
+    const ws = els.filter((e): e is WidgetElement => e.type === 'widget')
+    const s = Math.max(0.02, labelScale)
+    return labelSpots(ws, 150 / s, 56 / s)
+  }, [els, labelScale])
   let widgets = 0
   return (
     <>
       {els.map((e) => {
         const capped = e.type === 'widget' && ++widgets > PROXY_CAP
-        return <LayerProxy key={e.id} el={e} rect={capped} mode={mode} dim={!!matches && !matches.has(e.id)} />
+        return (
+          <LayerProxy
+            key={e.id}
+            el={e}
+            rect={capped}
+            mode={mode}
+            dim={!!matches && !matches.has(e.id)}
+            spot={spots.get(e.id)}
+          />
+        )
       })}
     </>
   )

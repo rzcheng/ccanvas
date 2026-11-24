@@ -766,13 +766,20 @@
   border: 1px solid color-mix(in srgb, var(--k2) 26%, var(--line));
   --k2: var(--accent);
 }
+/* the label sits at its spot (centre unless a tile above covers that) */
 .pt__mark {
+  position: absolute;
+  left: var(--sx, 50%);
+  top: var(--sy, 50%);
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: calc(5px / var(--fs, 1));
-  max-width: 88%;
-  transform: scaleY(var(--uy, 1));
+  max-width: var(--sw, 88%);
+  transform: translate(-50%, -50%) scaleY(var(--uy, 1));
+}
+.pt__mark--hidden {
+  visibility: hidden;
 }
 .pt__icon {
   display: grid;
