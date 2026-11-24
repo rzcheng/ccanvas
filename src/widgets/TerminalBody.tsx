@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebglAddon } from '@xterm/addon-webgl'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
+import { ImageAddon } from '@xterm/addon-image'
 import '@xterm/xterm/css/xterm.css'
+import { acquireGpu, fitsGpu, releaseGpu } from '../lib/termGpu'
 import type { WidgetElement } from '../lib/types'
 import { claudeColorName } from '../lib/types'
 import { connectPty, type Term } from '../lib/terminal'
@@ -89,6 +93,12 @@ export function TerminalBody({
   const lineRef = useRef('')
   const localStartedRef = useRef(false)
   const kRef = useRef(1)
+  // is the terminal painted right now (its tab and layer shown, not stacked
+  // behind another widget)? Read by the renderer choice
+  const onScreenRef = useRef(false)
+  onScreenRef.current = visible && !hidden
+  // re-decide between the WebGL and DOM renderers (set once the xterm exists)
+  const syncRendererRef = useRef<() => void>(() => {})
   // text size from Settings: multiplies the base font, so a change reflows
   const textScale = useTextScale()
   const textScaleRef = useRef(textScale)
@@ -163,6 +173,9 @@ export function TerminalBody({
       cursorBlink: profile?.cursorBlink ?? true,
       cursorStyle: profile?.cursorStyle ?? 'bar',
       drawBoldTextInBrightColors: profile?.boldIsBright ?? true,
+      // WebGL renderer: squeeze a fallback-font glyph wider than its cell
+      // (braille from a font without it) back into the cell
+      rescaleOverlappingGlyphs: true,
       allowProposedApi: true,
       theme: { ...DEFAULT_THEME, ...profile?.theme },
       // OSC 8 hyperlinks (Claude Code prints its links this way): same rules
@@ -178,6 +191,120 @@ export function TerminalBody({
     termRef.current = term
     fitRef.current = fit
     patchMouseScale(term)
+
+    // character widths (emoji, CJK) by Unicode 11 rather than xterm's older
+    // table, closer to what programs measure, so a TUI's columns line up
+    term.loadAddon(new Unicode11Addon())
+    term.unicode.activeVersion = '11'
+    // sixel and iTerm2 inline images (imgcat, chafa, timg …). It also answers
+    // the cell/window size queries (CSI 14/16/18 t). The kitty graphics
+    // protocol has no xterm.js support, so programs that probe for it fall
+    // back to text, as they should.
+    try {
+      term.loadAddon(new ImageAddon({ storageLimit: 32 }))
+    } catch {
+      /* no image support; text still works */
+    }
+
+    const refit = () => {
+      const host = hostRef.current
+      if (!host || host.clientWidth === 0 || host.clientHeight === 0) return
+      try {
+        const { cols, rows } = term
+        fit.fit()
+        if (modeRef.current === 'pty' && (cols !== term.cols || rows !== term.rows))
+          transportRef.current?.resize(term.cols, term.rows)
+      } catch {
+        /* element detached */
+      }
+    }
+
+    // ---- renderer: WebGL for full-screen programs, DOM otherwise ----
+    // (see lib/termGpu for why). Re-decided when the program enters or leaves
+    // the alternate screen, the terminal is shown or hidden, or its size or
+    // supersample factor changes.
+    let gpu: WebglAddon | null = null
+    let gpuFailures = 0
+    const dropGpu = () => {
+      if (!gpu) return
+      const g = gpu
+      gpu = null
+      releaseGpu(el.id)
+      try {
+        g.dispose() // the DOM renderer takes over
+      } catch {
+        /* already gone with its context */
+      }
+      refit()
+      term.refresh(0, term.rows - 1)
+    }
+    const syncRenderer = () => {
+      const host = hostRef.current
+      const want =
+        gpuFailures < 2 &&
+        onScreenRef.current &&
+        term.buffer.active.type === 'alternate' &&
+        !!host &&
+        fitsGpu(host.clientWidth, host.clientHeight, kRef.current, window.devicePixelRatio || 1)
+      if (!want) {
+        dropGpu()
+        return
+      }
+      if (gpu) {
+        acquireGpu(el.id, dropGpu) // mark as recently used
+        return
+      }
+      const g = new WebglAddon()
+      acquireGpu(el.id, dropGpu)
+      try {
+        term.loadAddon(g)
+      } catch {
+        // no WebGL2 here (or it failed to start): stay on the DOM renderer
+        releaseGpu(el.id)
+        gpuFailures = 2
+        return
+      }
+      gpu = g
+      g.onContextLoss(() => {
+        gpuFailures++
+        dropGpu()
+      })
+      refit()
+    }
+    syncRendererRef.current = syncRenderer
+    const onBuffer = term.buffer.onBufferChange(() => syncRenderer())
+
+    // ---- desktop notifications from the program (OSC 9 / OSC 777) ----
+    // OSC 9 is iTerm2's "post a notification" (Ghostty and kitty take it too);
+    // OSC 777;notify;title;body is the urxvt form. ConEmu reuses OSC 9 with a
+    // numeric sub-command (9;4 progress, 9;9 cwd …): left alone. Shown only
+    // when you aren't looking at this terminal, at most one every 3 seconds.
+    let lastNote = 0
+    const desktopNote = (body: string, title?: string) => {
+      const clean = (s: string) => s.replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, 240)
+      const text = clean(body)
+      if (!text) return
+      const looking =
+        document.hasFocus() &&
+        onScreenRef.current &&
+        useStore.getState().activeWidgetId === el.id
+      const now = Date.now()
+      if (looking || now - lastNote < 3000) return
+      lastNote = now
+      const head = clean(title ?? '') || el.title || 'terminal'
+      void ensureNotifyPermission().then(() => notify(head, text))
+    }
+    const osc9 = term.parser.registerOscHandler(9, (data) => {
+      if (/^\d+;/.test(data) || /^\d+$/.test(data)) return false
+      desktopNote(data)
+      return true
+    })
+    const osc777 = term.parser.registerOscHandler(777, (data) => {
+      const [cmd, title, ...body] = data.split(';')
+      if (cmd !== 'notify') return false
+      desktopNote(body.join(';'), title)
+      return true
+    })
 
     // ---- clickable filenames ----
     // Underline any openable file path in the output and, on click, open it in
@@ -311,6 +438,20 @@ export function TerminalBody({
     const isMac = /mac/i.test(navigator.userAgent)
     term.attachCustomKeyEventHandler((ev) => {
       if (ev.type !== 'keydown') return true
+      // ⌥← / ⌥→ jump a word, as they did before xterm.js 6 dropped its own
+      // mapping: send the emacs word moves (ESC b / ESC f) shells bind
+      if (
+        isMac &&
+        ev.altKey &&
+        !ev.ctrlKey &&
+        !ev.metaKey &&
+        !ev.shiftKey &&
+        (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')
+      ) {
+        ev.preventDefault()
+        term.input(ev.key === 'ArrowLeft' ? '\x1bb' : '\x1bf', true)
+        return false
+      }
       const k = ev.key.toLowerCase()
       const combo = isMac ? ev.metaKey && !ev.altKey : ev.ctrlKey && ev.shiftKey
       if (combo && k === 'c' && term.hasSelection()) {
@@ -420,6 +561,7 @@ export function TerminalBody({
       } catch {
         /* element detached */
       }
+      syncRenderer()
     })
     ro.observe(hostRef.current)
     requestAnimationFrame(() => {
@@ -432,8 +574,15 @@ export function TerminalBody({
 
     return () => {
       onData.dispose()
+      onBuffer.dispose()
+      osc9.dispose()
+      osc777.dispose()
       linkProvider.dispose()
       ro.disconnect()
+      // term.dispose() disposes the WebGL addon with the rest
+      gpu = null
+      releaseGpu(el.id)
+      syncRendererRef.current = () => {}
       term.dispose()
       termRef.current = null
     }
@@ -739,6 +888,8 @@ export function TerminalBody({
     // clicked out → stop taking keystrokes
     if (active) termRef.current?.focus()
     else termRef.current?.blur()
+    // the terminal you're in keeps its WebGL slot over ones you left
+    if (active) syncRendererRef.current()
   }, [active, armed])
 
   // Match the supersample factor to the live zoom (debounced so the font only
@@ -782,6 +933,8 @@ export function TerminalBody({
       } catch {
         /* noop */
       }
+      // a bigger supersample factor may take it past the WebGL budget
+      syncRendererRef.current()
     })
     return () => cancelAnimationFrame(raf)
   }, [k, armed, textScale])
@@ -791,6 +944,8 @@ export function TerminalBody({
   // mounted) and its renderer won't paint on a visibility change on its own
   const onScreen = visible && !hidden
   useEffect(() => {
+    // hidden: give the WebGL slot back; shown: take one if it's a TUI
+    syncRendererRef.current()
     if (!onScreen) return
     const term = termRef.current
     if (!term) return
