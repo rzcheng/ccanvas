@@ -97,6 +97,11 @@ export function normalizeLayers(ws: Workspace): Workspace {
   const layers = have.some((l) => l.id === BASE_LAYER_ID) ? [...have] : [{ ...BASE }, ...have]
   for (const id of used)
     if (!layers.some((l) => l.id === id)) layers.push({ id, name: `layer ${layers.length + 1}` })
+  if (layers.length < 2) {
+    // just the base layer: back to no layer list at all
+    const { layers: _l, activeLayerId: _a, ...rest } = ws
+    return rest
+  }
   const activeLayerId = layers.some((l) => l.id === ws.activeLayerId)
     ? ws.activeLayerId
     : layers[0].id

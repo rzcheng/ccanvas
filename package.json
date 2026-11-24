@@ -12,7 +12,8 @@
     "tauri": "tauri",
     "app": "tauri dev",
     "app:build": "tauri build",
-    "app:install": "tauri build --bundles app && ditto src-tauri/target/release/bundle/macos/ccanvas.app /Applications/ccanvas.app"
+    "app:install": "tauri build --bundles app && ditto src-tauri/target/release/bundle/macos/ccanvas.app /Applications/ccanvas.app",
+    "test": "vitest run"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.4.0",
@@ -38,6 +39,7 @@
     "concurrently": "^9.0.1",
     "typescript": "^5.5.4",
     "vite": "^5.4.3",
+    "vitest": "^2.1.9",
     "ws": "^8.18.0"
   },
   "optionalDependencies": {
