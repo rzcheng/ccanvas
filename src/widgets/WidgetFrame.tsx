@@ -934,7 +934,7 @@ function LabelPopover({ el, onClose }: { el: WidgetElement; onClose: () => void 
 // keeps running underneath.
 const STATUS_LABEL: Record<string, string> = {
   working: 'working',
-  waiting: 'needs input',
+  waiting: 'needs you',
   idle: 'idle',
   done: 'just finished',
   connecting: 'connecting',
@@ -942,27 +942,27 @@ const STATUS_LABEL: Record<string, string> = {
 }
 function TermCard({ el }: { el: WidgetElement }) {
   const status = useDisplayStatus(el.id) ?? 'off'
-  const lastLine = useAgents((s) => s.lastLine[el.id])
-  // the card sizes its text in screen px from the zoom. Set here rather than
-  // on the world layer: a custom property changed on the world restyled
-  // every element on the canvas on each zoom frame
+  // the card sizes itself in screen px from the zoom. Set here rather than on
+  // the world layer: a custom property changed on the world restyled every
+  // element on the canvas on each zoom frame
   const zoom = useStore((s) => selectActive(s).camera.zoom)
   const folder = el.cwd ? el.cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() : null
   return (
     <div
-      className={`term-card term-card--${status}`}
-      style={{ ['--z' as string]: zoom }}
+      className={`term-card term-card--${status}${el.color ? ' term-card--tagged' : ''}`}
+      style={{ ['--z' as string]: zoom, ['--chars' as string]: Math.max(6, el.title.length) }}
     >
-      <div className="term-card__name">{el.title}</div>
-      <div className="term-card__meta">
-        <span className="term-card__status">
-          <StatusGlyph status={status} icon={<KindIcon kind={el.kind} />} className="term-card__icon" />
-          {STATUS_LABEL[status] ?? status}
-        </span>
-        {el.kind === 'agent' && <CardContext el={el} />}
-        {folder && <span className="term-card__folder">{folder}</span>}
+      <div className="term-card__screen">
+        <div className="term-card__lamp">
+          <StatusGlyph status={status} icon={<KindIcon kind={el.kind} />} className="term-card__glyph" />
+          <div className="term-card__name">{el.title}</div>
+          <div className="term-card__status">{STATUS_LABEL[status] ?? status}</div>
+          <div className="term-card__sub">
+            {folder && <span className="term-card__folder">{folder}</span>}
+            {el.kind === 'agent' && <CardContext el={el} />}
+          </div>
+        </div>
       </div>
-      {lastLine && <div className="term-card__line">{lastLine}</div>}
     </div>
   )
 }
