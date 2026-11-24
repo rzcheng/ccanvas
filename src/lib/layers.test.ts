@@ -12,6 +12,10 @@ import {
   layerOf,
   layerStatus,
   layersOf,
+  glyphCounts,
+  matchesQuery,
+  widgetGlyph,
+  widgetType,
   normalizeLayers,
   ovBoost,
   ovProject,
@@ -238,5 +242,29 @@ describe('overview solver', () => {
     expect(b).toHaveLength(4)
     expect(b.indexOf(Math.max(...b))).toBe(0)
     expect(ovBoost(g, null).every((v) => v === 0)).toBe(true)
+  })
+})
+
+describe('glyphs, types and find', () => {
+  const ed = { ...note('e'), kind: 'editor', title: 'editor', path: 'src/ui/LayerOverview.tsx' } as CanvasElement
+  const mirror = { ...note('m'), kind: 'transcript', title: 'Build Layers', mirrorOf: 'desktop' } as CanvasElement
+  const web = { ...note('w'), kind: 'web', title: 'preview', url: 'http://localhost:5173/app' } as CanvasElement
+  it('names what a widget is at a glance', () => {
+    expect(widgetGlyph(term('t'))).toBe('shell')
+    expect(widgetGlyph(mirror)).toBe('mirror')
+    expect(widgetType(ed)).toBe('LayerOverview.tsx')
+    expect(widgetType(web)).toBe('localhost:5173')
+    expect(glyphCounts([term('a'), term('b'), ed, mirror])).toEqual([
+      ['mirror', 1],
+      ['shell', 2],
+      ['code', 1],
+    ])
+  })
+  it('find matches every word across title, type, path and url', () => {
+    expect(matchesQuery(ed, 'overview')).toBe(true)
+    expect(matchesQuery(ed, 'editor tsx')).toBe(true)
+    expect(matchesQuery(ed, 'editor rust')).toBe(false)
+    expect(matchesQuery(web, '5173')).toBe(true)
+    expect(matchesQuery(mirror, 'desktop')).toBe(true)
   })
 })

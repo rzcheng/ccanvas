@@ -30,6 +30,7 @@ export const LayerProxy = memo(function LayerProxy({
   el,
   rect,
   mode = 'map',
+  dim,
 }: {
   el: CanvasElement
   /** past the per-sheet cap, draw a coloured box only */
@@ -37,9 +38,11 @@ export const LayerProxy = memo(function LayerProxy({
   /** 'map': a type glyph and status per widget (light, reads at any size);
    *  'detail': a faceplate with the title bar and a few lines of text */
   mode?: ProxyMode
+  /** faded out: it doesn't match the overview's find */
+  dim?: boolean
 }) {
   if (el.type === 'widget')
-    return rect ? <ProxyRect el={el} /> : mode === 'map' ? <WidgetTile el={el} /> : <WidgetProxy el={el} />
+    return rect ? <ProxyRect el={el} /> : mode === 'map' ? <WidgetTile el={el} dim={dim} /> : <WidgetProxy el={el} dim={dim} />
   if (el.type === 'frame')
     return (
       <div
@@ -69,12 +72,12 @@ function ProxyRect({ el }: { el: WidgetElement }) {
   )
 }
 
-function WidgetProxy({ el }: { el: WidgetElement }) {
+function WidgetProxy({ el, dim }: { el: WidgetElement; dim?: boolean }) {
   const isTerm = el.kind === 'terminal' || el.kind === 'agent'
   const Icon = KIND_ICON[el.kind]
   return (
     <div
-      className={`pc${isTerm && el.color ? ' pc--tagged' : ''}`}
+      className={`pc${isTerm && el.color ? ' pc--tagged' : ''}${dim ? ' is-dim' : ''}`}
       data-pid={el.id}
       style={{ left: el.x, top: el.y, width: el.w, height: el.h, ['--k2' as string]: accentOf(el) }}
     >
@@ -108,12 +111,12 @@ function glyphFor(el: WidgetElement) {
 
 /** Map mode: a tinted tile with the widget's type glyph and status, sized
  *  for the screen (counter-scaled by --fs) so it reads at any zoom. */
-function WidgetTile({ el }: { el: WidgetElement }) {
+function WidgetTile({ el, dim }: { el: WidgetElement; dim?: boolean }) {
   const isTerm = el.kind === 'terminal' || el.kind === 'agent'
   const Icon = glyphFor(el)
   return (
     <div
-      className="pt"
+      className={`pt${dim ? ' is-dim' : ''}`}
       data-pid={el.id}
       style={{ left: el.x, top: el.y, width: el.w, height: el.h, ['--k2' as string]: accentOf(el) }}
     >

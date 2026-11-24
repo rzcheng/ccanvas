@@ -925,3 +925,27 @@
 .lo-perf__sum {
   color: var(--ink-dim);
 }
+
+/* find (/): non-matching widgets fade, the rail counts matches per layer */
+.pt.is-dim,
+.pc.is-dim {
+  opacity: 0.18;
+}
+.lr__found {
+  color: var(--accent-bright);
+}
+.lo-find {
+  width: calc(220px * var(--ts));
+  height: calc(22px * var(--ts));
+  padding: 0 8px;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--ts));
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--accent-line);
+  border-radius: 6px;
+  outline: none;
+}
+.lo-find::placeholder {
+  color: var(--ink-ghost);
+}

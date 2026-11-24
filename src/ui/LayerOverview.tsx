@@ -21,6 +21,7 @@ import {
   ovZ,
   ovZBase,
   glyphCounts,
+  matchesQuery,
   widgetType,
   pathWithin,
   shortPath,
@@ -145,6 +146,8 @@ export function LayerOverview() {
   const [renaming, setRenaming] = useState<string | null>(null)
   // a one-line note above the key hints ("⌫ again to merge…", "the base layer stays")
   const [note, setNote] = useState<string | null>(null)
+  // / finds across every layer: null = closed, '' = open and empty
+  const [query, setQuery] = useState<string | null>(null)
   // ⌫ on a layer with widgets arms; a second ⌫ on the same layer removes it
   const armed = useRef<string | null>(null)
   // after a reorder or removal, the layer that should keep the focus
@@ -622,8 +625,8 @@ export function LayerOverview() {
   }, [n])
 
   // ---------- input: keys, wheel, pointer, resize ----------
-  const live = useRef({ dive, setFocus, newLayer, toggleGlass, toggleView, reorder, remove, focus, curIdx, n, setRenaming, layers })
-  live.current = { dive, setFocus, newLayer, toggleGlass, toggleView, reorder, remove, focus, curIdx, n, setRenaming, layers }
+  const live = useRef({ dive, setFocus, newLayer, toggleGlass, toggleView, reorder, remove, focus, curIdx, n, setRenaming, layers, setQuery })
+  live.current = { dive, setFocus, newLayer, toggleGlass, toggleView, reorder, remove, focus, curIdx, n, setRenaming, layers, setQuery }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -638,6 +641,7 @@ export function LayerOverview() {
       }
       if (e.ctrlKey && e.metaKey && e.code === 'ArrowDown') return done(), L.dive(c.g?.focus ?? L.focus)
       if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (k === '/' && c.state === 'open') return done(), L.setQuery('')
       if (k === 'Escape' || k === 'l' || k === 'L') return done(), L.dive(L.curIdx)
       if (/^[1-9]$/.test(k)) {
         done()
@@ -802,6 +806,32 @@ export function LayerOverview() {
     return Math.max(2, Math.min(14, Math.floor((y - above - 62 * textScale()) / rowH)))
   }
 
+  // ---------- find (/) ----------
+  const q = query?.trim() ?? ''
+  const matches = useMemo(() => {
+    if (!q) return null
+    const m = new Set<string>()
+    for (const e of ws.elements) if (matchesQuery(e, q)) m.add(e.id)
+    return m
+  }, [q, ws.elements])
+  const matchCount = (id: string) => (byLayer.get(id) ?? []).filter((e) => matches?.has(e.id)).length
+  // typing moves the focus to the first layer with a match (yours first)
+  useEffect(() => {
+    if (!matches || !matches.size) return
+    const has = (i: number) => (byLayer.get(layers[i].id) ?? []).some((e) => matches.has(e.id))
+    if (C.current.g && has(C.current.g.focus)) return
+    const order = [curIdx, ...layers.map((_, i) => i).filter((i) => i !== curIdx)]
+    const hit = order.find(has)
+    if (hit != null) setFocus(hit)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matches])
+  /** Enter in the find box: dive into the focused layer, selecting its first match. */
+  const diveToMatch = () => {
+    const i = C.current.g?.focus ?? curIdx
+    const first = (byLayer.get(layers[i].id) ?? []).find((e) => matches?.has(e.id))
+    dive(i, first?.id)
+  }
+
   // ---------- render ----------
   const stats = layers.map((l) => layerStatus(ws, l.id, statusOf))
   const total = stats.reduce(
@@ -856,6 +886,7 @@ export function LayerOverview() {
                     <SheetContent
                       els={byLayer.get(l.id) ?? []}
                       mode={view === 'detail' && i === focus ? 'detail' : 'map'}
+                      matches={matches}
                     />
                   )}
                 </div>
@@ -880,7 +911,8 @@ export function LayerOverview() {
           // the focused layer's list grows upward into its sheet's reveal gap:
           // show only as many rows as fit before the label above it
           const rows = isFocus ? railRows(i) : 0
-          const shown = els.length > rows ? els.slice(0, Math.max(0, rows - 1)) : els
+          const listed = matches ? els.filter((e) => matches.has(e.id)) : els
+          const shown = listed.length > rows ? listed.slice(0, Math.max(0, rows - 1)) : listed
           return (
             <div
               key={l.id}
@@ -933,7 +965,15 @@ export function LayerOverview() {
                   </div>
                   <div className="lr__meta">
                     {dir && <span className="lr__dir">{"\u200e" + shortPath(dir)}</span>}
-                    {st.count ? <GlyphCounts els={byLayer.get(l.id) ?? []} /> : <span>empty</span>}
+                    {matches ? (
+                      <span className={matchCount(l.id) ? 'lr__found' : ''}>
+                        {matchCount(l.id) ? `${matchCount(l.id)} found` : 'no match'}
+                      </span>
+                    ) : st.count ? (
+                      <GlyphCounts els={byLayer.get(l.id) ?? []} />
+                    ) : (
+                      <span>empty</span>
+                    )}
                     {st.working > 0 && <span className="m m--working">{st.working}</span>}
                     {st.waiting > 0 && <span className="m m--waiting">{st.waiting} needs you</span>}
                     {st.done > 0 && <span className="m m--done">{st.done}</span>}
@@ -948,8 +988,8 @@ export function LayerOverview() {
                           onHover={() => hint(e.id)}
                         />
                       ))}
-                      {shown.length < els.length && (
-                        <div className="lr__more">+{els.length - shown.length} more</div>
+                      {shown.length < listed.length && (
+                        <div className="lr__more">+{listed.length - shown.length} more</div>
                       )}
                     </div>
                   )}
@@ -977,6 +1017,29 @@ export function LayerOverview() {
             </>
           )}
         </span>
+        {query != null && (
+          <input
+            className="lo-find"
+            autoFocus
+            placeholder="find on every layer"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation()
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                setQuery(null)
+              } else if (e.key === 'Enter') {
+                e.preventDefault()
+                diveToMatch()
+              } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                e.preventDefault()
+                setFocus((C.current.g?.focus ?? 0) + (e.key === 'ArrowUp' ? 1 : -1))
+              }
+            }}
+          />
+        )}
         <span className="lo-head__sp" />
         {n < MAX_LAYERS && (
           <button
@@ -1023,6 +1086,9 @@ export function LayerOverview() {
             <span className="kbd">1</span>–<span className="kbd">9</span> · jump
           </span>
           <span>
+            <span className="kbd">/</span> · find
+          </span>
+          <span>
             <span className="kbd">V</span> · map / detail
           </span>
           <span>drag a card · move it to another layer</span>
@@ -1031,7 +1097,7 @@ export function LayerOverview() {
             <span className="kbd">⇧↓</span> · reorder
           </span>
           <span>
-            <span className="kbd">⌫</span> · remove
+            <span className="kbd">del</span> · remove
           </span>
           <span>
             <span className="kbd">R</span> · rename
@@ -1047,13 +1113,21 @@ export function LayerOverview() {
 
 /** One sheet's proxies. Memoised on the layer's element list, so a focus change
  *  (which re-renders the overview) never touches them. */
-const SheetContent = memo(function SheetContent({ els, mode }: { els: CanvasElement[]; mode: ProxyMode }) {
+const SheetContent = memo(function SheetContent({
+  els,
+  mode,
+  matches,
+}: {
+  els: CanvasElement[]
+  mode: ProxyMode
+  matches: Set<string> | null
+}) {
   let widgets = 0
   return (
     <>
       {els.map((e) => {
         const capped = e.type === 'widget' && ++widgets > PROXY_CAP
-        return <LayerProxy key={e.id} el={e} rect={capped} mode={mode} />
+        return <LayerProxy key={e.id} el={e} rect={capped} mode={mode} dim={!!matches && !matches.has(e.id)} />
       })}
     </>
   )

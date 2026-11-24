@@ -189,6 +189,16 @@ export function widgetType(el: CanvasElement): string {
   }
 }
 
+/** Does a widget match a find query? Title, type caption, path, folder and
+ *  URL, case-insensitive; every word of the query must appear somewhere. */
+export function matchesQuery(el: CanvasElement, q: string): boolean {
+  if (el.type !== 'widget') return false
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length) return true
+  const hay = [el.title, widgetType(el), el.kind, el.path, el.cwd, el.url].filter(Boolean).join(' ').toLowerCase()
+  return words.every((w) => hay.includes(w))
+}
+
 const GLYPH_ORDER: Glyph[] = ['agent', 'mirror', 'shell', 'code', 'git', 'web', 'note']
 
 /** Widget counts by glyph, in a fixed order, for the overview's rail. */
