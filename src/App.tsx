@@ -330,6 +330,12 @@ export default function App() {
         if (ls.length < 2) return
         e.preventDefault()
         const cur = ls.findIndex((l) => l.id === activeLayerId(ws))
+        // ⇧⌥↑ / ⇧⌥↓: send the selection one layer up / down (you stay here)
+        if (e.shiftKey && (e.code === 'ArrowUp' || e.code === 'ArrowDown')) {
+          const to = ls[cur + (e.code === 'ArrowUp' ? 1 : -1)]
+          if (to && store.selection.length) store.moveToLayer(store.selection, to.id)
+          return
+        }
         const to =
           e.code === 'ArrowUp' ? cur + 1 : e.code === 'ArrowDown' ? cur - 1 : Number(e.code.slice(5)) - 1
         if (to >= 0 && to < ls.length && to !== cur) store.setActiveLayer(ls[to].id)
