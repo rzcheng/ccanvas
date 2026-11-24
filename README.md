@@ -280,14 +280,13 @@ several groups of agents, on one canvas without them crowding each other.
   and each layer remembers its own view, so switching returns you to where
   you were.
 - **Switch.** Press `L` (or `⌃⌘↑` from anywhere, even inside a terminal) to
-  open the layers overview: the canvas pulls back into a deck of every layer,
-  which fans out into an accordion around the one you're on. The open layer
-  swings up to face you; the rest fold into thin slats above and below it,
-  higher layers higher up. Hover, scroll or press `↑` / `↓` to roll the
-  accordion through the stack, then click a sheet or slat, press `⏎`, or
-  press its digit to dive in: the sheet flattens onto the canvas, its name
-  glides into the layer chip, and its tiles turn back into the live widgets.
-  `Esc` or `L` plays the opening backwards. `⌥↑` / `⌥↓` and `⌥1`–`⌥9` switch
+  open the layers overview: the canvas settles back into an accordion of
+  every layer around the one you're on, which faces you while the rest fold
+  into thin slats above and below it, higher layers higher up. Hover, scroll
+  or press `↑` / `↓` to roll the accordion through the stack, then click a
+  sheet or slat, press `⏎`, or press its digit to dive in: the sheet eases
+  flat onto the canvas, its name glides into the layer chip, and its tiles
+  turn back into the live widgets. `Esc` or `L` goes back the same way. `⌥↑` / `⌥↓` and `⌥1`–`⌥9` switch
   instantly.
 - **See what's where.** Each sheet draws its widgets as tiles where they sit.
   The open sheet's tiles show the status icon (a spinner while an agent

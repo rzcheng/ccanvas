@@ -9,7 +9,6 @@ import {
   activeLayerId,
   clamp01,
   coveredLabels,
-  easeInOut,
   easeOut,
   labelYs,
   landingCamera,
@@ -24,7 +23,6 @@ import {
   midEllipsis,
   mixPose,
   ovAnchor,
-  ovDeck,
   ovFit,
   ovFlat,
   ovLayout,
@@ -68,9 +66,9 @@ import '../styles/layers.css'
 
 const T = {
   preroll: 50,
-  intro: 680,
-  dive: 640,
-  handover: 200,
+  intro: 480,
+  dive: 440,
+  handover: 160,
   fade: 120, // reduced motion: crossfades only
   hover: 70,
   snap: 140,
@@ -222,7 +220,8 @@ export function LayerOverview() {
     cams: [] as Camera[],
     /** the accordion the intro opens to, or the outro closes from */
     acc: [] as Pose[],
-    deckShift: 0,
+    /** the layer-you're-on sheet's camera when a close began */
+    outCam: null as Camera | null,
     diveTo: -1,
     diveCam: null as Camera | null,
     selectId: undefined as string | undefined,
@@ -406,29 +405,65 @@ export function LayerOverview() {
       chromeOp = 0
       labOp = 0
       dist = ls.map((_, i) => i - c.here)
-    } else if (phase === 'intro' || phase === 'outro') {
-      let t = clamp01(el / T.intro)
-      if (phase === 'outro') t = 1 - t
-      textGate = clamp01((t - 0.62) / 0.25)
-      const a = easeInOut(clamp01(t / 0.34))
+    } else if (phase === 'intro') {
+      // One decelerating move, no swing: the canvas settles straight into the
+      // open sheet, and the other layers spread a short way out from behind
+      // it as they fade in, nearest first.
+      const t = clamp01(el / T.intro)
+      textGate = clamp01((t - 0.55) / 0.3)
+      const a = easeOut(clamp01(t / 0.85))
+      const home = c.acc[c.here]
       for (let i = 0; i < N; i++) {
+        const to = c.acc[i]
+        if (!to) {
+          poses.push(ovFlat(false))
+          continue
+        }
+        if (i === c.here) {
+          poses.push(mixPose(ovFlat(true), to, a))
+          continue
+        }
         const d = i - c.here
-        // 1) pull back: the canvas → a closed deck (the others fade in under it)
-        const p = mixPose(ovFlat(i === c.here), ovDeck(L, d, c.deckShift), a)
-        if (i !== c.here) p.op = clamp01((t - 0.12) / 0.2)
-        // 2) fan out from where you are, nearest first
-        const b = easeOut(clamp01((t - 0.27 - Math.abs(d) * 0.04) / 0.46))
-        poses.push(mixPose(p, c.acc[i] ?? p, b))
+        const b = easeOut(clamp01((t - 0.08 - Math.min(Math.abs(d), 4) * 0.025) / 0.75))
+        const from = { ...to, y: lerp(home?.y ?? to.y, to.y, 0.6), z: to.z - 20 * L.zk, op: 0 }
+        poses.push(mixPose(from, to, b))
       }
       cams[c.here] = lerpCam(c.startCam, fitOf(ls[c.here].id), a)
-      // the sheet's own surface fades in as it pulls away from the canvas
+      // the sheet's own surface fades in as it leaves the canvas
       surf[c.here] = clamp01(t / 0.2)
-      morph[c.here] = 1 - easeInOut(clamp01(t / 0.22))
-      chromeOp = clamp01((t - 0.25) / 0.35)
-      labOp = clamp01((t - 0.6) / 0.35)
+      morph[c.here] = 1 - easeOut(clamp01(t / 0.25))
+      chromeOp = clamp01((t - 0.2) / 0.4)
+      labOp = clamp01((t - 0.4) / 0.45)
       dist = ls.map((_, i) => i - c.here)
-      // the live canvas paints again under the deck before it lands
-      if (phase === 'outro' && t < 0.15) commit()
+    } else if (phase === 'outro') {
+      // Back onto the canvas, also decelerating, from wherever the sheets
+      // are: the layer you're on settles flat, the rest draw in and fade.
+      // The live canvas repaints now, under the still-covering overview,
+      // rather than as the motion lands.
+      commit()
+      const t = clamp01(el / T.intro)
+      textGate = 1 - clamp01(t / 0.2)
+      const a = easeOut(clamp01(t / 0.85))
+      const home = c.acc[c.here]
+      for (let i = 0; i < N; i++) {
+        const from = c.acc[i]
+        if (!from) {
+          poses.push(ovFlat(false))
+          continue
+        }
+        if (i === c.here) {
+          poses.push(mixPose(from, ovFlat(true), a))
+          continue
+        }
+        const to = { ...from, y: lerp(home?.y ?? from.y, from.y, 0.6), z: from.z - 20 * L.zk, op: 0 }
+        poses.push(mixPose(from, to, easeOut(clamp01(t / 0.55))))
+      }
+      cams[c.here] = lerpCam(c.outCam ?? fitOf(ls[c.here].id), c.startCam, a)
+      surf[c.here] = 1 - clamp01((t - 0.75) / 0.25)
+      morph[c.here] = easeOut(clamp01((t - 0.55) / 0.45))
+      chromeOp = 1 - clamp01(t / 0.35)
+      labOp = 1 - clamp01(t / 0.25)
+      dist = ls.map((_, i) => i - c.here)
     } else if (phase === 'live') {
       let moving = false
       if (c.reduced) {
@@ -462,43 +497,34 @@ export function LayerOverview() {
       dist = at.map((e) => e - c.pos)
       more = moving || c.off.size > 0 || c.born.size > 0 || c.sNow !== L0.s
     } else if (phase === 'dive') {
+      // The overview still covers the canvas: switch layer at once, so the
+      // real widgets do their one heavy repaint now, not as the sheet lands.
+      commit()
       const t = clamp01(el / T.dive)
-      textGate = 1 - clamp01(t / 0.35)
+      textGate = 1 - clamp01(t / 0.3)
       const j = c.diveTo
+      // no lift and no swing: the sheet eases flat onto the canvas, the rest
+      // drift a little and fade
+      const f = easeOut(clamp01(t / 0.85))
       for (let i = 0; i < N; i++) {
         const start = c.poses[i] ?? ovFlat(false)
         if (i === j) {
-          // lift out, flatten, then grow to the window
-          const lift = easeOut(clamp01(t / 0.4))
-          const p = { ...start, z: start.z + 60 * L.zk * lift * (1 - t), tilt: lerp(start.tilt, Math.min(start.tilt, 8), lift) }
-          const f = easeInOut(clamp01((t - 0.1) / 0.9))
-          poses.push(mixPose(p, ovFlat(true), f))
+          poses.push(mixPose(start, ovFlat(true), f))
           cams[i] = lerpCam(c.cams[i] ?? fitOf(ls[i].id), c.diveCam!, f)
           continue
         }
-        // the rest fold away above and below, nearest last
         const d = i - j
-        const k = easeInOut(clamp01((t - (0.18 - Math.min(Math.abs(d), 3) * 0.05)) / 0.55))
-        const away = {
-          ...start,
-          y: start.y - Math.sign(d) * 220,
-          z: start.z - 140 * L.zk,
-          tilt: Math.min(80, start.tilt + 6),
-          op: 0,
-        }
-        poses.push(mixPose(start, away, k))
+        const away = { ...start, y: start.y - Math.sign(d) * 60, z: start.z - 40 * L.zk, op: 0 }
+        poses.push(mixPose(start, away, easeOut(clamp01(t / 0.5))))
       }
-      morph[j] = easeInOut(clamp01((t - 0.5) / 0.5))
+      morph[j] = easeOut(clamp01((t - 0.45) / 0.5))
       // and the sheet becomes the canvas as it lands
       surf[j] = 1 - clamp01((t - 0.8) / 0.2)
-      chromeOp = 1 - clamp01((t - 0.6) / 0.3)
+      chromeOp = 1 - clamp01(t / 0.4)
       labOp = (1 - clamp01(t / 0.3)) * 0.9
       glideIdx = j
-      glideT = easeInOut(t)
+      glideT = easeOut(t)
       dist = ls.map((_, i) => i - j)
-      // switch layer while the overview still covers the canvas, so the
-      // real widgets have painted by the time the tiles wipe away
-      if (t >= 0.85) commit()
     } else if (phase === 'handover') {
       textGate = 0
       const u = clamp01(el / T.handover)
@@ -687,10 +713,8 @@ export function LayerOverview() {
     const ls = live.current.layers
     const L = c.L!
     setPhase('intro', now)
-    // the accordion it opens to, and the deck it forms first (where the
-    // open sheet will be)
+    // the accordion it opens to
     c.acc = ovPoses(L, ls.map((_, i) => i), c.here)
-    c.deckShift = (c.acc[c.here]?.y ?? L.cy) - L.cy
   }
 
   // ---------- actions ----------
@@ -730,9 +754,12 @@ export function LayerOverview() {
     }
     const now = performance.now()
     if (c.phase === 'intro') {
-      // reverse from wherever it has got to
-      const el = Math.min(T.intro, (now - c.t0) / c.slow)
-      setPhase('outro', now - (T.intro - el) * c.slow)
+      // close from wherever the opening has got to
+      c.acc = c.poses.map((p) => ({ ...p }))
+      c.outCam = c.cams[c.here] ?? null
+      c.committed = false
+      setPhase('outro', now)
+      kick()
       return
     }
     if (c.phase !== 'live') return
@@ -740,8 +767,7 @@ export function LayerOverview() {
     c.here = L.curIdx
     c.startCam = L.ws.camera
     c.acc = c.poses.map((p) => ({ ...p }))
-    const deck = ovPoses(c.L!, L.layers.map((_, i) => i), c.here)
-    c.deckShift = (deck[c.here]?.y ?? c.L!.cy) - c.L!.cy
+    c.outCam = c.cams[c.here] ?? null
     c.diveTo = -1
     c.committed = false
     window.clearTimeout(c.hoverT)
