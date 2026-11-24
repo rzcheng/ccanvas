@@ -475,6 +475,51 @@ export const IconNextTrack = (p: P) => (
     <path d="M5.5 5.5v13L15 12 5.5 5.5z" fill="currentColor" />
   </S>
 )
+export const IconShuffle = (p: P) => (
+  <S {...p}>
+    <path d="M3.5 7h3c3.5 0 5.5 10 9 10h4.5" />
+    <path d="M3.5 17h3c1.4 0 2.6-1.6 3.6-3.6M13.9 9.6C14.9 8 16 7 17.5 7h2.5" />
+    <path d="M17.5 4.5L20 7l-2.5 2.5M17.5 14.5L20 17l-2.5 2.5" />
+  </S>
+)
+export const IconRepeat = (p: P) => (
+  <S {...p}>
+    <path d="M4.5 11V9.5a2.5 2.5 0 012.5-2.5h12" />
+    <path d="M16.5 4.5L19 7l-2.5 2.5" />
+    <path d="M19.5 13v1.5a2.5 2.5 0 01-2.5 2.5H5" />
+    <path d="M7.5 19.5L5 17l2.5-2.5" />
+  </S>
+)
+export const IconRepeatOne = (p: P) => (
+  <S {...p}>
+    <path d="M4.5 11V9.5a2.5 2.5 0 012.5-2.5h12" />
+    <path d="M16.5 4.5L19 7l-2.5 2.5" />
+    <path d="M19.5 13v1.5a2.5 2.5 0 01-2.5 2.5H5" />
+    <path d="M7.5 19.5L5 17l2.5-2.5" />
+    <path d="M11 11l1.3-.8V14" strokeWidth="1.5" />
+  </S>
+)
+export const IconHeart = ({ filled, ...p }: P & { filled?: boolean }) => (
+  <S {...p}>
+    <path
+      d="M12 19.5s-7.5-4.4-7.5-9.8A4.2 4.2 0 0112 7.3a4.2 4.2 0 017.5 2.4c0 5.4-7.5 9.8-7.5 9.8z"
+      fill={filled ? 'currentColor' : 'none'}
+    />
+  </S>
+)
+export const IconVolume = ({ level = 2, ...p }: P & { level?: 0 | 1 | 2 }) => (
+  <S {...p}>
+    <path d="M4 9.5h3l4.5-4v13l-4.5-4H4z" fill="currentColor" strokeWidth="1.4" />
+    {level === 0 ? (
+      <path d="M15.5 9.5l5 5M20.5 9.5l-5 5" />
+    ) : (
+      <>
+        <path d="M15 9.2a4 4 0 010 5.6" />
+        {level === 2 && <path d="M17.8 6.5a7.8 7.8 0 010 11" />}
+      </>
+    )}
+  </S>
+)
 
 // A ring of rays — the Claude workspace tab (echoes the app mark / agent star).
 export const IconClaude = (p: P) => (

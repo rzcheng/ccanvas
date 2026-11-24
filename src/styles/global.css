@@ -5428,27 +5428,76 @@ body.is-panning * {
 
 /* ============================================================
    Now playing (widgets/NowPlayingBody.tsx): square artwork, the track
-   in cream, the artist dim, a faint source label, a 2px progress line
-   and ghost transport buttons.
+   in cream, the artist dim, a faint source label, a thin accent progress
+   line that becomes a seek bar under the pointer, and ghost buttons.
+
+   .np is a size container and .np__grid rearranges itself by the body's
+   size alone:
+     strip    (under 92px tall)  tiny art · title · play/next, line at the foot
+     compact  (the default)      art left; text, seek bar and buttons right
+     tall     (220px+, squarish) big art on top, everything centred below it
+     big      (600px+ wide)      compact, scaled up for focus mode
    ============================================================ */
+@property --np-tint {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
+}
 .np {
   position: absolute;
   inset: 0;
-  display: flex;
-  align-items: stretch;
-  gap: 14px;
-  padding: 12px 14px 10px 12px;
   overflow: hidden;
-  /* the artwork sizes off the body's height and width (cq units) */
-  container-type: size;
+  container: np / size;
+  outline: none;
+  --np-btn: 26px;
+  --np-main: 30px;
+  transition: --np-tint 0.8s ease;
+}
+/* a soft wash of the artwork's colour from the top-left corner */
+.np::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(130% 120% at 0% 0%, color-mix(in srgb, var(--np-tint) 16%, transparent), transparent 70%);
+  opacity: 0;
+  transition: opacity 0.8s ease;
+}
+.np.has-tint::before {
+  opacity: 1;
+}
+.np__grid {
+  position: relative;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px 10px 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    'art meta'
+    'art scrub'
+    'art row';
+  column-gap: 14px;
+  row-gap: 3px;
+}
+
+/* ---- artwork ---- */
+.np__art-slot {
+  grid-area: art;
+  /* square: as tall as the body allows, never more than ~40% of its width */
+  width: min(100cqh - 22px, 40cqw);
+  min-height: 0;
+  container: npart / size;
+  display: grid;
+  place-items: center;
 }
 .np__art {
-  /* square: as tall as the body allows, never more than ~half its width */
-  width: min(46cqw, calc(100cqh - 22px));
+  position: relative;
+  width: min(100cqw, 100cqh);
   aspect-ratio: 1;
-  min-height: 0;
-  align-self: center;
-  flex-shrink: 0;
+  padding: 0;
+  border: none;
   border-radius: 4px;
   overflow: hidden;
   display: grid;
@@ -5457,39 +5506,74 @@ body.is-panning * {
   box-shadow: inset 0 0 0 1px var(--line-soft);
   color: var(--ink-ghost);
 }
-.np__art svg {
+button.np__art {
+  cursor: pointer;
+}
+.np__art > svg {
   width: 34%;
   height: 34%;
 }
 .np__art img,
 .np-card__art img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
   user-select: none;
 }
-.np__main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 8px;
+/* the next track's artwork fades in over the last one once it's loaded */
+.np-art__next {
+  opacity: 0;
 }
-.np__meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-height: 0;
-  margin-bottom: auto;
-  max-height: 100%;
+.np-art__next.is-in {
+  animation: np-in 0.32s ease forwards;
 }
-/* a big Now playing (focus mode) keeps its text by the controls */
-@container (min-height: 260px) {
-  .np__meta {
-    margin-bottom: 10px;
+@keyframes np-in {
+  from {
+    opacity: 0;
   }
+  to {
+    opacity: 1;
+  }
+}
+/* hovering the artwork offers to open the app */
+.np__art-open {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 20px;
+  height: 20px;
+  padding: 4px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  color: var(--ink);
+  opacity: 0;
+  transition: opacity 0.14s;
+}
+.np__art:hover .np__art-open,
+.np__art:focus-visible .np__art-open {
+  opacity: 1;
+}
+
+/* ---- text ---- */
+.np__meta {
+  grid-area: meta;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+.np__swap {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  animation: np-in 0.28s ease;
 }
 .np__track,
 .np__artist,
@@ -5508,10 +5592,14 @@ body.is-panning * {
 .np__artist {
   font-family: var(--font-sans);
   font-size: calc(12.5px * var(--ts));
+  line-height: 1.3;
   color: var(--ink-dim);
 }
 .np__source {
   margin-top: 4px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   font-family: var(--font-label);
   font-size: calc(9.5px * var(--ts));
   font-weight: 600;
@@ -5519,44 +5607,131 @@ body.is-panning * {
   text-transform: uppercase;
   color: var(--ink-ghost);
 }
-.np__progress {
-  height: 2px;
-  border-radius: 1px;
-  background: color-mix(in srgb, var(--ink) 10%, transparent);
+.np__source-name {
   overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the other app, when both have a track */
+.np__switch {
   flex-shrink: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--ink-faint);
+  cursor: pointer;
 }
-.np__fill {
-  height: 100%;
-  background: var(--k);
-  transform-origin: 0 50%;
-  transform: scaleX(0);
+.np__switch::before {
+  content: '⇄ ';
 }
-.np__foot {
+.np__switch:hover {
+  color: var(--k);
+}
+
+/* ---- seek bar: times either side of a 2px line that thickens on hover ---- */
+.np__scrub {
+  grid-area: scrub;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  flex-shrink: 0;
+  min-width: 0;
 }
 .np__time {
+  flex-shrink: 0;
   font-family: var(--font-mono);
   font-size: calc(10px * var(--ts));
   font-variant-numeric: tabular-nums;
   color: var(--ink-faint);
-  min-width: 4ch;
+  min-width: 3.6ch;
 }
-.np__time:last-child {
+.np__time--total {
   text-align: right;
 }
-.np__controls {
+.np__bar {
+  flex: 1;
+  min-width: 0;
+  height: 14px;
   display: flex;
   align-items: center;
-  gap: 4px;
+  cursor: pointer;
+  touch-action: none;
+}
+.np__bar.is-off {
+  cursor: default;
+}
+.np__rail {
+  position: relative;
+  flex: 1;
+  height: 2px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 11%, transparent);
+  /* clip the run at the rail's ends but let the knob stand above and below */
+  clip-path: inset(-6px -6px -6px 0 round 2px);
+  transition: height 0.12s ease;
+}
+.np__run {
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+  background: var(--k);
+  transform: translateX(-100%);
+}
+.np__run::after {
+  content: '';
+  position: absolute;
+  right: -4px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg) 60%, transparent);
+  transform: scale(0);
+  transition: transform 0.12s ease;
+}
+.np__bar:not(.is-off):hover .np__rail,
+.np__bar.is-dragging .np__rail {
+  height: 4px;
+}
+.np__bar:not(.is-off):hover .np__run::after,
+.np__bar.is-dragging .np__run::after {
+  transform: scale(1);
+}
+
+/* ---- buttons ---- */
+.np__row {
+  grid-area: row;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.np__transport {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: auto;
+  /* line the first icon up with the text above */
+  margin-left: -5px;
+}
+.np__like {
+  order: 1;
+}
+.np__like--none {
+  display: none;
+  width: var(--np-btn);
+  height: var(--np-btn);
+}
+.np__vol {
+  order: 2;
 }
 .np__btn {
-  width: 26px;
-  height: 26px;
+  flex-shrink: 0;
+  width: var(--np-btn);
+  height: var(--np-btn);
   padding: 0;
   display: grid;
   place-items: center;
@@ -5568,12 +5743,22 @@ body.is-panning * {
   transition: color 0.12s, background-color 0.12s;
 }
 .np__btn svg {
-  width: 13px;
-  height: 13px;
+  width: 50%;
+  height: 50%;
+}
+.np__btn--main {
+  width: var(--np-main);
+  height: var(--np-main);
+  color: var(--ink);
 }
 .np__btn--main svg {
-  width: 16px;
-  height: 16px;
+  width: 54%;
+  height: 54%;
+}
+.np__mode svg,
+.np__like svg {
+  width: 54%;
+  height: 54%;
 }
 .np__btn:hover {
   color: var(--ink);
@@ -5582,19 +5767,434 @@ body.is-panning * {
 .np__btn:active {
   background: color-mix(in srgb, var(--ink) 13%, transparent);
 }
-.np--empty .np__main {
+.np__btn:focus-visible,
+.np__art:focus-visible,
+.np__vbar:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--k) 70%, transparent);
+  outline-offset: 1px;
+}
+/* a toggle that's on: the accent, and a dot under it */
+.np__btn.is-on {
+  position: relative;
+  color: var(--k);
+}
+.np__mode.is-on::after {
+  content: '';
+  position: absolute;
+  bottom: 1px;
+  left: 50%;
+  width: 3px;
+  height: 3px;
+  margin-left: -1.5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ---- volume: the speaker mutes; hovering it shows a slider above ---- */
+.np__vol {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.np__vol.is-muted > .np__btn {
+  color: var(--ink-faint);
+}
+.np__vol-pop {
+  position: absolute;
+  right: -2px;
+  bottom: calc(100% + 2px);
+  width: 108px;
+  padding: 6px 10px;
+  box-sizing: border-box;
+  border-radius: 6px;
+  background: var(--panel-hi);
+  box-shadow: 0 0 0 1px var(--line-soft), 0 6px 16px rgb(0 0 0 / 0.3);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(3px);
+  /* leaving it stays open a moment, so the pointer can travel up to it */
+  transition: opacity 0.12s 0.18s, transform 0.12s 0.18s, visibility 0s 0.3s;
+}
+/* a bridge over the gap between the button and the slider */
+.np__vol-pop::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 6px;
+}
+.np__vol:hover .np__vol-pop,
+.np__vol:has(:focus-visible) .np__vol-pop,
+.np__vol-pop:has(.is-dragging) {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-delay: 0s;
+}
+.np__vbar {
+  position: relative;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+  border-radius: 3px;
+}
+.np__vrail {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+}
+.np__vfill {
+  height: 100%;
+  background: var(--k);
+  transform-origin: 0 50%;
+}
+.np__vknob {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  border-radius: 50%;
+  background: var(--ink);
+  pointer-events: none;
+}
+
+/* ---- compact, narrower: drop shuffle and repeat, then the favourite and
+   the volume, then the artwork ---- */
+@container np (max-width: 380px) {
+  .np__mode {
+    display: none;
+  }
+}
+@container np (max-width: 300px) {
+  .np__like,
+  .np__vol,
+  .np__time--total {
+    display: none;
+  }
+}
+@container np (max-width: 230px) {
+  .np__grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'meta' 'scrub' 'row';
+  }
+  .np__art-slot {
+    display: none;
+  }
+}
+
+/* ---- strip ---- */
+@container np (max-height: 91px) {
+  .np__grid {
+    padding: 7px 8px 8px 7px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-areas: 'art meta row';
+    column-gap: 10px;
+  }
+  .np__art-slot {
+    display: grid;
+    width: calc(100cqh - 15px);
+  }
+  .np__art {
+    border-radius: 3px;
+  }
+  .np__art-open {
+    display: none;
+  }
+  .np__meta {
+    justify-content: center;
+  }
+  .np__track {
+    font-size: calc(13px * var(--ts));
+  }
+  .np__artist {
+    font-size: calc(11.5px * var(--ts));
+  }
+  .np__source {
+    display: none;
+  }
+  /* the line runs along the foot of the widget */
+  .np__scrub {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+  }
+  .np__time {
+    display: none;
+  }
+  .np__bar {
+    height: 7px;
+    align-items: flex-end;
+  }
+  .np__rail {
+    clip-path: inset(-6px -6px 0 0);
+    border-radius: 0;
+  }
+  .np__row {
+    gap: 0;
+  }
+  .np__transport {
+    margin: 0;
+  }
+  .np__mode,
+  .np__prev,
+  .np__like,
+  .np__vol {
+    display: none;
+  }
+}
+@container np (max-height: 54px) {
+  .np__artist {
+    display: none;
+  }
+}
+@container np (max-height: 91px) and (max-width: 220px) {
+  .np__next {
+    display: none;
+  }
+}
+@container np (max-height: 40px) or ((max-height: 91px) and (max-width: 150px)) {
+  .np__art-slot {
+    display: none;
+  }
+  .np__grid {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: 'meta row';
+  }
+}
+
+/* ---- tall: the artwork on top, the rest centred under it ---- */
+@container np (min-height: 220px) and (max-aspect-ratio: 6/5) {
+  .np__grid {
+    padding: 16px 16px 12px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto auto auto;
+    grid-template-areas: 'art' 'meta' 'scrub' 'row';
+    row-gap: 6px;
+  }
+  .np__art-slot {
+    display: grid;
+    width: auto;
+    margin-bottom: 8px;
+  }
+  .np__art {
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 1px var(--line-soft), 0 8px 24px rgb(0 0 0 / 0.28);
+  }
+  .np__meta {
+    align-items: center;
+    text-align: center;
+  }
+  .np__swap {
+    align-items: center;
+    max-width: 100%;
+  }
+  .np__track,
+  .np__artist {
+    max-width: 100%;
+  }
+  .np__source {
+    justify-content: center;
+    max-width: 100%;
+  }
+  .np__row {
+    justify-content: space-between;
+  }
+  .np__like,
+  .np__time--total {
+    display: grid;
+  }
+  .np__like {
+    order: 0;
+  }
+  .np__like--none {
+    display: block;
+  }
+  .np__vol {
+    display: flex;
+  }
+  .np__transport {
+    order: 1;
+    margin: 0;
+    gap: 6px;
+  }
+  .np__mode {
+    display: grid;
+  }
+}
+@container np (min-height: 220px) and (max-aspect-ratio: 6/5) and (max-width: 250px) {
+  .np__mode {
+    display: none;
+  }
+}
+@container np (min-height: 220px) and (max-aspect-ratio: 6/5) and (max-width: 180px) {
+  .np__like,
+  .np__vol {
+    display: none;
+  }
+  .np__row {
+    justify-content: center;
+  }
+}
+/* tall and big (focus mode in a tall window) */
+@container np (min-height: 520px) and (min-width: 380px) and (max-aspect-ratio: 6/5) {
+  .np {
+    --np-btn: 34px;
+    --np-main: 46px;
+  }
+  .np__grid {
+    padding: 28px 28px 22px;
+    row-gap: 10px;
+  }
+  .np__art-slot {
+    margin-bottom: 14px;
+  }
+  .np__track {
+    font-size: calc(19px * var(--ts));
+  }
+  .np__artist {
+    font-size: calc(15px * var(--ts));
+  }
+  .np__transport {
+    gap: 14px;
+  }
+  .np__btn--main {
+    background: color-mix(in srgb, var(--ink) 9%, transparent);
+  }
+}
+
+/* ---- big: compact, scaled up (focus mode in a wide window) ---- */
+@container np (min-width: 600px) and (min-height: 240px) and (min-aspect-ratio: 121/100) {
+  .np {
+    --np-btn: 34px;
+    --np-main: 46px;
+  }
+  .np__grid {
+    padding: 24px 32px 22px 24px;
+    column-gap: 28px;
+    row-gap: 10px;
+  }
+  .np__art-slot {
+    width: min(100cqh - 46px, 45cqw);
+  }
+  .np__art {
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 1px var(--line-soft), 0 10px 30px rgb(0 0 0 / 0.3);
+  }
+  .np__meta {
+    justify-content: flex-end;
+    padding-bottom: 6px;
+  }
+  .np__track {
+    font-size: calc(min(30px, max(19px, 4.4cqh)) * var(--ts));
+    line-height: 1.2;
+  }
+  .np__artist {
+    font-size: calc(min(19px, max(14px, 2.8cqh)) * var(--ts));
+    margin-top: 2px;
+  }
+  .np__source {
+    margin-top: 10px;
+    font-size: calc(10.5px * var(--ts));
+  }
+  .np__time {
+    font-size: calc(11px * var(--ts));
+  }
+  .np__transport {
+    gap: 8px;
+    margin-left: -7px;
+  }
+  .np__btn--main {
+    background: color-mix(in srgb, var(--ink) 9%, transparent);
+  }
+  .np__like,
+  .np__vol {
+    display: flex;
+  }
+  .np__mode {
+    display: grid;
+  }
+  /* there's room for the volume slider in the row itself */
+  .np__vol {
+    gap: 4px;
+  }
+  .np__vol-pop {
+    position: static;
+    width: 96px;
+    padding: 0 4px;
+    background: none;
+    box-shadow: none;
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    transition: none;
+  }
+  .np__vol-pop::after {
+    display: none;
+  }
+}
+
+/* bigger still: a focus-mode window */
+@container np (min-width: 820px) and (min-height: 420px) and (min-aspect-ratio: 121/100) {
+  .np {
+    --np-btn: 40px;
+    --np-main: 56px;
+  }
+  .np__grid {
+    padding: 36px 48px 32px 36px;
+    column-gap: 40px;
+  }
+  .np__art-slot {
+    width: min(100cqh - 68px, 45cqw);
+  }
+  .np__track {
+    font-size: calc(min(36px, 5.6cqh) * var(--ts));
+  }
+  .np__artist {
+    font-size: calc(min(22px, 3.4cqh) * var(--ts));
+  }
+  .np__time {
+    font-size: calc(12px * var(--ts));
+  }
+  .np__transport {
+    gap: 12px;
+  }
+  .np__vol-pop {
+    width: 120px;
+  }
+}
+
+/* ---- empty, denied, unsupported ---- */
+.np--empty .np__meta {
+  grid-row: 1 / -1;
+  align-self: center;
   justify-content: center;
   gap: 4px;
 }
 .np--empty .np__track {
   color: var(--ink-dim);
   white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 .np__hint {
   font-family: var(--font-sans);
   font-size: calc(12px * var(--ts));
   line-height: 1.4;
   color: var(--ink-faint);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .np__link {
   align-self: flex-start;
@@ -5610,22 +6210,88 @@ body.is-panning * {
 .np__link:hover {
   text-decoration: underline;
 }
+.np--loading .np__art {
+  opacity: 0.5;
+}
+/* a strip has room for two lines: the heading and the hint, or the link */
+@container np (max-height: 91px) {
+  .np--empty .np__meta {
+    grid-row: auto;
+    gap: 2px;
+  }
+  .np--empty .np__track {
+    -webkit-line-clamp: 1;
+  }
+  .np--empty .np__hint {
+    -webkit-line-clamp: 1;
+  }
+  .np--denied .np__hint {
+    display: none;
+  }
+  .np--empty .np__link {
+    margin-top: 0;
+  }
+}
+@container np (max-height: 54px) {
+  .np--empty .np__hint,
+  .np--empty .np__link {
+    display: none;
+  }
+}
+@container np (min-height: 220px) and (max-aspect-ratio: 6/5) {
+  .np--empty .np__meta {
+    grid-row: auto;
+    align-self: start;
+  }
+  .np--empty .np__art-slot {
+    margin-bottom: 4px;
+  }
+  .np--empty .np__art {
+    width: min(60cqw, 60cqh);
+    box-shadow: inset 0 0 0 1px var(--line-soft);
+  }
+  .np__link {
+    align-self: center;
+  }
+}
 
-/* zoomed far out: artwork and title, in screen px (see .term-card) */
+@media (prefers-reduced-motion: reduce) {
+  .np,
+  .np::before {
+    transition: none;
+  }
+  .np__swap {
+    animation: none;
+  }
+  /* still ends, so the old artwork is let go */
+  .np-art__next.is-in {
+    animation-duration: 1ms;
+  }
+}
+
+/* zoomed far out: artwork and title, in screen px (see .term-card). The card
+   is a size container; .np-card__in lays it out by the card's shape. */
 .np-card {
   --px: calc(1px / var(--z, 1));
   position: absolute;
   inset: 0;
   z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: min(calc(var(--px) * 12), 6%);
-  padding: min(calc(var(--px) * 12), 8%);
   background: var(--panel);
   overflow: hidden;
+  container: npcard / size;
+}
+.np-card__in {
+  --pad: min(calc(var(--px) * 12), 8cqw, 14cqh);
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--pad);
+  padding: 0 var(--pad);
 }
 .np-card__art {
-  height: 100%;
+  position: relative;
+  width: min(100cqh - 2 * var(--pad), 42cqw);
   aspect-ratio: 1;
   flex-shrink: 0;
   border-radius: calc(var(--px) * 4);
@@ -5635,7 +6301,7 @@ body.is-panning * {
   background: var(--panel-2);
   color: var(--ink-ghost);
 }
-.np-card__art svg {
+.np-card__art > svg {
   width: 40%;
   height: 40%;
 }
@@ -5676,7 +6342,8 @@ body.is-panning * {
   min-width: 0;
   font-family: var(--font-label);
   font-weight: 700;
-  font-size: min(calc(var(--px) * 17), 64px);
+  /* two lines must fit a short card */
+  font-size: min(calc(var(--px) * 17), 64px, 34cqh);
   line-height: 1.3;
   color: var(--ink);
   display: -webkit-box;
@@ -5684,6 +6351,21 @@ body.is-panning * {
   -webkit-box-orient: vertical;
   overflow: hidden;
   word-break: break-word;
+}
+/* a tall card: the artwork on top, the title under it */
+@container npcard (max-aspect-ratio: 11/10) {
+  .np-card__in {
+    flex-direction: column;
+    justify-content: center;
+    padding: var(--pad);
+    text-align: center;
+  }
+  .np-card__art {
+    width: min(100cqw - 2 * var(--pad), 52cqh);
+  }
+  .np-card__title {
+    font-size: min(calc(var(--px) * 17), 64px, 13cqw, 11cqh);
+  }
 }
 
 /* the title-bar icon: three level bars that bob while music plays */
