@@ -4,8 +4,8 @@
 //    canvases (and every file from before layers) are unchanged.
 //  • `ws.layers` is materialised only once a second layer exists.
 //  • A layer may carry its own folder (`dir`) and remembers its own camera.
-// The overview's card-file geometry (ported from the layers prototype) is at
-// the bottom: a few hundred multiplications per layout, no DOM reads.
+// The overview's accordion geometry (ported from the layers-accordion prototype)
+// is at the bottom: pure arithmetic per frame, no DOM reads.
 
 import type { Camera, CanvasElement, Layer, Workspace } from './types'
 import type { AgentStatus } from './agents'
@@ -251,169 +251,246 @@ export function layerLed(st: LayerStats): LedStatus | null {
   return st.waiting ? 'waiting' : st.working ? 'working' : st.done ? 'done' : null
 }
 
-// ---------- overview geometry (the card file) ----------
+// ---------- overview geometry (the accordion) ----------
 //
-// One perspective stage holds every layer as a viewport-sized sheet at
-// translate3d(0, 0, z_i), tilted back by TILT and scaled by k. Each sheet shows
-// a strip `g` px tall; the focused sheet lifts and the ones above it move up by
-// a reveal gap so it is fully visible. Everything is in screen px, converted
-// to stage units with u = k·sin(TILT).
+// Ported from the approved layers-accordion prototype. Every layer is a
+// viewport-sized sheet with its own transform (no shared 3D stage): one float,
+// the open position, drives them all. A sheet's pose is a function of its
+// distance from that position: the open sheet swings up to OPEN_TILT and
+// lifts forward, the others fold to SLAT_TILT slats a fixed gap apart, darker
+// with distance. Sheets only rotate and translate; their size never changes.
+// Higher layers sit higher on screen (01, the base, is at the bottom).
 
 export const OV = {
-  TILT: 58, // deg, rotateX of the stage
-  PERSP: 2600, // px; keep in sync with .lo-view in layers.css
-  PO_Y: 0.42, // perspective-origin y; keep in sync with .lo-view
-  COMPRESS: 0.62, // the resting stack is tighter than the solver's maximum
-  SLAB: 6, // screen px between plates while collapsed on open
-  MAG_MAX: 28, // cursor spread: extra px at the cursor
-  MAG_SIGMA: 64, // cursor spread: falloff px
-  FAR: 900, // how far other sheets fly on a dive (stage px)
-  HEAD_H: 62,
-  FOOT_H: 64,
-  RAIL_X: 18,
+  OPEN_TILT: 12, // deg
+  SLAT_TILT: 68,
+  DECK_TILT: 52, // the closed deck the canvas pulls back into on open
+  GAP: 26, // screen px between slats
+  GAP_MIN: 16, // a tall stack tightens the gap before it shrinks the sheets
+  LIFT: 80, // z of the open sheet
+  SLAT_Z: -30,
+  FAR_Z: 18, // further back per step past the first slat
+  PERSP: 1700, // px
+  /** the sheet height the prototype's z values and perspective were tuned
+   *  at; larger sheets scale both so the stack keeps its depth */
+  REF_H: 370,
+  PO_X: 0.58, // perspective origin, of the width
+  PO_Y: 0.3, // of the scene below the header
+  HEAD_H: 52,
+  FOOT_H: 52,
+  RAIL_X: 16, // the rail's left edge
+  TEXT_TILT: 24, // text shows only while a sheet is tilted less than this
+  K: 170, // the open position's spring
+  ZETA: 0.86,
 } as const
 
 const RAD = Math.PI / 180
 
-export type OvGeom = {
+export const lerp = (a: number, b: number, t: number) => a + (b - a) * t
+export const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x)
+export const easeOut = (t: number) => 1 - Math.pow(1 - t, 3)
+export const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
+
+export type OvLayout = {
   n: number
   W: number
   H: number
-  k: number
-  /** screen px per stage unit of Z */
-  u: number
-  /** strip, reveal gap and lift, in stage units */
-  G: number
-  R: number
-  LIFT: number
-  focus: number
-  /** extra Z per gap from the cursor spread (gap j sits between sheets j and j+1) */
-  boost: number[]
-  /** stage translateY that centres the stack */
-  Y: number
+  /** sheet scale: a sheet is the whole canvas (W × H) shown at s */
+  s: number
+  gap: number
+  /** the stack's centre, relative to the root's centre */
+  cx: number
+  cy: number
+  /** z and perspective scale (see REF_H) */
+  zk: number
+  persp: number
+  /** perspective origin, root px */
+  ox: number
+  oy: number
 }
 
-/** Screen position of point (x, y) on a sheet lifted to z, replicating the CSS. */
-export function ovProject(g: OvGeom, x: number, y: number, z: number, Y: number) {
-  const cx = g.W / 2
-  const cy = g.H / 2
-  const c = Math.cos(OV.TILT * RAD)
-  const s = Math.sin(OV.TILT * RAD)
-  const X = (x - cx) * g.k
-  const Yl = (y - cy) * g.k
-  const Z = z * g.k
-  const y2 = Yl * c - Z * s
-  const z2 = Yl * s + Z * c
-  const X3 = X + cx
-  const Y3 = y2 + cy + Y
-  const f = OV.PERSP / (OV.PERSP - z2)
-  const ox = g.W / 2
-  const oy = g.H * OV.PO_Y
-  return { x: ox + (X3 - ox) * f, y: oy + (Y3 - oy) * f }
+/** Where one sheet is: translate3d(x, y, z) rotateX(tilt) scale(scale),
+ *  about the sheet's centre (x, y relative to the root's centre). */
+export type Pose = { x: number; y: number; z: number; tilt: number; scale: number; op: number; shade: number }
+
+function makeLayout(n: number, W: number, H: number, cx: number, s: number, gap: number): OvLayout {
+  const zk = Math.max(1, (s * H) / OV.REF_H)
+  const sceneH = H - OV.HEAD_H - OV.FOOT_H
+  return {
+    n,
+    W,
+    H,
+    s,
+    gap,
+    cx,
+    cy: (OV.HEAD_H - OV.FOOT_H) / 2,
+    zk,
+    persp: OV.PERSP * zk,
+    ox: W * OV.PO_X,
+    oy: OV.HEAD_H + sceneH * OV.PO_Y,
+  }
 }
 
-function params(g: OvGeom, k: number, sc: number) {
-  const cosT = Math.cos(OV.TILT * RAD)
-  const sinT = Math.sin(OV.TILT * RAD)
-  const avail = (g.H - OV.HEAD_H - OV.FOOT_H) * sc
-  const sheetH = g.H * k * cosT
-  const strip = (g.n > 2 ? clamp((avail - 2 * sheetH - 40) / (g.n - 2), 42, 120) : 110) * OV.COMPRESS
-  const lift = 16
-  const reveal = Math.max(0, sheetH - strip + lift + 18)
-  g.k = k
-  g.u = k * sinT
-  g.G = strip / g.u
-  g.R = reveal / g.u
-  g.LIFT = lift / g.u
+/** The accordion: a sheet's pose at distance d (layers) from the open position. */
+export function ovPose(L: OvLayout, d: number): Pose {
+  const ad = Math.abs(d)
+  const a = Math.min(1, ad)
+  const far = Math.max(0, ad - 1)
+  const sgn = Math.sign(d)
+  const openHalf = (L.s * L.H * Math.cos(OV.OPEN_TILT * RAD)) / 2
+  return {
+    x: L.cx,
+    // up the stack is up the screen
+    y: L.cy - sgn * (lerp(0, openHalf + L.gap * 1.6, a) + far * L.gap),
+    z: (lerp(OV.LIFT, OV.SLAT_Z, a) - far * OV.FAR_Z) * L.zk,
+    tilt: lerp(OV.OPEN_TILT, OV.SLAT_TILT, a),
+    scale: L.s,
+    op: 1,
+    shade: Math.min(0.62, a * 0.28 + far * 0.1),
+  }
 }
 
-/** Z of sheet i without the cursor spread. */
-export function ovZBase(g: OvGeom, i: number): number {
-  return i * g.G + (i > g.focus ? g.R : 0) + (i === g.focus ? g.LIFT : 0)
+/** A closed deck: every sheet pressed together, d layers from the current one. */
+export function ovDeck(L: OvLayout, d: number, shift = 0): Pose {
+  const ad = Math.abs(d)
+  return {
+    x: L.cx,
+    y: L.cy + shift - d * 5,
+    z: -ad * 6 * L.zk,
+    tilt: OV.DECK_TILT,
+    scale: L.s * 0.94,
+    op: 1,
+    shade: Math.min(0.6, ad * 0.12),
+  }
 }
 
-/** Z of sheet i, including the cursor spread of every gap below it. */
-export function ovZ(g: OvGeom, i: number): number {
-  let b = 0
-  for (let j = 0; j < i; j++) b += g.boost[j] || 0
-  return ovZBase(g, i) + b
+/** The canvas: one sheet flat, exactly covering the live canvas. */
+export const ovFlat = (on: boolean): Pose => ({ x: 0, y: 0, z: 0, tilt: 0, scale: 1, op: on ? 1 : 0, shade: 0 })
+
+export function mixPose(a: Pose, b: Pose, t: number): Pose {
+  return {
+    x: lerp(a.x, b.x, t),
+    y: lerp(a.y, b.y, t),
+    z: lerp(a.z, b.z, t),
+    tilt: lerp(a.tilt, b.tilt, t),
+    scale: lerp(a.scale, b.scale, t),
+    op: lerp(a.op, b.op, t),
+    shade: lerp(a.shade, b.shade, t),
+  }
 }
 
-function extents(g: OvGeom, Y: number) {
+/** Text only where it can't be skewed: 1 when flat-ish, 0 by TEXT_TILT. */
+export const ovText = (tilt: number) => clamp01((OV.TEXT_TILT - tilt) / 12)
+
+/** Screen point (root px) of sheet-local point (u, v), px from the sheet's
+ *  centre, replicating the CSS transform and the root's perspective. */
+export function ovProject(L: OvLayout, p: Pose, u: number, v: number) {
+  const c = Math.cos(p.tilt * RAD)
+  const sn = Math.sin(p.tilt * RAD)
+  const X = L.W / 2 + p.x + u * p.scale
+  const Y = L.H / 2 + p.y + v * p.scale * c
+  const Z = p.z + v * p.scale * sn
+  const f = L.persp / (L.persp - Z)
+  return { x: L.ox + (X - L.ox) * f, y: L.oy + (Y - L.oy) * f }
+}
+
+/** A sheet's rail anchor: its centre line's y and its left edge's x. */
+export function ovAnchor(L: OvLayout, p: Pose) {
+  const q = ovProject(L, p, -L.W / 2, 0)
+  return { y: q.y, left: q.x }
+}
+
+/** Top and bottom (root px) of a set of poses on screen. */
+export function ovExtent(L: OvLayout, poses: Pose[]) {
   let top = Infinity
   let bottom = -Infinity
-  let left = Infinity
-  for (let i = 0; i < g.n; i++) {
-    const z = ovZ(g, i)
-    const a = ovProject(g, 0, 0, z, Y)
-    const b = ovProject(g, 0, g.H, z, Y)
-    top = Math.min(top, a.y)
-    bottom = Math.max(bottom, b.y)
-    left = Math.min(left, a.x, b.x)
+  for (const p of poses) {
+    top = Math.min(top, ovProject(L, p, 0, -L.H / 2).y)
+    bottom = Math.max(bottom, ovProject(L, p, 0, L.H / 2).y)
   }
-  return { top, bottom, left }
+  return { top, bottom }
 }
 
-/** Stage Y that keeps the stack centred between header and footer. */
-export function ovStageY(g: OvGeom): number {
-  const target = (OV.HEAD_H + g.H - OV.FOOT_H) / 2
-  let Y = 0
-  for (let it = 0; it < 3; it++) {
-    const e = extents(g, Y)
-    Y += target - (e.top + e.bottom) / 2
+/** How far to move the stack so it stays between the header and footer:
+ *  0 while it fits with the open sheet centred (the prototype's look), else
+ *  the least shift that keeps it in, or centred if it can't fit at all. */
+export function ovShift(L: OvLayout, poses: Pose[]): number {
+  if (!poses.length) return 0
+  const e = ovExtent(L, poses)
+  const lo = OV.HEAD_H + 4 - e.top // shift down at least this much
+  const hi = L.H - OV.FOOT_H - 4 - e.bottom // and at most this much
+  if (lo > hi) return (lo + hi) / 2
+  return Math.min(Math.max(0, lo), hi)
+}
+
+/** Accordion poses for sheets at effective positions `at` (index plus any
+ *  slide still settling), open position `pos`, kept inside the scene. */
+export function ovPoses(L: OvLayout, at: number[], pos: number): Pose[] {
+  const poses = at.map((e) => ovPose(L, e - pos))
+  // twice: perspective moves near sheets a little more than the shift
+  for (let k = 0; k < 2; k++) {
+    const dy = ovShift(L, poses)
+    if (Math.abs(dy) < 0.25) break
+    for (const p of poses) p.y += dy
   }
-  return Y
+  return poses
 }
 
 /**
- * Solve the layout once per open or resize: the largest sheets whose stack
- * fits between header and footer and clears the rail, shrinking the strips
- * first and then k. (Perspective enlarges near sheets past a naive estimate,
- * which is why this projects instead of estimating.)
+ * Size the stack once per open, resize or layer count: the largest sheets
+ * (up to half the scene's height, and 80% of the width right of the rail)
+ * whose stack, at its tallest as it rolls, fits the scene. A tall stack
+ * tightens the slat gap before it shrinks the sheets.
  */
-export function ovSolve(n: number, W: number, H: number, focus: number, railW: number): OvGeom {
-  const g: OvGeom = { n, W, H, k: 0.56, u: 1, G: 0, R: 0, LIFT: 0, focus: 0, boost: [], Y: 0 }
-  const availH = H - OV.HEAD_H - OV.FOOT_H + 4 - OV.MAG_MAX * 1.6
-  const railEnd = OV.RAIL_X + railW + 34
-  solve: for (let k = 0.6; k >= 0.3; k -= 0.02) {
-    for (let sc = 1; sc >= 0.5; sc -= 0.04) {
-      params(g, k, sc)
-      const e = extents(g, ovStageY(g))
-      if (e.bottom - e.top <= availH) {
-        if (e.left >= railEnd) break solve
-        break
-      }
+export function ovLayout(n: number, W: number, H: number, railW: number): OvLayout {
+  const regionLeft = OV.RAIL_X + railW + 28
+  const cx = regionLeft / 2
+  const sceneH = H - OV.HEAD_H - OV.FOOT_H
+  const s0 = Math.max(0.12, Math.min(((W - regionLeft) * 0.8) / W, (0.5 * sceneH) / H))
+  const span = (L: OvLayout) => {
+    let worst = 0
+    for (let pos = 0; pos <= n - 1; pos += 0.5) {
+      const e = ovExtent(L, Array.from({ length: n }, (_, i) => ovPose(L, i - pos)))
+      worst = Math.max(worst, e.bottom - e.top)
     }
+    return worst
   }
-  g.focus = clamp(focus, 0, n - 1)
-  g.Y = ovStageY(g)
-  return g
+  for (let gap = OV.GAP; gap >= OV.GAP_MIN; gap -= 2)
+    for (let s = s0; s >= Math.min(s0, 0.18); s -= 0.01) {
+      const L = makeLayout(n, W, H, cx, s, gap)
+      if (span(L) <= sceneH - 8) return L
+    }
+  return makeLayout(n, W, H, cx, Math.min(s0, 0.18), OV.GAP_MIN)
 }
 
-/** Cursor spread: the gaps nearest the pointer open up (Gaussian falloff).
- *  Measured against the un-spread layout, so the sheet under the pointer
- *  doesn't slide away from it. `y` null = no pointer, everything closes. */
-export function ovBoost(g: OvGeom, y: number | null): number[] {
-  const B = OV.MAG_MAX / g.u
-  const s2 = 2 * OV.MAG_SIGMA * OV.MAG_SIGMA
-  const out: number[] = []
-  for (let j = 0; j < g.n - 1; j++) {
-    if (y == null) {
-      out.push(0)
-      continue
-    }
-    const mid = (ovProject(g, 0, g.H, ovZBase(g, j), g.Y).y + ovProject(g, 0, g.H, ovZBase(g, j + 1), g.Y).y) / 2
-    const d = y - mid
-    out.push(B * Math.exp(-(d * d) / s2))
+/** One step of the open position's spring (k 170, ζ 0.86), in 4 substeps. */
+export function springStep(pos: number, vel: number, target: number, dt: number): [number, number] {
+  const c = 2 * OV.ZETA * Math.sqrt(OV.K)
+  const h = dt / 4
+  for (let i = 0; i < 4; i++) {
+    const a = -OV.K * (pos - target) - c * vel
+    vel += a * h
+    pos += vel * h
   }
-  return out
+  return [pos, vel]
 }
 
-/** Where a sheet's rail label sits: the projected near-left corner, and the
- *  length of the 1px leader drawn from the label to that corner. */
-export function ovRailTarget(g: OvGeom, i: number, railW: number) {
-  const p = ovProject(g, 0, g.H, ovZ(g, i), g.Y)
-  return { y: p.y, lead: Math.max(0, p.x - OV.RAIL_X - railW - 3) }
+/** Rail labels, top to bottom: each at its sheet's centre line, pushed down
+ *  just enough not to overlap the one above. Returns each label's centre. */
+export function labelYs(anchors: number[], heights: number[]): number[] {
+  let prevBottom = -Infinity
+  return anchors.map((cy, i) => {
+    const h = heights[i]
+    const y = Math.max(cy, prevBottom + h / 2 + 2)
+    prevBottom = y + h / 2
+    return y
+  })
+}
+
+/** "~/p/rootop/.worktr…ortrait": keeps both ends of a long path. */
+export function midEllipsis(s: string, max: number): string {
+  if (s.length <= max) return s
+  return s.slice(0, Math.ceil((max - 1) * 0.45)) + '…' + s.slice(-Math.floor((max - 1) * 0.55))
 }
 
 /** Fit a layer's content into a sheet (90% × 84% of the viewport). */
@@ -424,48 +501,43 @@ export function ovFit(els: CanvasElement[], W: number, H: number): Camera {
   return { zoom, x: W / 2 - (b.x + b.w / 2) * zoom, y: H / 2 - (b.y + b.h / 2) * zoom }
 }
 
-// ---------- tile labels that stay readable when widgets overlap ----------
+export const lerpCam = (a: Camera, b: Camera, t: number): Camera => ({
+  x: lerp(a.x, b.x, t),
+  y: lerp(a.y, b.y, t),
+  zoom: lerp(a.zoom, b.zoom, t),
+})
 
-/** Candidate label spots [x, y, width] as fractions of the tile: full width
- *  in the middle column first (centre, top, bottom), then half width in the
- *  left and right halves, where a name truncates to fit. */
-const SPOTS: Array<[number, number, number]> = [
-  [0.5, 0.5, 0.88],
-  [0.5, 0.3, 0.88],
-  [0.5, 0.7, 0.88],
-  [0.27, 0.5, 0.46],
-  [0.73, 0.5, 0.46],
-  [0.27, 0.3, 0.46],
-  [0.73, 0.3, 0.46],
-  [0.27, 0.7, 0.46],
-  [0.73, 0.7, 0.46],
-]
+// ---------- tiles: reading order and covered labels ----------
 
 type Box = { x: number; y: number; w: number; h: number }
 
+/** Each box's place in reading order (rows top to bottom, then left to right;
+ *  tops within `row` world px count as one row). For the dive's sweep. */
+export function readingOrder(els: Box[], row = 48): number[] {
+  const idx = els.map((_, i) => i)
+  idx.sort((a, b) => Math.round(els[a].y / row) - Math.round(els[b].y / row) || els[a].x - els[b].x)
+  const rank = new Array<number>(els.length)
+  idx.forEach((i, r) => (rank[i] = r))
+  return rank
+}
+
 /**
- * Where to put each widget's label so tiles stacked above don't cover it:
- * the first candidate spot whose label box (at most `lw` × `lh` world units,
- * and at most the spot's share of the tile) no higher tile overlaps. `null`
- * = no spot is free (the label hides). `els` must be in stacking order.
+ * Tiles whose text (drawn from the top-left corner, at most `lw` × `lh`
+ * world units) a tile stacked above them covers: their text hides rather
+ * than showing half a name. `els` must be in stacking order.
  */
-export function labelSpots(
-  els: Array<Box & { id: string }>,
-  lw: number,
-  lh: number,
-): Map<string, [number, number, number] | null> {
-  const out = new Map<string, [number, number, number] | null>()
+export function coveredLabels(els: Array<Box & { id: string }>, lw: number, lh: number): Set<string> {
+  const out = new Set<string>()
   els.forEach((e, i) => {
-    const above = els.slice(i + 1)
-    if (!above.length) return out.set(e.id, SPOTS[0])
-    const free = SPOTS.find(([fx, fy, fw]) => {
-      const w = Math.min(lw, e.w * fw)
-      const h = Math.min(lh, e.h * 0.4)
-      const x = e.x + e.w * fx - w / 2
-      const y = e.y + e.h * fy - h / 2
-      return !above.some((a) => x < a.x + a.w && x + w > a.x && y < a.y + a.h && y + h > a.y)
-    })
-    out.set(e.id, free ?? null)
+    const w = Math.min(lw, e.w)
+    const h = Math.min(lh, e.h)
+    for (let j = i + 1; j < els.length; j++) {
+      const a = els[j]
+      if (e.x < a.x + a.w && e.x + w > a.x && e.y < a.y + a.h && e.y + h > a.y) {
+        out.add(e.id)
+        break
+      }
+    }
   })
   return out
 }

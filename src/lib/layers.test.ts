@@ -13,17 +13,23 @@ import {
   layerStatus,
   layersOf,
   glyphCounts,
-  labelSpots,
+  coveredLabels,
+  labelYs,
+  midEllipsis,
+  readingOrder,
   matchesQuery,
   widgetGlyph,
   widgetType,
   normalizeLayers,
-  ovBoost,
+  ovAnchor,
+  ovExtent,
+  ovFlat,
+  ovLayout,
+  ovPose,
+  ovPoses,
   ovProject,
-  ovRailTarget,
-  ovSolve,
-  ovZ,
-  ovZBase,
+  ovText,
+  springStep,
   pathWithin,
   shortPath,
 } from './layers'
@@ -203,8 +209,8 @@ describe('shortPath', () => {
   })
 })
 
-describe('overview solver', () => {
-  const RAIL = 236
+describe('overview accordion', () => {
+  const RAIL = 214
   for (const [n, W, H] of [
     [2, 1280, 780],
     [3, 1440, 860],
@@ -212,37 +218,79 @@ describe('overview solver', () => {
     [9, 1280, 780],
     [9, 900, 600],
   ] as const) {
-    it(`${n} layers in ${W}×${H} fit between header and footer`, () => {
-      const g = ovSolve(n, W, H, n - 1, RAIL)
-      expect(g.k).toBeGreaterThanOrEqual(0.29)
-      expect(g.k).toBeLessThanOrEqual(0.6)
-      let top = Infinity
-      let bottom = -Infinity
-      for (let i = 0; i < n; i++) {
-        top = Math.min(top, ovProject(g, 0, 0, ovZ(g, i), g.Y).y)
-        bottom = Math.max(bottom, ovProject(g, 0, H, ovZ(g, i), g.Y).y)
+    it(`${n} layers in ${W}×${H} stay between header and footer at every open position`, () => {
+      const L = ovLayout(n, W, H, RAIL)
+      expect(L.s).toBeGreaterThan(0.17)
+      expect(L.s).toBeLessThanOrEqual(0.5)
+      // the sheets clear the rail
+      const at = Array.from({ length: n }, (_, i) => i)
+      for (let pos = 0; pos < n; pos += 0.5) {
+        const poses = ovPoses(L, at, pos)
+        const e = ovExtent(L, poses)
+        expect(e.top).toBeGreaterThanOrEqual(OV.HEAD_H - 1)
+        expect(e.bottom).toBeLessThanOrEqual(H - OV.FOOT_H + 1)
+        for (const p of poses) expect(ovAnchor(L, p).left).toBeGreaterThan(OV.RAIL_X + RAIL)
       }
-      // centred between the header and the footer, within a pixel
-      expect(Math.abs((top + bottom) / 2 - (OV.HEAD_H + H - OV.FOOT_H) / 2)).toBeLessThan(1)
-      if (g.k > 0.3) expect(bottom - top).toBeLessThanOrEqual(H - OV.HEAD_H - OV.FOOT_H + 4)
     })
   }
 
-  it('stacks sheets upward with the focused one lifted and revealed', () => {
-    const g = ovSolve(4, 1280, 800, 1, RAIL)
-    const z = [0, 1, 2, 3].map((i) => ovZBase(g, i))
-    expect(z).toEqual([...z].sort((a, b) => a - b))
-    expect(z[2] - z[1]).toBeGreaterThan(z[1] - z[0]) // the reveal gap sits above the focus
+  it('opens one sheet nearly flat and folds the rest into slats, higher layers higher up', () => {
+    const L = ovLayout(5, 1440, 860, RAIL)
+    const p = [0, 1, 2, 3, 4].map((i) => ovPose(L, i - 2))
+    expect(p[2].tilt).toBe(OV.OPEN_TILT)
+    expect(p[0].tilt).toBe(OV.SLAT_TILT)
+    expect(p[4].tilt).toBe(OV.SLAT_TILT)
+    // up the stack is up the screen, a fixed gap apart past the first slat
+    const ys = p.map((q) => q.y)
+    expect(ys).toEqual([...ys].sort((a, b) => b - a))
+    expect(ys[3] - ys[4]).toBeCloseTo(L.gap)
+    // nearer is lighter, and every sheet is the same size
+    expect(p[2].shade).toBeLessThan(p[3].shade)
+    expect(p[3].shade).toBeLessThan(p[4].shade)
+    expect(new Set(p.map((q) => q.scale)).size).toBe(1)
   })
 
-  it('the cursor spread peaks at the gap under the pointer and closes with no pointer', () => {
-    const g = ovSolve(5, 1280, 800, 2, RAIL)
-    const rail = [0, 1, 2, 3, 4].map((i) => ovRailTarget(g, i, RAIL).y)
-    const y = (rail[0] + rail[1]) / 2
-    const b = ovBoost(g, y)
-    expect(b).toHaveLength(4)
-    expect(b.indexOf(Math.max(...b))).toBe(0)
-    expect(ovBoost(g, null).every((v) => v === 0)).toBe(true)
+  it('shows text only on a sheet that is nearly flat', () => {
+    expect(ovText(OV.OPEN_TILT)).toBe(1)
+    expect(ovText(OV.TEXT_TILT)).toBe(0)
+    expect(ovText(OV.SLAT_TILT)).toBe(0)
+  })
+
+  it('projects a flat sheet exactly onto the canvas', () => {
+    const L = ovLayout(3, 1280, 800, RAIL)
+    const f = ovFlat(true)
+    expect(ovProject(L, f, -640, -400)).toEqual({ x: 0, y: 0 })
+    expect(ovProject(L, f, 640, 400)).toEqual({ x: 1280, y: 800 })
+  })
+
+  it('the spring settles on its target in about 350 ms without visible bounce', () => {
+    let pos = 0
+    let vel = 0
+    let peak = 0
+    for (let t = 0; t < 0.35; t += 1 / 60) {
+      ;[pos, vel] = springStep(pos, vel, 1, 1 / 60)
+      peak = Math.max(peak, pos)
+    }
+    expect(Math.abs(pos - 1)).toBeLessThan(0.03)
+    expect(peak).toBeLessThan(1.02)
+  })
+
+  it('pushes rail labels apart so they never overlap', () => {
+    const ys = labelYs([100, 104, 108, 300], [20, 60, 20, 20])
+    expect(ys[0]).toBe(100)
+    for (let i = 1; i < ys.length; i++) {
+      const h = [20, 60, 20, 20]
+      expect(ys[i] - h[i] / 2).toBeGreaterThanOrEqual(ys[i - 1] + h[i - 1] / 2)
+    }
+    expect(ys[3]).toBe(300) // room to spare: it stays on its sheet
+  })
+
+  it('middle-ellipsises long folders, keeping both ends', () => {
+    expect(midEllipsis('~/p/rootop', 26)).toBe('~/p/rootop')
+    const m = midEllipsis('~/p/rootop/.worktrees/rootop-v2-portrait', 26)
+    expect(m).toHaveLength(26)
+    expect(m.startsWith('~/p/rootop')).toBe(true)
+    expect(m.endsWith('portrait')).toBe(true)
   })
 })
 
@@ -270,25 +318,19 @@ describe('glyphs, types and find', () => {
   })
 })
 
-describe('labelSpots', () => {
+describe('tiles', () => {
   const box = (id: string, x: number, y: number, w = 400, h = 300) => ({ id, x, y, w, h })
-  it('centres a label nothing covers', () => {
-    expect(labelSpots([box('a', 0, 0)], 120, 50).get('a')).toEqual([0.5, 0.5, 0.88])
+  it('orders tiles in reading order: rows top to bottom, then left to right', () => {
+    const r = readingOrder([box('c', 0, 400), box('b', 500, 10), box('a', 0, 0)])
+    expect(r).toEqual([2, 1, 0])
   })
-  it('moves a covered label to a free part of its tile', () => {
-    // b covers the lower-right of a, including its centre
-    const s = labelSpots([box('a', 0, 0), box('b', 150, 120)], 120, 50)
-    expect(s.get('a')).toEqual([0.5, 0.3, 0.88])
-    expect(s.get('b')).toEqual([0.5, 0.5, 0.88]) // topmost: always centred
+  it('hides the text of a tile whose top-left corner another covers', () => {
+    const s = coveredLabels([box('a', 0, 0), box('b', 20, 20), box('c', 600, 0)], 150, 50)
+    expect([...s]).toEqual(['a'])
   })
-  it('falls back to a free half, at half width, when the middle is covered', () => {
-    // b covers the right half of a, top to bottom
-    const s = labelSpots([box('a', 0, 0), box('b', 200, -10, 400, 400)], 150, 50)
-    expect(s.get('a')).toEqual([0.27, 0.5, 0.46])
-  })
-  it('hides the label of a fully covered tile', () => {
-    const s = labelSpots([box('a', 50, 50, 100, 100), box('b', 0, 0)], 60, 30)
-    expect(s.get('a')).toBeNull()
+  it('keeps the text when only the bottom of a tile is covered', () => {
+    const s = coveredLabels([box('a', 0, 0), box('b', 0, 200)], 150, 50)
+    expect(s.size).toBe(0)
   })
 })
 
