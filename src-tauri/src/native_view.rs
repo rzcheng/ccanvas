@@ -13,6 +13,11 @@
 //     Tauri refuses custom commands from remote origins anyway.
 //   • It only ever shows http(s) pages, and never the app's own origin (in
 //     dev that's the Vite server, which Tauri would treat as trusted).
+//   • Tauri serves its own schemes (asset://, tauri://) to every webview and
+//     grants CORS to the origin the webview was created with. So the view is
+//     created on a placeholder no real site can be (PLACEHOLDER, never loaded)
+//     and only then sent to the page: no site it shows can read those schemes
+//     (the asset scope is every file on disk).
 //   • New windows don't open: they come back to the canvas as a new widget.
 //   • Every web widget shares one persistent profile, so logins stick, kept
 //     apart from the app's own storage. Nothing but the URL ends up in the
@@ -41,6 +46,14 @@ const KEY_SCHEME: &str = "ccanvas-key";
 const KEY_BRIDGE: &str = r#"addEventListener('keydown',function(e){
 if(e.key==='Enter'&&e.shiftKey&&(e.metaKey||e.ctrlKey)){e.preventDefault();e.stopPropagation();location.href='ccanvas-key:exit-focus'}
 },true);"#;
+
+/// What the view is created with (see the safety notes above). `.invalid`
+/// never resolves, so no page can have this origin.
+const PLACEHOLDER: &str = "https://ccanvas-native-view.invalid/";
+
+fn is_placeholder(url: &Url) -> bool {
+    url.host_str() == Some("ccanvas-native-view.invalid")
+}
 
 struct Live {
     /// the widget it belongs to
@@ -111,7 +124,7 @@ fn view_of(id: &str) -> Option<Webview> {
 }
 
 fn remember(id: &str, url: &Url) {
-    if matches!(url.scheme(), "http" | "https") {
+    if matches!(url.scheme(), "http" | "https") && !is_placeholder(url) {
         last_urls()
             .lock()
             .unwrap()
@@ -167,8 +180,12 @@ pub async fn native_view_open(
     let (nav_app, nav_id) = (app.clone(), id.clone());
     let (win_app, win_id) = (app.clone(), id.clone());
     let (load_app, load_id) = (app.clone(), id.clone());
-    let builder = WebviewBuilder::new(&label, WebviewUrl::External(target))
+    let placeholder = Url::parse(PLACEHOLDER).map_err(|e| e.to_string())?;
+    let builder = WebviewBuilder::new(&label, WebviewUrl::External(placeholder))
         .on_navigation(move |u| {
+            if is_placeholder(u) {
+                return false;
+            }
             if u.scheme() == KEY_SCHEME {
                 if u.path() == "exit-focus" {
                     to_canvas(
@@ -198,6 +215,9 @@ pub async fn native_view_open(
             NewWindowResponse::Deny
         })
         .on_page_load(move |_view, payload| {
+            if is_placeholder(payload.url()) {
+                return;
+            }
             remember(&load_id, payload.url());
             to_canvas(
                 &load_app,
@@ -226,6 +246,10 @@ pub async fn native_view_open(
             LogicalSize::new(w.max(1.0), h.max(1.0)),
         )
         .map_err(|e| e.to_string())?;
+    if let Err(e) = view.navigate(target) {
+        let _ = view.close();
+        return Err(e.to_string());
+    }
     *slot = Some(Live { id, view });
     Ok(())
 }
