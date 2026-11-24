@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { WidgetElement } from '../lib/types'
-import { useStore, selectActive } from '../store/workspace'
 import { isTauri, openExternal } from '../lib/backend'
 import {
   useNowPlaying,
@@ -47,24 +46,17 @@ const clamp01 = (n: number) => Math.min(1, Math.max(0, n))
 export function NowPlayingBody({
   el,
   visible,
-  far,
   active,
 }: {
   el: WidgetElement
   visible: boolean
-  far: boolean
   active: boolean
 }) {
   useEffect(() => setNowPlayingDemand(el.id, visible), [el.id, visible])
   useEffect(() => () => dropNowPlayingDemand(el.id), [el.id])
   const np = useNowPlaying((s) => s.np)
   const others = useNowPlaying((s) => s.others)
-  return (
-    <>
-      {np.kind === 'track' ? <Player t={np.track} others={others} active={active} /> : <Empty np={np} />}
-      {far && visible && <FarCard np={np} />}
-    </>
-  )
+  return np.kind === 'track' ? <Player t={np.track} others={others} active={active} /> : <Empty np={np} />
 }
 
 // ---------- artwork ----------
@@ -467,31 +459,6 @@ function Empty({ np }: { np: NowPlaying }) {
           {action}
         </div>
       </div>
-    </div>
-  )
-}
-
-// Zoomed far out: the artwork and the title, with the buttons over them on
-// hover (a row wouldn't fit under the title at this size), sized in screen
-// pixels like the terminal summary card so it stays readable.
-function FarCard({ np }: { np: NowPlaying }) {
-  const zoom = useStore((s) => selectActive(s).camera.zoom)
-  const t = np.kind === 'track' ? np.track : null
-  return (
-    <div className="np-card" style={{ ['--z' as string]: zoom }}>
-      <div className="np-card__in">
-        <div className="np-card__art">
-          <Artwork src={t?.artwork ?? null} />
-        </div>
-        <div className="np-card__title">
-          {t ? t.title || 'Untitled' : np.kind === 'idle' ? 'Nothing playing' : 'Now playing'}
-        </div>
-      </div>
-      {t && (
-        <div className="np-card__controls">
-          <Transport t={t} />
-        </div>
-      )}
     </div>
   )
 }
