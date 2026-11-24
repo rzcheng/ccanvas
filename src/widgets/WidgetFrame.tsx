@@ -740,7 +740,9 @@ export const WidgetFrame = memo(function WidgetFrame({
           {el.kind === 'video' && <VideoBody el={el} active={active} />}
           {el.kind === 'mediainfo' && <MediaInfoBody el={el} />}
           {el.kind === 'claude' && <ClaudeBody el={el} />}
-          {el.kind === 'nowplaying' && <NowPlayingBody el={el} visible={visible} far={far && !focusRole} />}
+          {el.kind === 'nowplaying' && (
+            <NowPlayingBody el={el} visible={visible} far={far && !focusRole} active={active} />
+          )}
           {isTerminal && (
             <TerminalBody el={el} active={active} visible={visible} tabShown={tabShown} hidden={stackHidden} />
           )}
