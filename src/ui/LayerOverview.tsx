@@ -4,6 +4,7 @@ import { useAgents, useDisplayStatus, RECENT_FINISH_MS } from '../lib/agents'
 import type { Camera, CanvasElement, WidgetElement } from '../lib/types'
 import {
   OV,
+  BASE_LAYER_ID,
   MAX_LAYERS,
   activeLayerId,
   landingCamera,
@@ -131,6 +132,12 @@ export function LayerOverview() {
   // so their content is built a couple of frames in, not in the first frame.
   const [ready, setReady] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
+  // a one-line note above the key hints ("⌫ again to merge…", "the base layer stays")
+  const [note, setNote] = useState<string | null>(null)
+  // ⌫ on a layer with widgets arms; a second ⌫ on the same layer removes it
+  const armed = useRef<string | null>(null)
+  // after a reorder or removal, the layer that should keep the focus
+  const keepFocus = useRef<string | null>(null)
 
   // the first render's timestamp, for the perf readout (P)
   const renderAt = useRef(performance.now())
@@ -379,6 +386,10 @@ export function LayerOverview() {
     if (i === c.g.focus) return
     c.g.focus = i
     setFocusState(i)
+    if (armed.current) {
+      armed.current = null
+      setNote(null)
+    }
     applyOpen(c.reduced ? 'layout' : 'focus')
   }
 
@@ -425,6 +436,42 @@ export function LayerOverview() {
     applyFlat(j, cam, 'fly', T.dive, EASE_DIVE)
     chrome(false, 140, T.dive - 140)
     later(finish, T.dive + 10)
+  }
+
+  /** ⇧↑ / ⇧↓: move the focused layer up or down the stack. */
+  const reorder = (dir: 1 | -1) => {
+    const c = C.current
+    if (c.state !== 'open' || !c.g) return
+    const i = c.g.focus
+    const j = i + dir
+    if (j < 0 || j >= n) return
+    keepFocus.current = layers[i].id
+    useStore.getState().moveLayer(layers[i].id, j)
+  }
+
+  /** ⌫: remove the focused layer. Its widgets merge into the layer below
+   *  (nothing closes); with widgets on it, press twice. */
+  const remove = () => {
+    const c = C.current
+    if (c.state !== 'open' || !c.g) return
+    const l = layers[c.g.focus]
+    if (l.id === BASE_LAYER_ID) {
+      setNote('The base layer stays: rename it with R')
+      return
+    }
+    const count = (byLayer.get(l.id) ?? []).length
+    const intoIdx = c.g.focus > 0 ? c.g.focus - 1 : 1
+    if (count && armed.current !== l.id) {
+      armed.current = l.id
+      setNote(
+        `⌫ again to remove ${l.name}: its ${count} item${count > 1 ? 's' : ''} move to ${layerNumber(intoIdx)} ${layers[intoIdx].name}, and nothing closes`,
+      )
+      return
+    }
+    armed.current = null
+    setNote(null)
+    keepFocus.current = layers[intoIdx].id
+    useStore.getState().removeLayer(l.id)
   }
 
   const newLayer = () => {
@@ -519,6 +566,24 @@ export function LayerOverview() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // a layer moved or was removed while open: the sheets slide to their new
+  // places and the focus stays on the layer it was on
+  const order = layers.map((l) => l.id).join(',')
+  const prevOrder = useRef(order)
+  useLayoutEffect(() => {
+    const c = C.current
+    const before = prevOrder.current.split(',').length
+    prevOrder.current = order
+    if (n > before || c.state !== 'open' || !c.g) return
+    const keep = keepFocus.current ? layers.findIndex((l) => l.id === keepFocus.current) : -1
+    keepFocus.current = null
+    c.g.focus = keep >= 0 ? keep : Math.min(c.g.focus, n - 1)
+    measure()
+    applyOpen('focus')
+    setFocusState(c.g.focus)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order])
+
   // a layer was added while open (N): it drops in from above, focused
   useLayoutEffect(() => {
     const c = C.current
@@ -545,8 +610,8 @@ export function LayerOverview() {
   }, [n])
 
   // ---------- input: keys, wheel, pointer, resize ----------
-  const live = useRef({ dive, setFocus, newLayer, toggleGlass, toggleView, focus, curIdx, n, setRenaming, layers })
-  live.current = { dive, setFocus, newLayer, toggleGlass, toggleView, focus, curIdx, n, setRenaming, layers }
+  const live = useRef({ dive, setFocus, newLayer, toggleGlass, toggleView, reorder, remove, focus, curIdx, n, setRenaming, layers })
+  live.current = { dive, setFocus, newLayer, toggleGlass, toggleView, reorder, remove, focus, curIdx, n, setRenaming, layers }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -568,6 +633,8 @@ export function LayerOverview() {
         return
       }
       if (k === 'Enter' || k === ' ') return done(), L.dive(c.g?.focus ?? L.focus)
+      if (e.shiftKey && (k === 'ArrowUp' || k === 'ArrowDown')) return done(), L.reorder(k === 'ArrowUp' ? 1 : -1)
+      if (k === 'Backspace' || k === 'Delete') return done(), L.remove()
       if (k === 'ArrowUp' || k === 'k' || k === 'K') return done(), L.setFocus((c.g?.focus ?? 0) + 1)
       if (k === 'ArrowDown' || k === 'j' || k === 'J') return done(), L.setFocus((c.g?.focus ?? 0) - 1)
       if (k === 'n' || k === 'N') return done(), L.newLayer()
@@ -832,6 +899,7 @@ export function LayerOverview() {
         </button>
       </div>
       <PerfReadout />
+      {note && <div className="lo-note">{note}</div>}
       <div className="lo-foot" ref={footRef}>
         <div className="lo-keys">
           <span>
@@ -846,6 +914,13 @@ export function LayerOverview() {
           </span>
           <span>
             <span className="kbd">V</span> · map / detail
+          </span>
+          <span>
+            <span className="kbd">⇧↑</span>
+            <span className="kbd">⇧↓</span> · reorder
+          </span>
+          <span>
+            <span className="kbd">⌫</span> · remove
           </span>
           <span>
             <span className="kbd">R</span> · rename

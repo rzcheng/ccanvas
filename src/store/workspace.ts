@@ -162,6 +162,20 @@ function canvasSize(): { vw: number; vh: number } {
   return { vw: w, vh: h }
 }
 
+/** Drop keyboard focus (no-op without a DOM, e.g. in tests). */
+function blurFocus() {
+  if (typeof document === 'undefined') return
+  ;(document.activeElement as HTMLElement | null)?.blur?.()
+}
+/** The widget holding keyboard focus, if any. */
+function focusedWidgetId(): string | null {
+  if (typeof document === 'undefined') return null
+  return (
+    (document.activeElement as HTMLElement | null)?.closest?.('[data-widget-id]')?.getAttribute('data-widget-id') ??
+    null
+  )
+}
+
 /** Put a new element on the active layer unless it names one. Base-layer
  *  elements carry no `layer` field, so a single-layer canvas saves as before. */
 function stampLayer(ws: Workspace, el: CanvasElement): CanvasElement {
@@ -1549,7 +1563,7 @@ export const useStore = create<Store>((set, get) => ({
       if (get().layerOverview) return
       markOpenRequest()
       // nothing typed while the stack is up may reach a widget
-      ;(document.activeElement as HTMLElement | null)?.blur?.()
+      blurFocus()
       set({ layerOverview: 'entering', activeWidgetId: null, editingTextId: null })
     } else set({ layerOverview: open })
   },
@@ -1631,7 +1645,7 @@ export const useStore = create<Store>((set, get) => ({
     const ws = get().active()
     if (!ws) return
     // the focus-leak rule: whatever happens next, nothing keeps keyboard focus
-    ;(document.activeElement as HTMLElement | null)?.blur?.()
+    blurFocus()
     set({ selection: [], activeWidgetId: null, editingTextId: null, labelingWidgetId: null })
     if (!hasLayers(ws) || !findLayer(ws, id)) return
     const cur = activeLayerId(ws)
@@ -1679,10 +1693,8 @@ export const useStore = create<Store>((set, get) => ({
     )
     // anything that just left the layer you're on can't stay selected or focused
     if (layerId !== activeLayerId(ws)) {
-      const focused = (document.activeElement as HTMLElement | null)
-        ?.closest?.('[data-widget-id]')
-        ?.getAttribute('data-widget-id')
-      if (focused && moving.has(focused)) (document.activeElement as HTMLElement).blur()
+      const focused = focusedWidgetId()
+      if (focused && moving.has(focused)) blurFocus()
       const st = get()
       set({
         selection: st.selection.filter((x) => !moving.has(x)),

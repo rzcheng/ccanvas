@@ -26,8 +26,10 @@ import {
   hasLayers,
   layerIndex,
   layerNumber,
+  layerOf,
   shortPath,
 } from '../lib/layers'
+import { useAgents } from '../lib/agents'
 import { UsagePill } from './UsagePill'
 import { openContextMenu } from './ContextMenu'
 
@@ -90,8 +92,13 @@ export function TopBar() {
 function LayerChip() {
   const ws = useStore(selectActive)
   const [editing, setEditing] = useState(false)
+  // agents on other layers that are waiting on you (amber dot on the chip)
+  const status = useAgents((st) => st.status)
   if (!hasLayers(ws)) return null
   const id = activeLayerId(ws)
+  const waitingElsewhere = ws.elements.filter(
+    (e) => e.type === 'widget' && layerOf(e) !== id && status[e.id] === 'waiting',
+  ).length
   const layer = findLayer(ws, id)!
   const i = layerIndex(ws, id)
   const s = () => useStore.getState()
@@ -140,6 +147,12 @@ function LayerChip() {
         <span className="tb-layer__name">{layer.name}</span>
       )}
       {layer.dir && <span className="tb-layer__dir">{"\u200e" + shortPath(layer.dir)}</span>}
+      {waitingElsewhere > 0 && (
+        <span
+          className="tb-layer__led"
+          title={`${waitingElsewhere} agent${waitingElsewhere > 1 ? 's' : ''} on other layers need${waitingElsewhere > 1 ? '' : 's'} you`}
+        />
+      )}
     </button>
   )
 }

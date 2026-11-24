@@ -834,3 +834,37 @@
 .lr.is-focus .lr__kind svg {
   color: var(--ink-faint);
 }
+
+/* a one-line note above the key hints (⌫ to confirm, the base layer stays) */
+.lo-note {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 44px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--ts));
+  color: var(--led-waiting);
+  pointer-events: none;
+}
+
+/* the chip's amber dot: an agent on another layer needs you */
+.tb-layer {
+  position: relative;
+}
+.tb-layer__led {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--led-waiting);
+  box-shadow: 0 0 0 2px var(--panel), 0 0 6px var(--led-waiting);
+  animation: pulse 0.7s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tb-layer__led {
+    animation: none;
+  }
+}
