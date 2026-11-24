@@ -162,8 +162,6 @@ function WidgetTile({
       className={`pt${st ? ` pt--${st}` : ''}${dim ? ' is-dim' : ''}${tagged ? ' pt--tagged' : ''}`}
       data-pid={el.id}
       data-ord={ord}
-      // a terminal or agent: on landing, its real output types in (LayerOverview)
-      data-typed={el.kind === 'terminal' || el.kind === 'agent' ? '' : undefined}
       style={{ left: el.x, top: el.y, width: el.w, height: el.h, ['--k2' as string]: accentOf(el) }}
     >
       <div className="pt__fill" />
