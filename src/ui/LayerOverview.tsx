@@ -1092,6 +1092,17 @@ export function LayerOverview() {
             + new layer <span className="kbd">N</span>
           </button>
         )}
+        {n > 1 && layers[focus]?.id !== BASE_LAYER_ID && (
+          <button
+            className="lo-btn"
+            onClick={(e) => {
+              e.stopPropagation()
+              remove()
+            }}
+          >
+            remove layer <span className="kbd">del</span>
+          </button>
+        )}
         <button
           className="lo-btn"
           onClick={(e) => {
