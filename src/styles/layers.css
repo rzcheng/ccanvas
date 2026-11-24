@@ -202,6 +202,29 @@
   opacity: clamp(0, var(--h) * 30, 1);
   pointer-events: none;
 }
+/* a terminal or agent landing: its real output types in instead (see
+   LayerOverview → typeIn), so the stand-in steps aside at once; the real
+   widget's frame and title bar beneath look the same */
+.pt.is-typing .pt__real,
+.pt.is-typing .pt__bar {
+  visibility: hidden;
+}
+/* laid on a real terminal while its output types in: covers in its own
+   background over what isn't typed yet, and the typing head; each on its
+   own layer, moved by transform only */
+.lo-type-cover,
+.lo-type-cursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  z-index: 3;
+  will-change: transform;
+}
+.lo-type-cursor {
+  z-index: 4;
+  background: color-mix(in srgb, var(--ink) 78%, transparent);
+}
 /* the cover slides off the tile: clip it there (only while handing over) */
 .lo-sheet.is-handover .pt {
   overflow: hidden;

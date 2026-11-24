@@ -139,6 +139,23 @@ type Rec = {
   lop0?: number
 }
 
+/** A real terminal typing in as the overview hands over to it. */
+type Typed = {
+  /** the cover over the rows below, the one over the rest of the row, the cursor */
+  parts: HTMLDivElement[]
+  /** shown yet (they're laid on hidden, a few frames early) */
+  on: boolean
+  /** visible rows, top to bottom: y and height (screen px) and characters */
+  rows: Array<{ y: number; h: number; n: number }>
+  total: number
+  /** a cell's width; the screen's size, and its offset in the widget body */
+  cw: number
+  w: number
+  h: number
+  ox: number
+  oy: number
+}
+
 function camT(c: Camera): string {
   const d = window.devicePixelRatio || 1
   const sn = (v: number) => Math.round(v * d) / d
@@ -275,6 +292,8 @@ export function LayerOverview() {
     chrome: 0,
     chrome0: 0,
     order: layers.map((l) => l.id).join(','),
+    /** terminals typing in as they land, by widget id (null: can't be read) */
+    typed: new Map<string, Typed | null>(),
   })
   const later = (fn: () => void, ms: number) => {
     C.current.timers.push(window.setTimeout(fn, ms))
@@ -386,6 +405,9 @@ export function LayerOverview() {
 
     // phase ends
     let el = (now - c.t0) / c.slow
+    // read the terminals a landing will type into, a few frames ahead
+    if (c.phase === 'dive' && el > T.dive * 0.7) prepTyping(c.diveTo)
+    if (c.phase === 'fly' && c.dir < 0 && c.a < 0.2) prepTyping(c.here)
     if (c.phase === 'fly' && fly(now, dt)) return
     if (c.phase === 'dive' && el >= T.dive) {
       commit()
@@ -688,14 +710,158 @@ export function LayerOverview() {
     for (const tile of tiles) {
       const ord = Number(tile.dataset.ord) || 0
       if (fresh || r.m !== m) tile.style.setProperty('--m', each(m, ord).toFixed(3))
-      // each widget fills in quickly, then settles: eased per tile
-      if (fresh || r.h !== h) tile.style.setProperty('--h', easeOut(each(h, ord)).toFixed(3))
+      // each widget fills in quickly, then settles: eased per tile; a
+      // terminal or agent types its real output in instead
+      if (fresh || r.h !== h) {
+        const hl = each(h, ord)
+        tile.style.setProperty('--h', easeOut(hl).toFixed(3))
+        // typing keeps an even pace, like typing
+        if (tile.dataset.typed != null) typeIn(tile, hl)
+      }
       // the wash runs down the sheet in reading order
       if (fresh || r.w !== w) tile.style.setProperty('--w', each(w, ord, 0.4).toFixed(3))
     }
     r.m = m
     r.h = h
     r.w = w
+  }
+
+  /**
+   * Landing on a terminal or agent: its real output types in, row by row, a
+   * character at a time, behind a block cursor, as `v` goes 0 → 1 (the
+   * tile's hand-over); backwards, it backspaces. Nothing on the terminal
+   * itself changes: two covers in its own background colour (one over the
+   * rows below, one over the rest of the current row) and the cursor sit on
+   * it, each on its own layer, and only their transforms move, so its text
+   * is never repainted. The rows are read a few frames before (`prepTyping`).
+   * Anything that can't be read (a far-zoomed card, a terminal not started
+   * yet) hands over with the wipe like any other widget. Cleared at 0 and 1,
+   * and when the overview unmounts, so nothing is left on a real terminal.
+   */
+  const typeIn = (tile: HTMLElement, v: number) => {
+    const c = C.current
+    const id = tile.dataset.pid
+    if (!id) return
+    let t = c.typed.get(id)
+    if (v <= 0 || v >= 1) {
+      if (t) untype(t)
+      if (t !== undefined) c.typed.delete(id)
+      tile.classList.remove('is-typing')
+      return
+    }
+    if (t === undefined) {
+      t = readRows(id)
+      c.typed.set(id, t)
+    }
+    if (!t) return
+    if (!t.on) {
+      t.on = true
+      for (const n of t.parts) n.style.visibility = ''
+      tile.classList.add('is-typing')
+    }
+    // whole characters typed so far, and the row they reach
+    const typed = Math.floor(v * t.total)
+    let acc = 0
+    let k = 0
+    while (k < t.rows.length && acc + t.rows[k].n <= typed) acc += t.rows[k++].n
+    const row = t.rows[Math.min(k, t.rows.length - 1)]
+    const done = k >= t.rows.length
+    const x = done ? t.w : (typed - acc) * t.cw
+    const y0 = done ? t.h : row.y
+    const y1 = done ? t.h : row.y + row.h
+    const [below, rest, cursor] = t.parts
+    below.style.transform = `translate(${t.ox}px, ${t.oy + y1}px)`
+    rest.style.transform = `translate(${t.ox + x}px, ${t.oy + y0}px)`
+    rest.style.height = `${row.h}px`
+    cursor.style.transform = `translate(${t.ox + x}px, ${t.oy + y0}px)`
+    cursor.style.opacity = done ? '0' : '1'
+  }
+  /** Read a terminal's rows (text lengths, cell size) and lay its covers on,
+   *  hidden. Run while layout is clean: at the start of a frame. */
+  const readRows = (id: string): Typed | null => {
+    const w = document.querySelector(`.widget[data-widget-id="${CSS.escape(id)}"]`)
+    const body = w?.querySelector<HTMLElement>('.widget__body')
+    const screen = w?.querySelector<HTMLElement>('.xterm-screen')
+    const rowsEl = screen?.querySelector<HTMLElement>('.xterm-rows')
+    if (!body || !screen || !rowsEl || !screen.offsetWidth) return null
+    const sr = screen.getBoundingClientRect()
+    const br = body.getBoundingClientRect()
+    const k = sr.width / screen.offsetWidth // the canvas camera's zoom
+    if (!(k > 0)) return null
+    const rows: Typed['rows'] = []
+    let cw = 0
+    let total = 0
+    for (const node of Array.from(rowsEl.children) as HTMLElement[]) {
+      const n = (node.textContent ?? '').replace(/\s+$/, '').length
+      const rr = node.getBoundingClientRect()
+      rows.push({ y: (rr.top - sr.top) / k, h: rr.height / k, n })
+      total += n
+      // a cell's width, from the first character on screen (monospace)
+      if (!cw && n) {
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT)
+        for (let tn = walker.nextNode(); tn; tn = walker.nextNode()) {
+          if (!tn.textContent) continue
+          const range = document.createRange()
+          range.setStart(tn, 0)
+          range.setEnd(tn, 1)
+          cw = range.getBoundingClientRect().width / k
+          break
+        }
+      }
+    }
+    if (!total || !(cw > 0) || !rows.length) return null
+    // the covers take the terminal's own background
+    const vp = w?.querySelector<HTMLElement>('.xterm-viewport') ?? body
+    const bg = getComputedStyle(vp).backgroundColor
+    const sw = body.clientWidth
+    const sh = body.clientHeight
+    const part = (cls: string) => {
+      const n = document.createElement('div')
+      n.className = cls
+      n.style.visibility = 'hidden'
+      body.appendChild(n)
+      return n
+    }
+    const below = part('lo-type-cover')
+    below.style.cssText += `;width:${sw}px;height:${sh}px;background:${bg}`
+    const rest = part('lo-type-cover')
+    rest.style.cssText += `;width:${sw}px;background:${bg}`
+    const cursor = part('lo-type-cursor')
+    cursor.style.width = `${cw}px`
+    cursor.style.height = `${rows[0].h}px`
+    return {
+      parts: [below, rest, cursor],
+      on: false,
+      rows,
+      total,
+      cw,
+      w: sr.width / k,
+      h: sr.height / k,
+      ox: (sr.left - br.left) / k,
+      oy: (sr.top - br.top) / k,
+    }
+  }
+  const untype = (t: Typed | null) => {
+    if (t) for (const n of t.parts) n.remove()
+  }
+  /** A few frames before a sheet hands over, read the terminals it lands on
+   *  (at the frame's start, before anything is written, so layout is clean). */
+  const prepTyping = (j: number) => {
+    const c = C.current
+    const id = live.current.layers[j]?.id
+    const world = id ? rec(id).world : null
+    if (!world) return
+    for (const tile of world.querySelectorAll<HTMLElement>('.pt[data-typed]')) {
+      const pid = tile.dataset.pid
+      if (pid && !c.typed.has(pid)) c.typed.set(pid, readRows(pid))
+    }
+  }
+  /** Back to the overview: nothing stays on the real terminals. */
+  const clearTyping = () => {
+    const c = C.current
+    for (const t of c.typed.values()) untype(t)
+    c.typed.clear()
+    rootRef.current?.querySelectorAll('.pt.is-typing').forEach((n) => n.classList.remove('is-typing'))
   }
 
   const placeLabels = (
@@ -797,6 +963,7 @@ export function LayerOverview() {
     if (c.dir > 0 && c.aTo === 1 && k >= 1 && c.w >= 1) {
       setPhase('live', now)
       c.vel = 0
+      clearTyping()
       useStore.getState().setLayerOverview('open')
     } else if (c.dir < 0 && (c.H >= 1 || (c.x <= 0 && c.a <= 0))) {
       setPhase('gone', now)
@@ -1036,6 +1203,9 @@ export function LayerOverview() {
       cancelAnimationFrame(C.current.raf)
       C.current.raf = 0
       C.current.phase = 'gone'
+      // never leave a real terminal clipped
+      for (const t of C.current.typed.values()) untype(t)
+      C.current.typed.clear()
     }
     // mount only: the open sequence runs once
     // eslint-disable-next-line react-hooks/exhaustive-deps

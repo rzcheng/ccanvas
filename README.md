@@ -297,8 +297,9 @@ several groups of agents, on one canvas without them crowding each other.
   scroll or press `↑` / `↓` to roll the accordion through the stack, then
   click a sheet or slat, press `⏎`, or press its digit to dive in: the text
   backspaces out, the sheet eases flat onto the canvas, its name
-  glides into the layer chip, and its tiles turn back into the live widgets,
-  their content wiping in from the top. `Esc` or `L` goes back the same way,
+  glides into the layer chip, and its tiles turn back into the live widgets:
+  each terminal and agent types its real output back in, row by row behind
+  a block cursor, and other widgets fill in from the top. `Esc` or `L` goes back the same way,
   and `L` turns the move around at any point, so tapping it quickly goes in
   and out from wherever it is. `⌥↑` / `⌥↓` and `⌥1`–`⌥9` switch
   instantly.
