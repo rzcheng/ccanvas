@@ -3,8 +3,8 @@
    "minimal pass": one surface, hairlines, no ornament.
    One perspective stage holds every layer as a flat sheet of proxies.
    Only transform and opacity transition. `will-change` is set only under
-   .lo--moving, so text repaints crisp at rest. No backdrop-filter: the
-   frosted look is a static `filter` on each sheet's own content.
+   .lo--moving, so text repaints crisp at rest. No backdrop-filter and no
+   filter: the frosted look is translucent glass over faded back sheets.
    ============================================================ */
 
 /* while the overview is up the live canvas stays mounted but unpainted */
@@ -66,11 +66,11 @@
   transform-style: preserve-3d;
   pointer-events: none;
 }
-/* only the stage, the sheets and the one world whose transform animates
-   (LayerOverview's busy()) are promoted, and only while moving: a promoted
-   world is a full-size texture, and every sheet had one */
-.lo--moving .lo-stage,
-.lo--moving .lo-layer,
+/* only the one world whose 2D transform animates (LayerOverview's busy())
+   is promoted, and only while moving: a promoted world is a full-size
+   texture. The stage and sheets carry 3D transforms, which WebKit composites
+   anyway; toggling will-change on them rebuilt their layers (a 66-87 ms
+   frame at the start of every dive, measured with the bench). */
 .lo--moving .lo-world.is-moving {
   will-change: transform, opacity;
 }
@@ -131,8 +131,8 @@
   pointer-events: none;
 }
 
-/* frosted (G, the default): sheets let the ones below show through, softly.
-   Back sheets fade their own static content with a sub-pixel blur. */
+/* frosted (G, the default): sheets let the ones below show through, softly,
+   and back sheets fade their content. No filter: see below. */
 .lo--frost .lo-glass {
   background: color-mix(in srgb, var(--bg) 84%, transparent);
 }
@@ -140,8 +140,12 @@
   background: color-mix(in srgb, var(--bg) 97%, transparent);
 }
 .lo--frost .lo-layer:not(.is-focus) .lo-world {
-  filter: blur(calc(0.9px / var(--k))) saturate(0.7) brightness(0.8);
-  opacity: 0.42;
+  /* opacity only: the prototype's sub-pixel blur() + saturate() filter here
+     re-rasterized every back sheet at the start of each dive and the end of
+     each open (frames of 60-87 ms in WebKit, measured with the bench). At
+     0.9px it was barely visible; the fade and the translucent glass carry
+     the frosted look. */
+  opacity: 0.36;
 }
 .lo--frost .lo-dim {
   background: color-mix(in srgb, var(--bg) 22%, transparent);
@@ -917,4 +921,7 @@
   font-weight: 500;
   color: var(--accent-bright);
   font-size: calc(10.5px * var(--ts));
+}
+.lo-perf__sum {
+  color: var(--ink-dim);
 }

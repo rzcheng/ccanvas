@@ -39,7 +39,15 @@ import {
   IconTerminal,
   IconWeb,
 } from './icons'
-import { layersPerf, sampleTransition, setPerfOn, subscribePerf, type PerfRun } from '../lib/layersPerf'
+import {
+  layersPerf,
+  runBench,
+  sampleTransition,
+  setPerfOn,
+  subscribePerf,
+  summary,
+  type PerfRun,
+} from '../lib/layersPerf'
 import { LayerProxy, type ProxyMode } from './LayerProxy'
 import '../styles/layers.css'
 
@@ -643,6 +651,7 @@ export function LayerOverview() {
       if (k === 'ArrowDown' || k === 'j' || k === 'J') return done(), L.setFocus((c.g?.focus ?? 0) - 1)
       if (k === 'n' || k === 'N') return done(), L.newLayer()
       if (k === 'g' || k === 'G') return done(), L.toggleGlass()
+      if (k === 'P' && layersPerf.on) return done(), void runBench(() => useStore.getState().setLayerOverview(true))
       if (k === 'p' || k === 'P') return done(), setPerfOn(!layersPerf.on)
       if (k === 'v' || k === 'V') return done(), L.toggleView()
       if ((k === 'r' || k === 'R') && c.state === 'open') return done(), L.setRenaming(L.layers[c.g?.focus ?? 0]?.id ?? null)
@@ -1080,7 +1089,22 @@ function PerfReadout() {
   )
   return (
     <div className="lo-perf">
-      <div className="lo-perf__row">perf (P to hide) · ms · {document.hidden ? 'HIDDEN: throttled' : 'visible'}</div>
+      <div className="lo-perf__row">
+        perf (P to hide, ⇧P to bench) · ms · {document.hidden ? 'HIDDEN: throttled' : 'visible'}
+      </div>
+      {(['open', 'dive'] as const).map((k) => {
+        const a = summary(k, 'frame0')
+        const b = summary(k, 'first')
+        const c = summary(k, 'p95')
+        const d = summary(k, 'max')
+        return a && b && c && d ? (
+          <div key={k} className="lo-perf__row lo-perf__sum">
+            {k} ×{a.n} · frame0 {Math.round(a.median)}/{Math.round(a.worst)} · first {Math.round(b.median)}/
+            {Math.round(b.worst)} · p95 {Math.round(c.median)}/{Math.round(c.worst)} · max {Math.round(d.median)}/
+            {Math.round(d.worst)} (median/worst)
+          </div>
+        ) : null
+      })}
       {layersPerf.runs.map(row)}
     </div>
   )

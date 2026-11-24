@@ -102,3 +102,35 @@ export function sampleTransition(
   }
   requestAnimationFrame(tick)
 }
+
+/**
+ * ⇧P in the overview (with the readout on): six open → dive cycles with
+ * fixed waits, so the numbers don't depend on how fast keys arrive. Runs in
+ * the page, so it measures the real window (keep it in front).
+ */
+export async function runBench(open: () => void, cycles = 6) {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+  layersPerf.runs = []
+  listeners.forEach((l) => l())
+  // leave the overview the bench was started from first
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  await wait(900)
+  for (let i = 0; i < cycles; i++) {
+    markOpenRequest()
+    open()
+    await wait(1300)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await wait(900)
+  }
+  open()
+}
+
+/** p95 of a field across the recorded runs of one kind. */
+export function summary(kind: 'open' | 'dive', field: 'first' | 'p95' | 'max' | 'frame0') {
+  const v = layersPerf.runs
+    .filter((r) => r.kind === kind)
+    .map((r) => r[field] as number)
+    .sort((a, b) => a - b)
+  if (!v.length) return null
+  return { n: v.length, median: v[Math.floor(v.length / 2)], worst: v[v.length - 1] }
+}
