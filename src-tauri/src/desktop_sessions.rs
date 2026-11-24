@@ -321,10 +321,7 @@ mod tests {
 
     #[test]
     fn encodes_cwd_like_the_frontend() {
-        assert_eq!(
-            encode_project("/Users/me/p/my-app"),
-            "-Users-me-p-my-app"
-        );
+        assert_eq!(encode_project("/Users/me/p/my-app"), "-Users-me-p-my-app");
         assert_eq!(encode_project("/a b/c_d.e"), "-a-b-c-d-e");
         // é is one UTF-16 unit, 😀 is two
         assert_eq!(encode_project("é😀x"), "---x");

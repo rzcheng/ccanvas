@@ -63,7 +63,7 @@ const layered = () =>
     dir: '/Users/me/p/main',
     layers: [
       { id: 'base', name: 'base' },
-      { id: 'L-a', name: 'rootop', dir: '/Users/me/p/rootop' },
+      { id: 'L-a', name: 'webapp', dir: '/Users/me/p/webapp' },
       { id: 'L-b', name: 'site' },
     ],
     activeLayerId: 'L-a',
@@ -92,9 +92,9 @@ describe('layer basics', () => {
 
   it("a layer's folder falls back to the tab's", () => {
     const w = layered()
-    expect(layerDir(w, 'L-a')).toBe('/Users/me/p/rootop')
+    expect(layerDir(w, 'L-a')).toBe('/Users/me/p/webapp')
     expect(layerDir(w, 'L-b')).toBe('/Users/me/p/main')
-    expect(layerDir(w)).toBe('/Users/me/p/rootop') // the active layer
+    expect(layerDir(w)).toBe('/Users/me/p/webapp') // the active layer
   })
 })
 
@@ -104,16 +104,16 @@ describe('layerForPath', () => {
     layers: [
       { id: 'base', name: 'base' },
       { id: 'a', name: 'p', dir: '/Users/me/p' },
-      { id: 'b', name: 'rootop', dir: '/Users/me/p/rootop/' },
+      { id: 'b', name: 'webapp', dir: '/Users/me/p/webapp/' },
     ],
   })
   it('picks the deepest folder that contains the path', () => {
-    expect(layerForPath(w, '/Users/me/p/rootop/src')).toBe('b')
-    expect(layerForPath(w, '/Users/me/p/rootop')).toBe('b')
+    expect(layerForPath(w, '/Users/me/p/webapp/src')).toBe('b')
+    expect(layerForPath(w, '/Users/me/p/webapp')).toBe('b')
     expect(layerForPath(w, '/Users/me/p/other')).toBe('a')
   })
   it("doesn't match a sibling folder that only shares a prefix", () => {
-    expect(layerForPath(w, '/Users/me/p/rootop-v2')).toBe('a')
+    expect(layerForPath(w, '/Users/me/p/webapp-v2')).toBe('a')
     expect(pathWithin('/a/b', '/a/bc')).toBe(false)
     expect(pathWithin('/a/b', '/a/b/c')).toBe(true)
   })
@@ -203,7 +203,7 @@ describe('layerStatus', () => {
 
 describe('shortPath', () => {
   it('abbreviates the home folder', () => {
-    expect(shortPath('/Users/me/p/rootop/')).toBe('~/p/rootop')
+    expect(shortPath('/Users/me/p/webapp/')).toBe('~/p/webapp')
     expect(shortPath('/home/me')).toBe('~')
     expect(shortPath('/opt/x')).toBe('/opt/x')
   })
@@ -286,10 +286,10 @@ describe('overview accordion', () => {
   })
 
   it('middle-ellipsises long folders, keeping both ends', () => {
-    expect(midEllipsis('~/p/rootop', 26)).toBe('~/p/rootop')
-    const m = midEllipsis('~/p/rootop/.worktrees/rootop-v2-portrait', 26)
+    expect(midEllipsis('~/p/webapp', 26)).toBe('~/p/webapp')
+    const m = midEllipsis('~/p/webapp/.worktrees/webapp-v2-portrait', 26)
     expect(m).toHaveLength(26)
-    expect(m.startsWith('~/p/rootop')).toBe(true)
+    expect(m.startsWith('~/p/webapp')).toBe(true)
     expect(m.endsWith('portrait')).toBe(true)
   })
 })

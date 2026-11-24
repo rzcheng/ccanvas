@@ -86,7 +86,7 @@ export function TopBar() {
   )
 }
 
-// ≡ 02 ROOTOP ~/p/rootop — the layer you're on, shown once a tab has two or
+// ≡ 02 WEBAPP ~/p/webapp — the layer you're on, shown once a tab has two or
 // more. Click opens the layers overview; right-click to add, rename, or set
 // the layer's folder.
 function LayerChip() {

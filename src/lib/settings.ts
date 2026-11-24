@@ -36,12 +36,12 @@ export const AGENT_CLIS: { id: AgentCli; name: string; cmd: string }[] = [
   { id: 'codex', name: 'Codex', cmd: 'codex' },
 ]
 
-export type TextSizeId = 'small' | 'default' | 'large' | 'larger'
+export type TextSizeId = 'default' | 'medium' | 'large' | 'larger'
 
 /** Text size choices: every fixed font size in the app is multiplied by `scale`. */
 export const TEXT_SIZES: { id: TextSizeId; name: string; scale: number }[] = [
-  { id: 'small', name: 'Small', scale: 1 },
-  { id: 'default', name: 'Default', scale: 1.1 },
+  { id: 'default', name: 'Default', scale: 1 },
+  { id: 'medium', name: 'Medium', scale: 1.1 },
   { id: 'large', name: 'Large', scale: 1.25 },
   { id: 'larger', name: 'Larger', scale: 1.4 },
 ]
@@ -111,7 +111,7 @@ useSettings.subscribe((s, prev) => {
 // ----- text size -----
 
 export function textScale(id: TextSizeId): number {
-  return TEXT_SIZES.find((t) => t.id === id)?.scale ?? 1.1
+  return TEXT_SIZES.find((t) => t.id === id)?.scale ?? 1
 }
 
 /** The current text scale; components that size text in JS (xterm, Monaco) use it. */

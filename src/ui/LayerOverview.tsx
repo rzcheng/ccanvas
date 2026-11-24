@@ -39,6 +39,7 @@ import { StatusGlyph } from '../widgets/widgetIcons'
 import { IconLayers } from './icons'
 import {
   layersPerf,
+  PERF_TOOLS,
   runBench,
   sampleTransition,
   setPerfOn,
@@ -50,8 +51,7 @@ import { LayerProxy, type ProxyMode } from './LayerProxy'
 import '../styles/layers.css'
 
 // The layers overview: the canvas pulls back into a deck of every layer on
-// this tab, which opens into an accordion (ported from the approved
-// layers-accordion prototype). Mounted only while open (App.tsx), so it costs
+// this tab, which opens into an accordion. Mounted only while open (App.tsx), so it costs
 // nothing otherwise: no listeners, timers or rAF.
 //
 // One float, the open position, follows a spring and drives every sheet: each
@@ -94,6 +94,7 @@ const VIEW_KEY = 'ccanvas:layers:view'
 /** localStorage: a slow-motion factor for judging the motion (e.g. "4") */
 const SLOW_KEY = 'ccanvas:layers:slow'
 function slowFactor(): number {
+  if (!PERF_TOOLS) return 1
   try {
     const v = parseFloat(localStorage.getItem(SLOW_KEY) ?? '')
     return Number.isFinite(v) && v >= 1 ? Math.min(v, 20) : 1
@@ -1315,8 +1316,8 @@ export function LayerOverview() {
       if (k === 'ArrowUp' || k === 'k' || k === 'K') return done(), Lv.go(at + 1)
       if (k === 'ArrowDown' || k === 'j' || k === 'J') return done(), Lv.go(at - 1)
       if (k === 'n' || k === 'N') return done(), Lv.newLayer()
-      if (k === 'P' && layersPerf.on) return done(), void runBench(() => useStore.getState().setLayerOverview(true))
-      if (k === 'p' || k === 'P') return done(), setPerfOn(!layersPerf.on)
+      if (k === 'P' && PERF_TOOLS && layersPerf.on) return done(), void runBench(() => useStore.getState().setLayerOverview(true))
+      if ((k === 'p' || k === 'P') && PERF_TOOLS) return done(), setPerfOn(!layersPerf.on)
       if (k === 'v' || k === 'V') return done(), Lv.toggleView()
       if ((k === 'r' || k === 'R') && c.phase === 'live') return done(), Lv.setRenaming(Lv.layers[at]?.id ?? null)
       // every other bare key stops here: nothing reaches the canvas underneath

@@ -70,7 +70,7 @@ running agent.
 
 | | |
 | --- | --- |
-| 🎨 **Settings and colour palettes** | A Settings panel (the gear in the top bar, or `⌘,` on macOS) with six palettes — Claude, Ember, Moss, Slate, Plum, and Mono — a text size (Small to Larger) that scales text in widgets, terminals and panels without resizing anything, and the keys that open the tab finder |
+| 🎨 **Settings and colour palettes** | A Settings panel (the gear in the top bar, or `⌘,` on macOS) with six palettes — Claude, Ember, Moss, Slate, Plum, and Mono — a text size (Default to Larger) that scales text in widgets, terminals and panels without resizing anything, and the keys that open the tab finder |
 | 🔎 **Tab finder** | `⌃X ⌃F` opens a bar at the bottom of the window to jump to any tab by name, with Tab completion. Vim keys (`:`, `gt`, `gT`) or a shortcut of your own can be switched on in Settings |
 | 🗂️ **Tabs you can arrange** | Drag tabs to reorder them; a crowded strip squeezes its tabs before it scrolls and keeps the active one in view |
 | 🟣 **A just-finished dot** | An agent's dot turns purple for two minutes after it finishes a turn, in its title bar, the roster, and its zoomed-out card |
@@ -334,20 +334,17 @@ several groups of agents, on one canvas without them crowding each other.
   layers always drops keyboard focus, so typing never reaches a terminal you
   can't see, and `⌘1`–`⌘9`, `⌘W` and `⌘A` act on the current layer only.
 - **Saved in the canvas file.** One `.ccnvs` holds every layer. A canvas with
-  a single layer saves exactly as before, and an older build opening a layered
-  file shows everything on one plane without losing anything.
+  a single layer saves exactly as before. An older build opens a layered file
+  with everything on one plane, but saving it there drops the layers' names,
+  folders and cameras.
 
-The right-click menu on the layer chip (`≡ 02 ROOTOP`, shown once a tab has two
+The right-click menu on the layer chip (`≡ 02 WEBAPP`, shown once a tab has two
 layers) adds a layer, sets or clears its folder, and renames it.
 
 The overview is mounted only while it's open. One number, the open
 position, follows a spring and drives every sheet; only transforms and
 opacity change, and its frame loop stops when the accordion is at rest. With
-reduced motion it crossfades instead of flying. `P` in the overview shows a
-frame readout and `⇧P` runs a short open/close benchmark (keep the window in
-front; background windows throttle frames). To judge the motion, set
-`localStorage['ccanvas:layers:slow']` to a factor such as `4` (remove it to
-go back to full speed). `npm test` runs the layer model's unit tests,
+reduced motion it crossfades instead of flying. `npm test` runs the layer model's unit tests,
 including the accordion's geometry.
 
 ## Safety net: checkpoints
@@ -394,7 +391,7 @@ terminal untouched; on Windows and Linux they use Ctrl.
 | `⌥↑` / `⌥↓` · `⌥1`–`⌥9` | layer up / down · jump to layer N |
 | `⇧⌥↑` / `⇧⌥↓` | send the selection one layer up / down |
 | in the overview: `↑` `↓` · `⏎` · `1`–`9` · `/` · `N` · `R` · `del` | move · dive in · jump · find · new layer · rename · remove |
-| in the overview: `⇧↑` `⇧↓` · `V` · `G` · `Esc` | reorder · tiles/cards · frosted/solid · back |
+| in the overview: `⇧↑` `⇧↓` · `V` · `Esc` | reorder · tiles/cards · back |
 | ⌘/Ctrl + `Z` / `Shift Z` | undo · redo |
 | ⌘/Ctrl + `C` / `X` / `V` / `D` | copy · cut · paste · duplicate |
 | ⌘/Ctrl + `G` / `Shift G` | group · ungroup |

@@ -50,6 +50,9 @@ const HOST = '127.0.0.1'
 // The origins the app itself runs on: Vite dev/preview (see vite.config.ts)
 // and the Tauri webview (tauri://localhost on macOS/Linux, http(s)://tauri.localhost
 // on Windows).
+// This server only backs the browser build, which runs on the Vite ports, so
+// those stay trusted: something else listening there is already a program
+// running on this machine.
 const APP_ORIGINS = new Set([
   'http://127.0.0.1:5173',
   'http://localhost:5173',

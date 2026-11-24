@@ -1,6 +1,5 @@
 /* ============================================================
-   Layers overview (ui/LayerOverview.tsx): the accordion, ported from the
-   approved layers-accordion prototype. Every layer is a canvas-sized sheet
+   Layers overview (ui/LayerOverview.tsx): the accordion. Every layer is a canvas-sized sheet
    with its own 3D transform, written per frame by the overview's loop; only
    transforms and opacities change, and nothing here transitions anything
    else. No backdrop-filter and no filter.
@@ -754,7 +753,7 @@
   white-space: nowrap;
 }
 
-/* ---------- top-bar layer chip: ≡ 02 ROOTOP ~/p/rootop ---------- */
+/* ---------- top-bar layer chip: ≡ 02 WEBAPP ~/p/webapp ---------- */
 .tb-layer {
   height: calc(24px * var(--ts));
   max-width: calc(260px * var(--ts));

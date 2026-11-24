@@ -1,4 +1,4 @@
-// Frame sampler for the layers overview (concept §7, "measure first").
+// Frame sampler for the layers overview.
 // Off by default: `P` in the overview turns it on (persisted), and then each
 // open and dive records where the time went and the frame deltas while it
 // animates. Read it in the overview's corner readout. When off, the only cost
@@ -28,8 +28,13 @@ export type PerfRun = {
 }
 
 const listeners = new Set<() => void>()
+/** The readout, the bench and the slow-motion knob are tools for working on
+ *  the overview: on in dev builds, off in release builds unless built with
+ *  VITE_PERF_TOOLS=1. */
+export const PERF_TOOLS = import.meta.env.DEV || import.meta.env.VITE_PERF_TOOLS === '1'
+
 export const layersPerf = {
-  on: typeof localStorage !== 'undefined' && localStorage.getItem(KEY) === '1',
+  on: PERF_TOOLS && typeof localStorage !== 'undefined' && localStorage.getItem(KEY) === '1',
   keyAt: 0,
   runs: [] as PerfRun[],
 }

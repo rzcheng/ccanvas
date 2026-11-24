@@ -4,8 +4,7 @@
 //    canvases (and every file from before layers) are unchanged.
 //  • `ws.layers` is materialised only once a second layer exists.
 //  • A layer may carry its own folder (`dir`) and remembers its own camera.
-// The overview's accordion geometry (ported from the layers-accordion prototype)
-// is at the bottom: pure arithmetic per frame, no DOM reads.
+// The overview's accordion geometry is at the bottom: pure arithmetic per frame, no DOM reads.
 
 import type { Camera, CanvasElement, Layer, Workspace } from './types'
 import type { AgentStatus } from './agents'
@@ -115,7 +114,7 @@ export function normalizeLayers(ws: Workspace): Workspace {
   return { ...ws, layers, activeLayerId }
 }
 
-/** "~/p/rootop" for a folder under the home directory. */
+/** "~/p/webapp" for a folder under the home directory. */
 export function shortPath(p: string): string {
   return trimSlash(p).replace(/^\/(Users|home)\/[^/]+(?=\/|$)/, '~')
 }
@@ -256,9 +255,8 @@ export function layerLed(st: LayerStats): LedStatus | null {
 
 // ---------- overview geometry (the accordion) ----------
 //
-// Ported from the approved layers-accordion prototype. Every layer is a
-// viewport-sized sheet with its own transform (no shared 3D stage): one float,
-// the open position, drives them all. A sheet's pose is a function of its
+// Every layer is a viewport-sized sheet with its own transform (no shared 3D
+// stage): one float, the open position, drives them all. A sheet's pose is a function of its
 // distance from that position: the open sheet swings up to OPEN_TILT and
 // lifts forward, the others fold to SLAT_TILT slats a fixed gap apart, darker
 // with distance. Sheets only rotate and translate; their size never changes.
@@ -274,7 +272,7 @@ export const OV = {
   SLAT_Z: -30,
   FAR_Z: 18, // further back per step past the first slat
   PERSP: 1700, // px
-  /** the sheet height the prototype's z values and perspective were tuned
+  /** the sheet height the z values and perspective are tuned
    *  at; larger sheets scale both so the stack keeps its depth */
   REF_H: 370,
   PO_X: 0.58, // perspective origin, of the width
@@ -415,7 +413,7 @@ export function ovExtent(L: OvLayout, poses: Pose[]) {
 }
 
 /** How far to move the stack so it stays between the header and footer:
- *  0 while it fits with the open sheet centred (the prototype's look), else
+ *  0 while it fits with the open sheet centred (the default look), else
  *  the least shift that keeps it in, or centred if it can't fit at all. */
 export function ovShift(L: OvLayout, poses: Pose[]): number {
   if (!poses.length) return 0
@@ -490,7 +488,7 @@ export function labelYs(anchors: number[], heights: number[]): number[] {
   })
 }
 
-/** "~/p/rootop/.worktr…ortrait": keeps both ends of a long path. */
+/** "~/p/webapp/.worktr…ortrait": keeps both ends of a long path. */
 export function midEllipsis(s: string, max: number): string {
   if (s.length <= max) return s
   return s.slice(0, Math.ceil((max - 1) * 0.45)) + '…' + s.slice(-Math.floor((max - 1) * 0.55))
