@@ -41,6 +41,8 @@ export function AttentionBar() {
       y: viewCenter().y - cy * cam.zoom,
     })
     setSelection([el.id])
+    // on top of anything it overlaps, as every other jump does
+    useStore.getState().bringToFront([el.id])
     setActiveWidget(el.id)
   }
 

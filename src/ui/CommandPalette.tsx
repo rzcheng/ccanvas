@@ -382,6 +382,8 @@ export function CommandPalette() {
         y: viewCenter().y - cy * cam.zoom,
       })
       s.setSelection([el.id])
+      // on top of anything it overlaps
+      s.bringToFront([el.id])
     }
     for (const el of ws.elements)
       if (el.type === 'widget')
