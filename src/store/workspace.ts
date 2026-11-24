@@ -55,6 +55,7 @@ import {
   newLayerId,
   normalizeLayers,
 } from '../lib/layers'
+import { markOpenRequest } from '../lib/layersPerf'
 
 let zCounter = 1
 const nextZ = () => zCounter++
@@ -1538,6 +1539,7 @@ export const useStore = create<Store>((set, get) => ({
   setLayerOverview: (open) => {
     if (open === true) {
       if (get().layerOverview) return
+      markOpenRequest()
       // nothing typed while the stack is up may reach a widget
       ;(document.activeElement as HTMLElement | null)?.blur?.()
       set({ layerOverview: 'open', activeWidgetId: null, editingTextId: null })

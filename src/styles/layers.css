@@ -720,3 +720,19 @@
   box-shadow: 0 0 0 1px var(--accent-line);
   outline: none;
 }
+
+/* perf readout (P in the overview): a dev aid, plain mono text */
+.lo-perf {
+  position: absolute;
+  right: 18px;
+  top: 44px;
+  max-width: 62%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--ts));
+  color: var(--ink-faint);
+  text-align: right;
+  pointer-events: none;
+}

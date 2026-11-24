@@ -26,6 +26,7 @@ import {
 } from '../lib/layers'
 import { baseName } from '../lib/backend'
 import { IconLayers } from './icons'
+import { layersPerf, sampleTransition, setPerfOn, subscribePerf, type PerfRun } from '../lib/layersPerf'
 import { LayerProxy } from './LayerProxy'
 import '../styles/layers.css'
 
@@ -111,6 +112,8 @@ export function LayerOverview() {
   const [frost, setFrost] = useState(() => localStorage.getItem(GLASS_KEY) !== 'solid')
   const [renaming, setRenaming] = useState<string | null>(null)
 
+  // the first render's timestamp, for the perf readout (P)
+  const renderAt = useRef(performance.now())
   const rootRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const bgRef = useRef<HTMLDivElement>(null)
@@ -385,6 +388,7 @@ export function LayerOverview() {
     }
     if (c.reduced) return finish()
     busy('lo--diving', T.dive)
+    sampleTransition('dive', T.dive)
     applyFlat(j, cam, 'fly', T.dive, EASE_DIVE)
     chrome(false, 140, T.dive - 140)
     later(finish, T.dive + 10)
@@ -415,6 +419,7 @@ export function LayerOverview() {
   useLayoutEffect(() => {
     const c = C.current
     const root = rootRef.current!
+    const commitAt = performance.now()
     measure()
     if (c.reduced) {
       // reduced motion: an opacity crossfade to a static stack, no tilt or spread
@@ -426,6 +431,7 @@ export function LayerOverview() {
       root.style.opacity = '1'
       c.state = 'open'
       root.classList.add('lo--open')
+      sampleTransition('open', T.fade, { render: renderAt.current, commit: commitAt, effectEnd: performance.now() })
       return
     }
     // frame 0: your sheet sits exactly over the live canvas, so the swap is invisible
@@ -453,6 +459,7 @@ export function LayerOverview() {
       C.current.state = 'open'
       root.classList.add('lo--open')
     }, total)
+    sampleTransition('open', total, { render: renderAt.current, commit: commitAt, effectEnd: performance.now() })
     return () => {
       for (const t of C.current.timers) window.clearTimeout(t)
       window.clearTimeout(C.current.busyTimer)
@@ -515,6 +522,7 @@ export function LayerOverview() {
       if (k === 'ArrowDown' || k === 'j' || k === 'J') return done(), L.setFocus((c.g?.focus ?? 0) - 1)
       if (k === 'n' || k === 'N') return done(), L.newLayer()
       if (k === 'g' || k === 'G') return done(), L.toggleGlass()
+      if (k === 'p' || k === 'P') return done(), setPerfOn(!layersPerf.on)
       if ((k === 'r' || k === 'R') && c.state === 'open') return done(), L.setRenaming(L.layers[c.g?.focus ?? 0]?.id ?? null)
       // every other bare key stops here: nothing reaches the canvas underneath
       done()
@@ -758,6 +766,7 @@ export function LayerOverview() {
           glass: {frost ? 'frosted' : 'solid'} <span className="kbd">G</span>
         </button>
       </div>
+      <PerfReadout />
       <div className="lo-foot" ref={footRef}>
         <div className="lo-keys">
           <span>
@@ -807,6 +816,27 @@ function RailRow({ el, home, onHover }: { el: WidgetElement; home?: string; onHo
       <span className="lr__t">{el.title}</span>
       {guest && <span className="lr__guest">↗ {guest}</span>}
       <span className={`lr__s lr__s--${isTerm ? s : ''}`}>{isTerm ? (WORD[s] ?? s) : el.kind}</span>
+    </div>
+  )
+}
+
+/** The perf readout (P): the last few opens and dives, newest first. */
+function PerfReadout() {
+  const [, tick] = useState(0)
+  useEffect(() => subscribePerf(() => tick((x) => x + 1)), [])
+  if (!layersPerf.on) return null
+  const f = (v?: number) => (v == null ? '·' : v.toFixed(1))
+  const row = (r: PerfRun, i: number) => (
+    <div key={i} className="lo-perf__row">
+      {r.kind} · key→render {f(r.render)} · commit {f(r.commit)} · effect {f(r.effect)} · frame0{' '}
+      {f(r.frame0)} · first {f(r.first)} · p50 {f(r.p50)} · p95 {f(r.p95)} · max {f(r.max)} · drops{' '}
+      {r.drops}/{r.n}
+    </div>
+  )
+  return (
+    <div className="lo-perf">
+      <div className="lo-perf__row">perf (P to hide) · ms · {document.hidden ? 'HIDDEN: throttled' : 'visible'}</div>
+      {layersPerf.runs.map(row)}
     </div>
   )
 }
