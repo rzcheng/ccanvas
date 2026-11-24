@@ -114,6 +114,20 @@ const defaultShell =
 
 const homeDir = process.env.HOME || process.env.USERPROFILE || process.cwd()
 
+// The shell's environment: ours, naming the terminal it really runs in (as
+// spawn_session in src-tauri/src/pty.rs does), without the identity of a
+// terminal this server was started from.
+const OUTER_TERMINAL = ['LC_TERMINAL', 'LC_TERMINAL_VERSION', 'ITERM_SESSION_ID', 'KITTY_WINDOW_ID', 'KITTY_PID', 'KITTY_PUBLIC_KEY', 'GHOSTTY_BIN_DIR', 'GHOSTTY_RESOURCES_DIR', 'GHOSTTY_SHELL_FEATURES', 'WEZTERM_PANE', 'WEZTERM_EXECUTABLE']
+function shellEnv() {
+  const env = { ...process.env }
+  if (process.platform !== 'win32') {
+    for (const k of OUTER_TERMINAL) delete env[k]
+    Object.assign(env, { TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'ccanvas' })
+    delete env.TERM_PROGRAM_VERSION
+  }
+  return env
+}
+
 // ffmpeg/ffprobe let us transcode any codec the webview can't decode into a
 // browser-playable stream. Detected once at startup (overridable via env).
 const ffmpegBin = process.env.CCANVAS_FFMPEG || 'ffmpeg'
@@ -921,7 +935,7 @@ wss.on('connection', (socket, req) => {
       cols,
       rows,
       cwd: reqCwd || homeDir,
-      env: process.env,
+      env: shellEnv(),
     })
   } catch (err) {
     socket.send(`\r\n\x1b[31mfailed to spawn ${defaultShell}: ${err?.message}\x1b[0m\r\n`)
