@@ -39,9 +39,7 @@ import { openInClaude } from '../lib/desktopSessions'
 import { WidgetErrorBoundary } from '../ui/WidgetErrorBoundary'
 import { stacksOf, type Stack } from '../lib/stacks'
 import { StackRail, StackEdges } from './StackRail'
-
-/** true while a spread card is being dragged (hover shouldn't move the highlight) */
-let spreadDragging = false
+import { useSpreadCardDrag, isSpreadDragging } from './useSpreadCardDrag'
 
 /** Where a stack member sits while its stack is spread out (world units). */
 export type SpreadCard = {
@@ -50,8 +48,10 @@ export type SpreadCard = {
   ty: number
   /** uniform scale from the member's box to its card */
   k: number
-  /** 0-based position in the spread (shown as 1-based) */
+  /** 0-based position in the stack */
   index: number
+  /** the slot it shows in (moves while another card is dragged; shown 1-based) */
+  slot: number
   /** the highlighted card */
   hi: boolean
   /** cards are flying back into the stack */
@@ -403,87 +403,6 @@ export const WidgetFrame = memo(function WidgetFrame({
       }
     }
   }
-  const focusCard = () => useStore.getState().closeSpread(el.id)
-  const [cardDrag, setCardDrag] = useState(false)
-  // a click on a spread card focuses it; a drag picks it up to reorder the
-  // stack: the card follows the pointer and the others slide to make room
-  const onCardDown = (e: React.PointerEvent) => {
-    e.stopPropagation()
-    if (e.button !== 0 || !stack) return
-    const node = nodeRef.current
-    if (!node) return
-    const start = { x: e.clientX, y: e.clientY }
-    const r0 = node.getBoundingClientRect()
-    const grab = { x: e.clientX - r0.left, y: e.clientY - r0.top }
-    let dragging = false
-    let began = false
-    let off = { x: 0, y: 0 } // the card's `translate`, in world units
-    let ptr = start
-    const zoom = () => selectActive(useStore.getState()).camera.zoom
-    // keep the grabbed point under the pointer, wherever the card's slot is now
-    const place = () => {
-      const z = zoom()
-      const r = node.getBoundingClientRect()
-      const baseX = r.left - off.x * z
-      const baseY = r.top - off.y * z
-      off = { x: (ptr.x - grab.x - baseX) / z, y: (ptr.y - grab.y - baseY) / z }
-      node.style.translate = `${off.x}px ${off.y}px`
-    }
-    const onMove = (ev: PointerEvent) => {
-      if (ev.pointerId !== e.pointerId) return
-      if (!dragging) {
-        if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 5) return
-        dragging = true
-        spreadDragging = true
-        // class set before React's next render, then kept by it
-        node.classList.add('widget--spread-drag')
-        setCardDrag(true)
-      }
-      ptr = { x: ev.clientX, y: ev.clientY }
-      place()
-      // over another card → take its slot
-      const under = document
-        .elementsFromPoint(ev.clientX, ev.clientY)
-        .map((n) => (n as HTMLElement).closest?.('.widget--spread') as HTMLElement | null)
-        .find((n) => n && n !== node)
-      const targetId = under?.dataset.widgetId
-      if (!targetId) return
-      const st = useStore.getState()
-      const live = stacksOf(selectActive(st).elements).get(stack.id)
-      if (!live) return
-      const ids = live.members.map((m) => m.id)
-      const from = ids.indexOf(el.id)
-      const to = ids.indexOf(targetId)
-      if (from < 0 || to < 0 || from === to) return
-      if (!began) st.beginHistory()
-      began = true
-      ids.splice(from, 1)
-      ids.splice(to, 0, el.id)
-      st.reorderStack(stack.id, ids)
-      st.setSpreadHi(to)
-      // the card's slot just moved: re-place it once React has laid it out
-      requestAnimationFrame(() => requestAnimationFrame(() => dragging && place()))
-    }
-    const onUp = (ev: PointerEvent) => {
-      if (ev.pointerId !== e.pointerId) return
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
-      spreadDragging = false
-      if (!dragging) {
-        if (ev.type === 'pointerup') focusCard()
-        return
-      }
-      // settle into its slot
-      node.classList.remove('widget--spread-drag')
-      setCardDrag(false)
-      void node.offsetWidth
-      node.style.translate = ''
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
-  }
   // ---- focus mode ----
   // 'on': fills the view; 'back': flying home. Either way it is laid out at
   // the focus box at 100% scale (counter-scaled against the camera) and
@@ -494,6 +413,10 @@ export const WidgetFrame = memo(function WidgetFrame({
   const focusBoxNow = useStore((s) => (focusRole ? s.focus?.box ?? null : null))
   const focusCam = useStore((s) => (focusRole ? selectActive(s).camera : null))
   const nodeRef = useRef<HTMLDivElement>(null)
+  // spread view: click a card to focus it, drag to reorder or pull it out
+  const { onCardDown, cardClass } = useSpreadCardDrag(el, stack, spreadCard, nodeRef, () =>
+    useStore.getState().closeSpread(el.id),
+  )
   const prevFocusRole = useRef<typeof focusRole>(null)
   useLayoutEffect(() => {
     const node = nodeRef.current
@@ -667,9 +590,7 @@ export const WidgetFrame = memo(function WidgetFrame({
         dimmed ? ' widget--dimmed' : ''
       }${visible ? '' : ' widget--offlayer'}${stackFront && !spreadCard ? ' widget--stack-front' : ''}${
         stackHidden ? ' widget--stack-hidden' : ''
-      }${spreadCard ? ' widget--spread' : ''}${spreadCard?.hi && !spreadCard.closing ? ' widget--spread-hi' : ''}${
-        spreadCard && cardDrag ? ' widget--spread-drag' : ''
-      }${
+      }${spreadCard ? ' widget--spread' : ''}${spreadCard?.hi && !spreadCard.closing ? ' widget--spread-hi' : ''}${cardClass}${
         snapRole ? ` widget--snap-${snapRole}` : ''
       }${focusRole ? ` widget--focus widget--focus-${focusRole}` : ''}`}
       ref={nodeRef}
@@ -694,7 +615,7 @@ export const WidgetFrame = memo(function WidgetFrame({
           className="widget__bar spread-bar"
           onPointerDown={onCardDown}
         >
-          <span className="spread-bar__num">{spreadCard.index + 1}</span>
+          <span className="spread-bar__num">{spreadCard.slot + 1}</span>
           <span className="widget__icon">
             <WidgetSlotIcon el={el} />
           </span>
@@ -817,7 +738,7 @@ export const WidgetFrame = memo(function WidgetFrame({
             className="widget__spread-hit"
             onPointerDown={onCardDown}
             onPointerEnter={() => {
-              if (!spreadDragging) useStore.getState().setSpreadHi(spreadCard.index)
+              if (!isSpreadDragging()) useStore.getState().setSpreadHi(spreadCard.index)
             }}
           />
         )}
