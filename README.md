@@ -285,9 +285,25 @@ several groups of agents, on one canvas without them crowding each other.
   click a sheet, press `⏎`, or press its digit to dive in. `Esc` or `L` goes
   back. `⌥↑` / `⌥↓` and `⌥1`–`⌥9` switch instantly. `G` in the overview
   switches the sheets between frosted and solid.
-- **Move widgets.** Right-click → *Move to 02 · name*. A widget keeps its
+- **See what's where.** Each sheet draws its widgets as tiles: a type glyph
+  (Claude, desktop mirror, shell, code, git, web, note) and a status light,
+  with names on the sheet you're looking at. Working agents tint their tile,
+  waiting ones turn amber. `V` switches the focused sheet to text cards with
+  a few lines of each widget. The rail counts each layer's widgets by type and
+  lists the focused one's, agents that need you first. The layer chip shows
+  an amber dot when an agent on another layer is waiting on you.
+- **Find across layers.** `/` in the overview filters every sheet as you type
+  (title, type, path, folder, URL); the rail says where the matches are, and
+  `⏎` dives to the first one with it selected.
+- **Move widgets.** Drag a tile onto another sheet or its label in the rail,
+  right-click → *Move to 02 · name*, or press `⇧⌥↑` / `⇧⌥↓` to send the
+  selection a layer up or down (you stay where you are). A widget keeps its
   position and its folder (a running terminal can't change directory); the
   overview marks it with its home folder.
+- **Arrange the stack.** In the overview, `⇧↑` / `⇧↓` move the focused layer
+  up or down, `R` renames it, and `del` removes it: its widgets merge into the
+  layer below, and nothing closes (a layer with widgets asks twice). The base
+  layer stays.
 - **Desktop mirrors sort themselves.** *Add* in the Desktop sessions panel puts
   each mirror on the layer whose folder holds that session's folder, and on
   the current layer otherwise.
@@ -302,6 +318,11 @@ several groups of agents, on one canvas without them crowding each other.
 
 The right-click menu on the layer chip (`≡ 02 ROOTOP`, shown once a tab has two
 layers) adds a layer, sets or clears its folder, and renames it.
+
+The overview is mounted only while it's open and animates only transforms and
+opacity. `P` in the overview shows a frame readout and `⇧P` runs a short
+open/dive benchmark (keep the window in front; background windows throttle
+frames). `npm test` runs the layer model's unit tests.
 
 ## Safety net: checkpoints
 
@@ -341,7 +362,9 @@ terminal untouched; on Windows and Linux they use Ctrl.
 | ⌘/Ctrl + `W` | close the focused widget on the current layer (desktop app; quits when no tab has a widget left) |
 | `L` · ⌃⌘`↑` | layers overview (`⌃⌘↑` works inside a terminal too) |
 | `⌥↑` / `⌥↓` · `⌥1`–`⌥9` | layer up / down · jump to layer N |
-| in the overview: `↑` `↓` · `⏎` · `1`–`9` · `N` · `R` · `G` · `Esc` | move · dive in · jump · new layer · rename · frosted/solid · back |
+| `⇧⌥↑` / `⇧⌥↓` | send the selection one layer up / down |
+| in the overview: `↑` `↓` · `⏎` · `1`–`9` · `/` · `N` · `R` · `del` | move · dive in · jump · find · new layer · rename · remove |
+| in the overview: `⇧↑` `⇧↓` · `V` · `G` · `Esc` | reorder · tiles/cards · frosted/solid · back |
 | ⌘/Ctrl + `Z` / `Shift Z` | undo · redo |
 | ⌘/Ctrl + `C` / `X` / `V` / `D` | copy · cut · paste · duplicate |
 | ⌘/Ctrl + `G` / `Shift G` | group · ungroup |
