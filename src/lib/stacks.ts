@@ -8,8 +8,27 @@
 
 import type { CanvasElement, WidgetElement } from './types'
 
-/** How long the pointer has to rest on the drop pad before it arms. */
-export const STACK_DWELL_MS = 260
+// ---- snap to stack ----
+// Dragging one widget (or one stack) mostly over another snaps it on; letting
+// go stacks them. Overlap is measured against the smaller of the two boxes.
+/** overlap at which the target shows faint brackets (a heads-up) */
+export const SNAP_NEAR = 0.2
+/** overlap at which the dragged widget snaps onto the target */
+export const SNAP_ENTER = 0.55
+/** a snapped widget only lets go below this (hysteresis, so it doesn't flicker) */
+export const SNAP_EXIT = 0.35
+/** how far a snapped widget still leans toward the pointer (0 = pinned) */
+export const SNAP_HOLD = 0.12
+
+type Box = { x: number; y: number; w: number; h: number }
+
+/** Shared area of two boxes as a fraction of the smaller one (0..1). */
+export function overlapRatio(a: Box, b: Box): number {
+  const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x))
+  const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y))
+  const small = Math.min(a.w * a.h, b.w * b.h)
+  return small > 0 ? (ix * iy) / small : 0
+}
 
 export type Stack = {
   id: string

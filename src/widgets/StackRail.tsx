@@ -21,10 +21,13 @@ function useWaitingCount(ids: string[]): number {
 export function StackRail({
   stack,
   onGrab,
+  ghostIds,
 }: {
   stack: Stack
   /** start a move of the stack (the front widget's title-bar grab) */
   onGrab: (e: React.PointerEvent) => void
+  /** snap preview: tabs that will join when the drag is released (drawn dashed) */
+  ghostIds?: string[]
 }) {
   const railRef = useRef<HTMLDivElement>(null)
   const [renaming, setRenaming] = useState(false)
@@ -80,7 +83,14 @@ export function StackRail({
       </span>
       <div className="stack-rail__tabs">
         {stack.members.map((m) => (
-          <StackTab key={m.id} m={m} stack={stack} front={m.id === stack.front.id} railRef={railRef} />
+          <StackTab
+            key={m.id}
+            m={m}
+            stack={stack}
+            front={!ghostIds && m.id === stack.front.id}
+            ghost={!!ghostIds?.includes(m.id)}
+            railRef={railRef}
+          />
         ))}
       </div>
       {waiting > 0 && <span className="stack-rail__attn">{waiting} needs you</span>}
@@ -101,11 +111,14 @@ function StackTab({
   m,
   stack,
   front,
+  ghost = false,
   railRef,
 }: {
   m: WidgetElement
   stack: Stack
   front: boolean
+  /** previewed while snapping: joins the stack on release */
+  ghost?: boolean
   railRef: React.RefObject<HTMLDivElement>
 }) {
   const Icon = KIND_ICON[m.kind]
@@ -190,7 +203,9 @@ function StackTab({
 
   return (
     <div
-      className={`stack-rail__tab${front ? ' stack-rail__tab--front' : ''}${attn ? ' stack-rail__tab--attn' : ''}`}
+      className={`stack-rail__tab${front ? ' stack-rail__tab--front' : ''}${attn ? ' stack-rail__tab--attn' : ''}${
+        ghost ? ' stack-rail__tab--ghost' : ''
+      }`}
       style={{ '--k': accentOf(m) } as React.CSSProperties}
       title={m.title}
       onPointerDown={onPointerDown}

@@ -280,16 +280,16 @@ export type SpreadState = {
   closing: boolean
 }
 
-/** Drag-to-stack feedback while a widget (or stack) is dragged over another. */
+/** Snap-to-stack feedback while a widget (or stack) is dragged over another. */
 export type StackDrop = {
-  /** widgets being dragged (a dragged stack contributes every member) */
+  /** widgets being dragged, the visible one first (a dragged stack brings every member) */
   sourceIds: string[]
-  /** the widget under the pointer (the front, if it is a stack) */
+  /** the widget it would stack onto (the front, if that is a stack) */
   targetId: string
-  /** the pointer is on the target's drop pad (or ⌥ is held) */
-  onPad: boolean
-  /** the pointer has rested on the pad long enough — releasing stacks */
-  armed: boolean
+  /** near: brackets close in as a heads-up; snap: releasing now stacks */
+  phase: 'near' | 'snap'
+  /** how close a 'near' drag is to snapping, 0..1 */
+  progress: number
 }
 
 /** Side panels that share the right-hand dock (only one open at a time). */
@@ -2119,8 +2119,8 @@ export const useStore = create<Store>((set, get) => ({
       (cur &&
         d &&
         cur.targetId === d.targetId &&
-        cur.armed === d.armed &&
-        cur.onPad === d.onPad &&
+        cur.phase === d.phase &&
+        Math.abs(cur.progress - d.progress) < 0.04 &&
         cur.sourceIds.join() === d.sourceIds.join())
     )
       return

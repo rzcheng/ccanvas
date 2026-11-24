@@ -52,7 +52,10 @@ import {
 } from '../lib/layers'
 import { WidgetFrame, pullOutOfSpread, type SpreadCard } from '../widgets/WidgetFrame'
 import {
-  STACK_DWELL_MS,
+  SNAP_ENTER,
+  SNAP_EXIT,
+  SNAP_NEAR,
+  overlapRatio,
   isHiddenMember,
   spreadCols,
   spreadRects,
@@ -61,6 +64,7 @@ import {
   withStackSiblings,
   type Stack,
 } from '../lib/stacks'
+import { trackSnap } from '../lib/snapMotion'
 import { IconStack } from '../ui/icons'
 
 type ScreenRect = { x: number; y: number; w: number; h: number }
@@ -199,8 +203,8 @@ export function Canvas() {
   const overview = useStore((s) => s.layerOverview === 'open')
   const spread = useStore((s) => s.spread)
   const stackDrop = useStore((s) => s.stackDrop)
-  // drag-to-stack: the pending "hold on the pad" timer
-  const dwellRef = useRef<{ timer: number; targetId: string } | null>(null)
+  // snap-to-stack: one beat of "locked" brackets after a drop stacks
+  const [snapLock, setSnapLock] = useState<{ box: Rect; label: string } | null>(null)
 
   const [draft, setDraft] = useState<CanvasElement | null>(null)
   const [marquee, setMarquee] = useState<ScreenRect | null>(null)
@@ -906,7 +910,9 @@ export function Canvas() {
         }
         moveSelection(dx, dy)
         drag.last = { x: drag.last.x + dx, y: drag.last.y + dy }
-        updateStackDrop(world, e.altKey)
+        // snap-to-stack (⌘ while dragging turns it off); a snapped widget
+        // ignores the alignment guides
+        if (updateStackDrop(e.metaKey || e.ctrlKey) === 'snap') setSnapGuides(null)
         break
       }
       case 'resizeEl': {
@@ -1006,77 +1012,97 @@ export function Canvas() {
     }
   }
 
-  // ---- drag-to-stack ----
-  // Dragging one widget (or one stack) over another shows a pad in the
-  // target's middle. Resting on it for STACK_DWELL_MS (or holding ⌥) arms it;
-  // releasing then stacks. Plain overlap stays plain overlap.
-  const clearDwell = () => {
-    if (dwellRef.current) window.clearTimeout(dwellRef.current.timer)
-    dwellRef.current = null
-  }
-  const clearStackDrop = () => {
-    clearDwell()
-    useStore.getState().setStackDrop(null)
-  }
-  const updateStackDrop = (world: Point, alt: boolean) => {
+  // ---- snap-to-stack ----
+  // Dragging one widget (or one stack) mostly over another snaps it on (see
+  // lib/stacks.ts for the thresholds, lib/snapMotion.ts for the motion);
+  // releasing while snapped stacks them. Plain overlap stays plain overlap
+  // below the threshold, and ⌘ turns snapping off for the drag.
+  const clearStackDrop = () => useStore.getState().setStackDrop(null)
+  const updateStackDrop = (noSnap: boolean): 'near' | 'snap' | null => {
     const st = useStore.getState()
-    const els = selectActive(st).elements
-    const moving = withStackSiblings(els, st.selection)
-    const movingEls = els.filter((el) => moving.has(el.id))
+    const tab = selectActive(st)
+    const all = tab.elements
+    const moving = withStackSiblings(all, st.selection)
+    const movingEls = all.filter((el) => moving.has(el.id))
     const units = new Set(movingEls.map((el) => (el.type === 'widget' && el.stackId) || el.id))
-    // only a single widget or a single stack can be dropped into a stack
-    if (!movingEls.length || units.size !== 1 || movingEls.some((el) => el.type !== 'widget' || el.locked))
-      return clearStackDrop()
-    const stks = stacksOf(els)
-    let target: WidgetElement | null = null
-    for (const el of els)
-      if (
-        el.type === 'widget' &&
-        !moving.has(el.id) &&
-        !isHiddenMember(el, stks) &&
-        pointInRect(world, el) &&
-        (!target || el.z > target.z)
-      )
-        target = el
-    if (!target || target.locked) return clearStackDrop()
+    // only a single widget or a single stack can be stacked onto something
+    if (noSnap || !movingEls.length || units.size !== 1 || movingEls.some((el) => el.type !== 'widget' || el.locked)) {
+      clearStackDrop()
+      return null
+    }
+    const stks = stacksOf(all)
     // the visible one first, so it stays in front after stacking
-    const sourceIds = [...movingEls]
-      .sort((a, b) => (isHiddenMember(a, stks) ? 1 : 0) - (isHiddenMember(b, stks) ? 1 : 0))
-      .map((el) => el.id)
-    const onPad = alt || pointInRect(world, stackPadRect(target))
-    const targetId = target.id
-    const armedNow = st.stackDrop?.armed && st.stackDrop.targetId === targetId
-    if (!onPad) {
-      clearDwell()
-      st.setStackDrop({ sourceIds, targetId, onPad: false, armed: false })
-      return
-    }
-    if (armedNow) return
-    if (alt) {
-      clearDwell()
-      st.setStackDrop({ sourceIds, targetId, onPad: true, armed: true })
-      return
-    }
-    if (dwellRef.current?.targetId !== targetId) {
-      clearDwell()
-      dwellRef.current = {
-        targetId,
-        timer: window.setTimeout(() => {
-          const cur = useStore.getState().stackDrop
-          if (cur?.targetId === targetId && cur.onPad) useStore.getState().setStackDrop({ ...cur, armed: true })
-        }, STACK_DWELL_MS),
+    const sourceEls = [...movingEls].sort(
+      (a, b) => (isHiddenMember(a, stks) ? 1 : 0) - (isHiddenMember(b, stks) ? 1 : 0),
+    ) as WidgetElement[]
+    const src = sourceEls[0]
+    let target: WidgetElement | null = null
+    let best = 0
+    for (const el of activeLayerElements(tab)) {
+      if (el.type !== 'widget' || moving.has(el.id) || el.locked || isHiddenMember(el, stks)) continue
+      const r = overlapRatio(src, el)
+      if (r > best || (r === best && target && r > 0 && el.z > target.z)) {
+        target = el
+        best = r
       }
     }
-    st.setStackDrop({ sourceIds, targetId, onPad: true, armed: false })
+    const cur = st.stackDrop
+    const holding = cur?.phase === 'snap' && !!target && cur.targetId === target.id
+    const sourceIds = sourceEls.map((el) => el.id)
+    let phase: 'near' | 'snap' | null = null
+    if (target && (best >= SNAP_ENTER || (holding && best >= SNAP_EXIT))) phase = 'snap'
+    else if (target && best >= SNAP_NEAR) phase = 'near'
+    if (!phase || !target) {
+      clearStackDrop()
+      return null
+    }
+    const progress = phase === 'snap' ? 1 : Math.min(1, (best - SNAP_NEAR) / (SNAP_ENTER - SNAP_NEAR))
+    st.setStackDrop({ sourceIds, targetId: target.id, phase, progress })
+    trackSnap(src.id)
+    return phase
   }
+
+  // ⌘ pressed/released mid-drag re-decides the snap; Esc cancels the drag
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const drag = dragRef.current
+      if (drag?.kind !== 'move' || !drag.began) return
+      if (e.key === 'Escape' && e.type === 'keydown') {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        dragRef.current = null
+        useStore.getState().setStackDrop(null)
+        useStore.getState().setSnapGuides(null)
+        useStore.getState().endFrameDrag()
+        // the drag took an undo snapshot when it began: going back to it puts
+        // everything where it started
+        useStore.getState().undo()
+        return
+      }
+      if (e.key === 'Meta' || e.key === 'Control') updateStackDrop(e.type === 'keydown')
+    }
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('keyup', onKey, true)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('keyup', onKey, true)
+    }
+  })
 
   const onPointerUp = (e: React.PointerEvent) => {
     const drag = dragRef.current
     const drop = useStore.getState().stackDrop
     clearStackDrop()
-    // released on an armed drop pad → stack (the move already took the undo snapshot)
-    if (drag?.kind === 'move' && drop?.armed)
-      useStore.getState().stackWidgets(drop.sourceIds, drop.targetId)
+    // released while snapped → stack (the move already took the undo snapshot)
+    if (drag?.kind === 'move' && drop?.phase === 'snap') {
+      const st = useStore.getState()
+      const tgt = byId.get(drop.targetId)
+      const inStack = tgt?.type === 'widget' ? stacks.get(tgt.stackId ?? '') : undefined
+      if (st.stackWidgets(drop.sourceIds, drop.targetId) && tgt?.type === 'widget') {
+        setSnapLock({ box: { x: tgt.x, y: tgt.y, w: tgt.w, h: tgt.h }, label: inStack ? `Added to ${inStack.title}` : 'Stacked' })
+        window.setTimeout(() => setSnapLock(null), 450)
+      }
+    }
     setPanning(false)
     setSnapGuides(null)
     endFrameDrag()
@@ -1392,28 +1418,44 @@ export function Canvas() {
 
       {/* selection + marquee + handles + snap guides (screen space) */}
       <div className="overlay">
-        {dropTarget && (() => {
-          const t = screenRectOf(dropTarget)
-          const p = screenRectOf(stackPadRect(dropTarget))
-          const inStack = !!stacks.get(dropTarget.stackId ?? '')
+        {(dropTarget || snapLock) && (() => {
+          const box = snapLock ? snapLock.box : dropTarget!
+          const r = screenRectOf(box)
+          const snapped = !!snapLock || stackDrop?.phase === 'snap'
+          // near: brackets hover outside the target and close in as the overlap grows
+          const near = !snapped ? (stackDrop?.progress ?? 0) : 1
+          const inStack = dropTarget ? stacks.get(dropTarget.stackId ?? '') : undefined
+          const label = snapLock
+            ? snapLock.label
+            : inStack
+              ? `Add to ${inStack.title}`
+              : `Stack on ${dropTarget!.title}`
           return (
-            <>
-              <div className="stack-drop-target" style={{ left: t.x - 4, top: t.y - 4, width: t.w + 8, height: t.h + 8 }} />
-              <div
-                className={`stack-pad${stackDrop!.onPad ? ' stack-pad--dwell' : ''}${stackDrop!.armed ? ' stack-pad--armed' : ''}`}
-                style={{ left: p.x, top: p.y, width: p.w, height: p.h, '--dwell': `${STACK_DWELL_MS}ms` } as React.CSSProperties}
-              >
-                <span className="stack-pad__icon">
+            <div
+              key="snap-frame"
+              className={`snap-frame${snapped ? ' snap-frame--snap' : ''}${snapLock ? ' snap-frame--lock' : ''}`}
+              style={
+                {
+                  left: r.x,
+                  top: r.y,
+                  width: r.w,
+                  height: r.h,
+                  '--o': `${snapped ? 4 : 18 - 12 * near}px`,
+                  opacity: snapped ? 1 : 0.3 + 0.5 * near,
+                } as React.CSSProperties
+              }
+            >
+              <i className="snap-frame__c snap-frame__c--tl" />
+              <i className="snap-frame__c snap-frame__c--tr" />
+              <i className="snap-frame__c snap-frame__c--bl" />
+              <i className="snap-frame__c snap-frame__c--br" />
+              <span className="snap-frame__chip">
+                <span className="snap-frame__chip-icon">
                   <IconStack />
                 </span>
-                <span className="stack-pad__label">
-                  {stackDrop!.armed
-                    ? inStack ? 'Release to add' : 'Release to stack'
-                    : inStack ? 'Hold to add' : 'Hold to stack'}
-                </span>
-                <span className="stack-pad__fill" />
-              </div>
-            </>
+                {label}
+              </span>
+            </div>
           )
         })()}
         {spreadStack && (
@@ -1547,15 +1589,6 @@ export function Canvas() {
 }
 
 // union bounds of a set of elements (avoids importing boundsOfMany here)
-/** The drop pad in the middle of a widget's body (world units). */
-function stackPadRect(w: { x: number; y: number; w: number; h: number }): Rect {
-  const bar = 30
-  const bodyH = Math.max(40, w.h - bar)
-  const pw = Math.min(w.w * 0.56, 260)
-  const ph = Math.min(bodyH * 0.5, 130)
-  return { x: w.x + (w.w - pw) / 2, y: w.y + bar + (bodyH - ph) / 2, w: pw, h: ph }
-}
-
 function unionBounds(els: CanvasElement[]): Rect {
   let minX = Infinity
   let minY = Infinity

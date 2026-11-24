@@ -32,7 +32,7 @@ import { ClaudeBody } from './ClaudeBody'
 import { MirrorAsk, MirrorWaitChip } from './MirrorStatus'
 import { openInClaude } from '../lib/desktopSessions'
 import { WidgetErrorBoundary } from '../ui/WidgetErrorBoundary'
-import type { Stack } from '../lib/stacks'
+import { stacksOf, type Stack } from '../lib/stacks'
 import { StackRail, StackEdges } from './StackRail'
 
 /** Where a stack member sits while its stack is spread out (world units). */
@@ -332,13 +332,42 @@ export const WidgetFrame = memo(function WidgetFrame({
     }
   }
 
-  const dropState = useStore((s) =>
-    s.stackDrop?.onPad && s.stackDrop.sourceIds.includes(el.id)
-      ? s.stackDrop.armed
-        ? 'armed'
-        : 'over'
-      : null,
-  )
+  // snap-to-stack: the widget being held over a target, and the target itself
+  const snapRole = useStore((s) => {
+    const d = s.stackDrop
+    if (!d || d.phase !== 'snap') return null
+    if (d.sourceIds[0] === el.id) return 'held'
+    if (d.targetId === el.id) return 'target'
+    return null
+  })
+  // while held, this widget's bar previews the stack's rail with its own tab(s)
+  // dashed in — it's about to be the front, so its bar is the rail you'll get
+  let snapPreview: { stack: Stack; ghostIds: string[] } | null = null
+  if (snapRole === 'held') {
+    const st = useStore.getState()
+    const d = st.stackDrop!
+    const els = selectActive(st).elements
+    const stacksNow = stacksOf(els)
+    const tgt = els.find((e) => e.id === d.targetId)
+    if (tgt && tgt.type === 'widget') {
+      const tStack = tgt.stackId ? stacksNow.get(tgt.stackId) : undefined
+      const sources = d.sourceIds
+        .map((id) => els.find((e) => e.id === id))
+        .filter((e): e is WidgetElement => !!e && e.type === 'widget')
+      // a dragged stack keeps its own tab order
+      const srcStack = el.stackId ? stacksNow.get(el.stackId) : undefined
+      const incoming = srcStack ? srcStack.members : sources
+      snapPreview = {
+        stack: {
+          id: 'snap-preview',
+          title: tStack?.title ?? srcStack?.title ?? tgt.title,
+          members: [...(tStack ? tStack.members : [tgt]), ...incoming],
+          front: el,
+        },
+        ghostIds: incoming.map((m) => m.id),
+      }
+    }
+  }
   const focusCard = () => useStore.getState().closeSpread(el.id)
   const spreadStyle: React.CSSProperties = spreadCard
     ? {
@@ -360,7 +389,7 @@ export const WidgetFrame = memo(function WidgetFrame({
       }${visible ? '' : ' widget--offlayer'}${stackFront && !spreadCard ? ' widget--stack-front' : ''}${
         stackHidden ? ' widget--stack-hidden' : ''
       }${spreadCard ? ' widget--spread' : ''}${spreadCard?.hi && !spreadCard.closing ? ' widget--spread-hi' : ''}${
-        dropState ? ` widget--drop-${dropState}` : ''
+        snapRole ? ` widget--snap-${snapRole}` : ''
       }`}
       data-widget-id={el.id}
       aria-hidden={stackHidden || undefined}
@@ -402,6 +431,8 @@ export const WidgetFrame = memo(function WidgetFrame({
             <IconPullOut />
           </button>
         </div>
+      ) : snapPreview ? (
+        <StackRail stack={snapPreview.stack} ghostIds={snapPreview.ghostIds} onGrab={grab} />
       ) : stackFront ? (
         <StackRail stack={stack!} onGrab={grab} />
       ) : (
