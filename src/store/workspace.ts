@@ -431,7 +431,9 @@ export type Store = {
   /** select these ids plus their group siblings (for user clicks) */
   selectWithGroups: (ids: string[]) => void
   clearSelection: () => void
-  deleteSelection: () => void
+  /** delete the selection; `keepWidgets` leaves its widgets (the ⌫ key: a
+   *  chat or panel only closes on purpose, from its own button or the menu) */
+  deleteSelection: (opts?: { keepWidgets?: boolean }) => void
   moveSelection: (dx: number, dy: number) => void
   beginFrameDrag: () => void
   endFrameDrag: () => void
@@ -1169,17 +1171,18 @@ export const useStore = create<Store>((set, get) => ({
   clearSelection: () =>
     set({ selection: [], activeWidgetId: null, editingTextId: null }),
 
-  deleteSelection: () => {
+  deleteSelection: (opts) => {
     const ws = get().active()
     if (!ws) return
-    const locked = new Set(
-      ws.elements.filter((e) => e.locked).map((e) => e.id),
+    const keep = new Set(
+      ws.elements.filter((e) => e.locked || (opts?.keepWidgets && e.type === 'widget')).map((e) => e.id),
     )
-    const ids = get().selection.filter((id) => !locked.has(id))
+    const ids = get().selection.filter((id) => !keep.has(id))
     if (!ids.length) return
     get().beginHistory()
     get().removeElements(ids)
-    set({ selection: [], activeWidgetId: null })
+    // what was kept stays selected
+    set({ selection: get().selection.filter((id) => keep.has(id)), activeWidgetId: null })
   },
 
   moveSelection: (dx, dy) => {

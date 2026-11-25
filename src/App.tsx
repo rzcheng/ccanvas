@@ -383,9 +383,11 @@ export default function App() {
           return
         }
       }
+      // ⌫ deletes drawings, text, frames and images, never a widget: a chat
+      // or panel closes only on purpose (its ✕, or Delete in its menu)
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
-        store.deleteSelection()
+        store.deleteSelection({ keepWidgets: true })
         return
       }
       // stacks: S stacks the selection; with a stacked widget selected,

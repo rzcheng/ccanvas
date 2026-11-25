@@ -452,7 +452,7 @@ terminal untouched; on Windows and Linux they use Ctrl.
 | ⌘/Ctrl + `A` | select all on the current layer |
 | ⌘/Ctrl + `0` `+` `-` | 100% / zoom in / zoom out |
 | `\` | zoom to the selection, or fit everything |
-| `Delete` / `Backspace` | delete selection |
+| `Delete` / `Backspace` | delete the selected drawings, text, frames and images (never a widget: close those with ✕ or Delete in the right-click menu) |
 | `Esc` | clear the selection |
 | drag · click | move a widget you haven't clicked into · click into it to use it |
 | double-click | rename a widget or tab · edit text |

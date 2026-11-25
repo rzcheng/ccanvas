@@ -657,7 +657,14 @@ export function Canvas() {
     items.push({ label: 'Bring to front', hint: '⌘]', onClick: () => s().bringToFront(s().selection) })
     items.push({ label: 'Send to back', hint: '⌘[', onClick: () => s().sendToBack(s().selection) })
     items.push({ separator: true })
-    items.push({ label: 'Delete', hint: '⌫', danger: true, onClick: () => s().deleteSelection() })
+    // ⌫ never deletes a widget, so the hint only shows when it would do this
+    const hasWidget = selectActive(s()).elements.some((e) => e.type === 'widget' && s().selection.includes(e.id))
+    items.push({
+      label: 'Delete',
+      hint: hasWidget ? undefined : '⌫',
+      danger: true,
+      onClick: () => s().deleteSelection(),
+    })
     return items
   }
 

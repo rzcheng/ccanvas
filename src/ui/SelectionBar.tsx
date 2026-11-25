@@ -167,7 +167,7 @@ export function SelectionBar() {
         <button className="selbar__btn" title="Send to back (⌘[)" onClick={() => sendToBack(selection)}>
           <IconSendBack />
         </button>
-        <button className="selbar__btn selbar__btn--danger" title="Delete (⌫)" onClick={deleteSelection}>
+        <button className="selbar__btn selbar__btn--danger" title="Delete" onClick={() => deleteSelection()}>
           <IconClose />
         </button>
       </div>
