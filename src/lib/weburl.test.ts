@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appOnlySite, hostOf, isLocalUrl, looksLikeLocalFile, looksLikeUrl, normalizeUrl, parseStart, videoEmbed } from './weburl'
+import { appOnlySite, hostOf, resolveAddress, searchQuery, searchUrl, isLocalUrl, looksLikeLocalFile, looksLikeUrl, normalizeUrl, parseStart, videoEmbed } from './weburl'
 
 describe('normalizeUrl', () => {
   it('adds the right scheme', () => {
@@ -111,4 +111,48 @@ describe('appOnlySite', () => {
     expect(appOnlySite('https://www.youtube.com/watch?v=dQw4w9WgXcQ')).toBeNull()
     expect(appOnlySite('https://example.com/')).toBeNull()
   })
+})
+
+describe('resolveAddress', () => {
+  const url = (v: string) => {
+    const a = resolveAddress(v)
+    return a?.kind === 'url' ? a.url : a
+  }
+  it('keeps addresses as addresses', () => {
+    expect(url('localhost:3000')).toBe('http://localhost:3000')
+    expect(url('localhost')).toBe('http://localhost')
+    expect(url('3000')).toBe('http://localhost:3000')
+    expect(url('example.com')).toBe('https://example.com')
+    expect(url('docs.example.org/guide?x=1')).toBe('https://docs.example.org/guide?x=1')
+    expect(url('10.0.0.2')).toBe('http://10.0.0.2')
+    expect(url('192.168.1.4:8080/a')).toBe('http://192.168.1.4:8080/a')
+    expect(url('https://a.b/c d')).toBe('https://a.b/c d')
+    expect(url('devbox:8080')).toBe('http://devbox:8080')
+  })
+  it('opens local html files', () => {
+    expect(resolveAddress('./index.html')).toEqual({ kind: 'file', path: './index.html' })
+    expect(resolveAddress('/tmp/page.html')).toEqual({ kind: 'file', path: '/tmp/page.html' })
+    expect(resolveAddress('dist/index.html')).toEqual({ kind: 'file', path: 'dist/index.html' })
+  })
+  it('searches for anything else', () => {
+    expect(resolveAddress('how do flexbox gaps work')).toEqual({
+      kind: 'url',
+      url: 'https://www.google.com/search?q=how%20do%20flexbox%20gaps%20work',
+      search: 'how do flexbox gaps work',
+    })
+    expect(url('react')).toBe(searchUrl('react'))
+    expect(url('v1.2')).toBe(searchUrl('v1.2'))
+    expect(url('what is example.com')).toBe(searchUrl('what is example.com'))
+    expect(url('c++ & rust?')).toBe('https://www.google.com/search?q=c%2B%2B%20%26%20rust%3F')
+    expect(resolveAddress('   ')).toBeNull()
+  })
+  it('reads a search back', () => {
+    expect(searchQuery(searchUrl('a b'))).toBe('a b')
+    expect(searchQuery('https://example.com/search?q=x')).toBeNull()
+  })
+})
+
+it('sends searches to the real browser', () => {
+  expect(appOnlySite(searchUrl('a b'))).toBe('Google Search')
+  expect(appOnlySite('https://www.google.com/')).toBeNull()
 })

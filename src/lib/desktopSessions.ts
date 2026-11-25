@@ -9,7 +9,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { isTauri, openExternal } from './backend'
 import { watchTranscriptSummary, type TranscriptSummary } from './transcript'
 import { useAgents, type AgentStatus } from './agents'
-import { useStore, selectActive } from '../store/workspace'
+import { useStore, selectActive, WIDGET_SIZE } from '../store/workspace'
 import { viewCenter, viewport } from './view'
 import { activeLayerId, landingCamera, layerForPath } from './layers'
 import { screenToWorld } from './geometry'
@@ -80,8 +80,9 @@ export function forkCommand(sessionId: string): string | null {
   return `claude --resume ${sessionId} --fork-session`
 }
 
-const MIRROR_W = 460
-const MIRROR_H = 520
+// a mirror opens at a Claude chat's own size (store WIDGET_SIZE)
+const MIRROR_W = WIDGET_SIZE.transcript.w
+const MIRROR_H = WIDGET_SIZE.transcript.h
 const GAP = 40
 const COLS = 3
 

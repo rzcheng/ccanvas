@@ -14,19 +14,13 @@ import {
   baseName,
   isTauri,
 } from '../lib/backend'
-import {
-  normalizeUrl,
-  isHttpUrl,
-  isLocalUrl,
-  looksLikeLocalFile,
-  hostOf,
-  videoEmbed,
-  appOnlySite,
-} from '../lib/weburl'
+import { isHttpUrl, isLocalUrl, hostOf, videoEmbed, appOnlySite, resolveAddress, searchQuery } from '../lib/weburl'
 import { nativeViewSupported, useNativeView } from '../lib/nativeView'
+import { setWebPage, usePrefetchSiteIcon } from '../lib/brandIcon'
 import { focusWidget } from '../lib/view'
 import { useFocusSlot, stopCanvas } from '../ui/focusSlots'
-import { IconReload, IconWeb, IconFile, IconBack, IconForward, IconExternal } from '../ui/icons'
+import { IconReload, IconWeb, IconFile, IconBack, IconForward, IconExternal, IconLock, IconSearch } from '../ui/icons'
+import { useBrand } from './widgetIcons'
 
 // Web widget. Two modes, stored on the same widget (setting one clears the other):
 //   • URL  (el.url)  — an http(s) page. On the canvas it's an <iframe>: local
@@ -69,6 +63,12 @@ export function WebBody({ el, active, onScreen }: { el: WidgetElement; active: b
   const hostRef = useRef<HTMLDivElement>(null)
   const urlRef = useRef<HTMLInputElement>(null)
   const editing = useRef(false)
+
+  // where it is now, for its icon on the card, the tile and the title bar
+  useEffect(() => {
+    if (current) setWebPage(el.id, current)
+  }, [el.id, current])
+  usePrefetchSiteIcon(current || undefined)
 
   const toolsSlot = useFocusSlot('tools')
   const inStrip = focused && !!toolsSlot
@@ -194,14 +194,15 @@ export function WebBody({ el, active, onScreen }: { el: WidgetElement; active: b
 
   // navigate the bar: route to file mode or URL mode based on the input
   const go = (raw: string) => {
-    const v = raw.trim()
-    if (!v) return
-    if (looksLikeLocalFile(v)) {
-      setInput(v)
-      setFile(v)
+    // an address, a local file, or else a Google search (lib/weburl.ts)
+    const a = resolveAddress(raw)
+    if (!a) return
+    if (a.kind === 'file') {
+      setInput(a.path)
+      setFile(a.path)
       return
     }
-    const url = normalizeUrl(v)
+    const url = a.url
     setInput(url)
     if (native.state === 'live') {
       native.navigate(url)
@@ -213,7 +214,7 @@ export function WebBody({ el, active, onScreen }: { el: WidgetElement; active: b
       const x = w as WidgetElement
       x.url = url
       x.path = undefined
-      if (!x.title || x.title === DEFAULT_TITLE || x.title === 'web preview') x.title = hostOf(url)
+      if (!x.title || x.title === DEFAULT_TITLE || x.title === 'web preview') x.title = a.search ?? hostOf(url)
     })
   }
 
@@ -238,6 +239,12 @@ export function WebBody({ el, active, onScreen }: { el: WidgetElement; active: b
         ? proxyUrl(proxyBase!, current)
         : current
   const externalTarget = fileMode ? abs : current
+  // the preview frame loads too: from a new address until its load event
+  useEffect(() => {
+    if (frameSrc && !nativeWanted) setLoading(true)
+  }, [frameSrc, nativeWanted])
+  const [editingBar, setEditingBar] = useState(false)
+  const brand = useBrand(el)
 
   const step = (d: 1 | -1) => {
     if (native.state === 'live') return d < 0 ? native.back() : native.forward()
@@ -267,91 +274,139 @@ export function WebBody({ el, active, onScreen }: { el: WidgetElement; active: b
 
   // in focus mode the bar moves into the focus strip, the one bar there
   // (focusSlots.ts), and the page sits flush under it
+  // the address as a modern browser shows it while you're not typing: the
+  // site's icon (or a lock, or a magnifier for a search), the host, then the
+  // rest of the path, quieter
+  const query = !fileMode && current ? searchQuery(current) : null
+  const shown = (() => {
+    if (fileMode) return { host: baseName(el.path ?? ''), rest: '' }
+    if (!current) return null
+    if (query != null) return { host: query, rest: '' }
+    try {
+      const u = new URL(current)
+      const rest = (u.pathname === '/' ? '' : u.pathname) + u.search + u.hash
+      return { host: u.host.replace(/^www\./, ''), rest }
+    } catch {
+      return { host: current, rest: '' }
+    }
+  })()
+  const secure = /^https:/i.test(current)
+  const addrIcon = fileMode ? (
+    <IconFile />
+  ) : query != null ? (
+    <IconSearch />
+  ) : brand && !editingBar ? (
+    brand
+  ) : secure ? (
+    <IconLock />
+  ) : (
+    <IconWeb />
+  )
+
+  // in focus mode the bar moves into the focus strip, the one bar there
+  // (focusSlots.ts), and the page sits flush under it
   const bar = (
     <div className={`web__bar${inStrip ? ' web__bar--strip' : ''}`} {...(inStrip ? stopCanvas : {})}>
-      <button className="web__nav" title="Back" disabled={!canBack} onClick={() => step(-1)}>
-        <IconBack />
-      </button>
-      <button className="web__nav" title="Forward" disabled={!canForward} onClick={() => step(1)}>
-        <IconForward />
-      </button>
-      <button
-        className={`web__nav${loading && nativeLive ? ' web__nav--busy' : ''}`}
-        title="Reload"
-        onClick={reload}
-      >
-        <IconReload />
-      </button>
-      <input
-        ref={urlRef}
-        className="web__url"
-        value={input}
-        placeholder="Address, localhost:3000 or ./index.html"
-        spellCheck={false}
-        onFocus={(e) => {
-          editing.current = true
-          e.currentTarget.select()
-        }}
-        onBlur={() => {
-          editing.current = false
-        }}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={(e) => {
-          e.stopPropagation()
-          if (e.key === 'Enter') {
-            go(input)
-            e.currentTarget.blur()
-          } else if (e.key === 'Escape') {
-            setInput(fileMode ? (el.path ?? '') : current)
-            e.currentTarget.blur()
-          }
-        }}
-        onPointerDown={(e) => e.stopPropagation()}
-      />
-      {fileMode && (
-        <span className="web__tag web__tag--live" title="Live-reloading on file change">
-          <span className="web__live-dot" />
-          live
+      <div className="web__navs">
+        <button className="web__nav" title="Back" disabled={!canBack} onClick={() => step(-1)}>
+          <IconBack />
+        </button>
+        <button className="web__nav" title="Forward" disabled={!canForward} onClick={() => step(1)}>
+          <IconForward />
+        </button>
+        <button className={`web__nav${loading ? ' web__nav--busy' : ''}`} title="Reload" onClick={reload}>
+          <IconReload />
+        </button>
+      </div>
+      <label className={`web__addr${editingBar ? ' web__addr--editing' : ''}${shown && !editingBar ? ' web__addr--shown' : ''}`}>
+        <span className={`web__addr-ic${secure && !query && !fileMode && !brand ? ' web__addr-ic--lock' : ''}`}>{addrIcon}</span>
+        <span className="web__addr-field">
+          <input
+            ref={urlRef}
+            className="web__url"
+            value={input}
+            placeholder="Search Google or type an address"
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            onFocus={(e) => {
+              editing.current = true
+              setEditingBar(true)
+              e.currentTarget.select()
+            }}
+            onBlur={() => {
+              editing.current = false
+              setEditingBar(false)
+            }}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation()
+              if (e.key === 'Enter') {
+                go(input)
+                e.currentTarget.blur()
+              } else if (e.key === 'Escape') {
+                setInput(fileMode ? (el.path ?? '') : current)
+                e.currentTarget.blur()
+              }
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+          />
+          {shown && !editingBar && (
+            <span className="web__addr-show" aria-hidden>
+              <span className="web__addr-host">{shown.host}</span>
+              {shown.rest && <span className="web__addr-rest">{shown.rest}</span>}
+            </span>
+          )}
         </span>
-      )}
-      {remote && !inPane && (
+        {fileMode && (
+          <span className="web__tag web__tag--live" title="Live-reloading on file change">
+            <span className="web__live-dot" />
+            live
+          </span>
+        )}
+        {remote && !inPane && (
+          <button
+            className={`web__tag${el.live && nativeViewSupported() ? ' web__tag--on' : ''}`}
+            title={
+              !nativeViewSupported()
+                ? 'A preview: no logins, and some pages won’t work.'
+                : el.live
+                  ? 'Full browser, with your logins. Click for the lighter preview.'
+                  : 'A preview: no logins. Click for the full browser here.'
+            }
+            onClick={(e) => {
+              e.preventDefault()
+              if (!nativeViewSupported()) return
+              useStore.getState().beginHistory()
+              mutateElement(el.id, (w) => {
+                ;(w as WidgetElement).live = !el.live
+              })
+            }}
+          >
+            {el.live && nativeViewSupported() ? 'live' : 'preview'}
+          </button>
+        )}
+      </label>
+      <div className="web__navs">
+        {!inStrip && (
+          <button
+            className={`web__nav${fileMode ? ' web__nav--on' : ''}`}
+            title="Open a local HTML file (live-reloads on save)"
+            onClick={() => void openLocalFile()}
+          >
+            <IconFile />
+          </button>
+        )}
         <button
-          className={`web__tag${el.live && nativeViewSupported() ? ' web__tag--on' : ''}`}
-          title={
-            !nativeViewSupported()
-              ? 'A preview: no logins, and some pages won’t work.'
-              : el.live
-                ? 'Full browser, with your logins. Click for the lighter preview.'
-                : 'A preview: no logins. Click for the full browser here.'
-          }
-          onClick={() => {
-            if (!nativeViewSupported()) return
-            useStore.getState().beginHistory()
-            mutateElement(el.id, (w) => {
-              ;(w as WidgetElement).live = !el.live
-            })
-          }}
+          className="web__nav"
+          title="Open in your browser"
+          disabled={!externalTarget}
+          onClick={() => externalTarget && void openExternal(externalTarget)}
         >
-          {el.live && nativeViewSupported() ? 'live' : 'preview'}
+          <IconExternal />
         </button>
-      )}
-      {!inStrip && (
-        <button
-          className={`web__nav${fileMode ? ' web__nav--on' : ''}`}
-          title="Open a local HTML file (live-reloads on save)"
-          onClick={() => void openLocalFile()}
-        >
-          <IconFile />
-        </button>
-      )}
-      <button
-        className="web__nav"
-        title="Open in your browser"
-        disabled={!externalTarget}
-        onClick={() => externalTarget && void openExternal(externalTarget)}
-      >
-        <IconExternal />
-      </button>
+      </div>
+      {loading && <span className="web__progress" aria-hidden />}
     </div>
   )
 
@@ -367,6 +422,7 @@ export function WebBody({ el, active, onScreen }: { el: WidgetElement; active: b
             srcDoc={fileHtml}
             title={el.title}
             sandbox={SANDBOX}
+            onLoad={() => setLoading(false)}
             style={{ pointerEvents: active ? 'auto' : 'none' }}
           />
         ) : (
@@ -407,6 +463,7 @@ export function WebBody({ el, active, onScreen }: { el: WidgetElement; active: b
           sandbox={SANDBOX}
           allow={embed ? PLAYER_ALLOW : undefined}
           allowFullScreen={!!embed}
+          onLoad={() => setLoading(false)}
           style={{ pointerEvents: active || focused ? 'auto' : 'none' }}
         />
       ) : (

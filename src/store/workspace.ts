@@ -97,9 +97,14 @@ function makeWorkspace(name: string, dir?: string): Workspace {
 }
 
 // ---------- widget defaults ----------
-const WIDGET_SIZE: Record<WidgetKind, { w: number; h: number }> = {
-  terminal: { w: 520, h: 340 },
-  agent: { w: 540, h: 380 },
+// New widgets only (saved ones keep their size). A terminal opens at about
+// 80 columns of its default 13 px font, what full-screen programs (Claude
+// Code among them) are laid out for; a Claude chat is the same size whether
+// it runs in a terminal (agent) or is mirrored from the desktop app
+// (transcript), so the two sit together on the canvas.
+export const WIDGET_SIZE: Record<WidgetKind, { w: number; h: number }> = {
+  terminal: { w: 660, h: 420 },
+  agent: { w: 660, h: 480 },
   web: { w: 800, h: 560 },
   note: { w: 320, h: 240 },
   files: { w: 300, h: 420 },
@@ -115,7 +120,7 @@ const WIDGET_SIZE: Record<WidgetKind, { w: number; h: number }> = {
   sql: { w: 760, h: 500 },
   data: { w: 680, h: 460 },
   plot: { w: 520, h: 440 },
-  transcript: { w: 460, h: 520 },
+  transcript: { w: 660, h: 480 },
   video: { w: 560, h: 380 },
   mediainfo: { w: 340, h: 440 },
   claude: { w: 1120, h: 720 },

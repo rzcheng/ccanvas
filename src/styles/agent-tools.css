@@ -518,7 +518,7 @@
 .tx--empty {
   padding: 18px;
   color: var(--ink-faint);
-  font-size: calc(12px * var(--ts));
+  font-size: calc(12.5px * var(--ts));
   line-height: 1.55;
 }
 .tx__bar {
@@ -537,7 +537,7 @@
   border-radius: 6px;
   color: var(--ink);
   font-family: var(--font-mono);
-  font-size: calc(11.5px * var(--ts));
+  font-size: calc(12px * var(--ts));
   padding: 5px 8px;
   outline: none;
 }
@@ -545,7 +545,7 @@
   border-color: var(--accent-line);
 }
 .tx__count {
-  font-size: calc(10.5px * var(--ts));
+  font-size: calc(11px * var(--ts));
   color: var(--ink-faint);
   flex-shrink: 0;
 }
@@ -579,7 +579,7 @@
 }
 .tx__hint {
   color: var(--ink-faint);
-  font-size: calc(11.5px * var(--ts));
+  font-size: calc(12px * var(--ts));
   padding: 10px;
   line-height: 1.55;
 }
@@ -590,7 +590,7 @@
   flex-shrink: 0;
 }
 .tx__role {
-  font-size: calc(9.5px * var(--ts));
+  font-size: calc(10.5px * var(--ts));
   text-transform: uppercase;
   letter-spacing: 0.6px;
   color: var(--ink-faint);
@@ -615,7 +615,7 @@
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 2px 7px;
-  font-size: calc(10.5px * var(--ts));
+  font-size: calc(11px * var(--ts));
 }
 .tx__tool-name {
   color: var(--ft-code);
@@ -634,7 +634,7 @@
   flex-direction: column;
   gap: 1px;
   font-family: var(--font-mono);
-  font-size: calc(11px * var(--ts));
+  font-size: calc(12px * var(--ts));
 }
 .tx__trow {
   display: flex;
@@ -691,14 +691,14 @@
 .tx__tmeta {
   flex-shrink: 0;
   color: var(--ink-faint);
-  font-size: calc(10px * var(--ts));
+  font-size: calc(11px * var(--ts));
 }
 .tx__tmeta--error,
 .tx__trow--error .tx__tmeta { color: #e07a6e; }
 .tx__caret {
   flex-shrink: 0;
   color: var(--ink-ghost);
-  font-size: calc(9px * var(--ts));
+  font-size: calc(10px * var(--ts));
 }
 .tx__group-body {
   display: flex;
@@ -725,7 +725,7 @@
   border: 1px solid var(--line);
   border-radius: 5px;
   font-family: var(--font-mono);
-  font-size: calc(10.5px * var(--ts));
+  font-size: calc(11px * var(--ts));
   line-height: 1.45;
   color: var(--ink-dim);
   white-space: pre-wrap;
@@ -740,7 +740,7 @@
 .tx__more { color: var(--ink-faint); }
 .tx__tprompt {
   font-family: var(--font-sans);
-  font-size: calc(12px * var(--ts));
+  font-size: calc(12.5px * var(--ts));
   font-style: italic;
   color: var(--ink-faint);
   line-height: 1.45;
@@ -770,7 +770,7 @@
   padding-left: 8px;
   border-left: 2px solid var(--line);
   font-family: var(--font-sans);
-  font-size: calc(12px * var(--ts));
+  font-size: calc(12.5px * var(--ts));
   line-height: 1.5;
   color: var(--ink-faint);
   white-space: pre-wrap;
@@ -787,7 +787,7 @@
   border-radius: 100px;
   color: var(--accent);
   font-family: var(--font-mono);
-  font-size: calc(10.5px * var(--ts));
+  font-size: calc(11px * var(--ts));
   box-shadow: var(--shadow-panel);
 }
 .tx__jump:hover { background: var(--accent-soft); }
@@ -1207,7 +1207,7 @@
   background: none;
   border: none;
   padding: 0;
-  font-size: calc(11.5px * var(--ts));
+  font-size: calc(12px * var(--ts));
   color: var(--ink-dim);
 }
 .tx__md a {
@@ -1233,7 +1233,7 @@
   display: block;
   max-width: 100%;
   overflow-x: auto;
-  font-size: calc(12px * var(--ts));
+  font-size: calc(12.5px * var(--ts));
 }
 .tx__md th,
 .tx__md td {
@@ -1244,7 +1244,7 @@
 .tx__md img { max-width: 100%; height: auto; }
 /* harness traffic (notifications, peer messages, command output) */
 .tx__event {
-  font-size: calc(11px * var(--ts));
+  font-size: calc(12px * var(--ts));
   color: var(--ink-faint);
   font-style: italic;
   white-space: nowrap;
@@ -1261,7 +1261,7 @@
 /* ---------- transcript: cost, changed files, prompt jumps, menu ---------- */
 .tx__scroll:focus { outline: none; }
 .tx__cost {
-  font-size: calc(10.5px * var(--ts));
+  font-size: calc(11px * var(--ts));
   color: var(--ink-dim);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
@@ -1275,7 +1275,7 @@
   border-radius: 100px;
   background: transparent;
   color: var(--ink-dim);
-  font-size: calc(10.5px * var(--ts));
+  font-size: calc(11px * var(--ts));
   cursor: pointer;
 }
 .tx__chip:hover,
@@ -1311,26 +1311,26 @@
   border-radius: 5px;
   background: transparent;
   color: var(--ink);
-  font-size: calc(12px * var(--ts));
+  font-size: calc(12.5px * var(--ts));
   text-align: left;
   cursor: pointer;
 }
 .tx__pop-item:hover { background: var(--accent-soft); }
-.tx__pop-note { margin-left: auto; color: var(--ink-faint); font-size: calc(10.5px * var(--ts)); }
+.tx__pop-note { margin-left: auto; color: var(--ink-faint); font-size: calc(11px * var(--ts)); }
 .tx__pop-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   padding: 4px 6px 6px;
-  font-size: calc(11px * var(--ts));
+  font-size: calc(12px * var(--ts));
   color: var(--ink-faint);
 }
 .tx__pop-link {
   border: 0;
   background: transparent;
   color: var(--accent);
-  font-size: calc(11px * var(--ts));
+  font-size: calc(12px * var(--ts));
   cursor: pointer;
 }
 .tx__pop-link:hover { text-decoration: underline; }
@@ -1350,13 +1350,13 @@
 .tx__file:hover { background: var(--accent-soft); }
 .tx__file-name {
   font-family: var(--font-mono);
-  font-size: calc(11.5px * var(--ts));
+  font-size: calc(12px * var(--ts));
   color: var(--ink);
   flex-shrink: 0;
 }
 .tx__file-dir {
   font-family: var(--font-mono);
-  font-size: calc(10.5px * var(--ts));
+  font-size: calc(11px * var(--ts));
   color: var(--ink-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1365,7 +1365,7 @@
   direction: rtl;
   text-align: left;
 }
-.tx__file-n { margin-left: auto; font-size: calc(10.5px * var(--ts)); color: var(--ink-dim); flex-shrink: 0; }
+.tx__file-n { margin-left: auto; font-size: calc(11px * var(--ts)); color: var(--ink-dim); flex-shrink: 0; }
 
 /* a subagent's own log, inside its Task row */
 .tx__sub { margin-top: 6px; }
@@ -1374,7 +1374,7 @@
   background: transparent;
   padding: 2px 0;
   color: var(--accent);
-  font-size: calc(11px * var(--ts));
+  font-size: calc(12px * var(--ts));
   cursor: pointer;
 }
 .tx__sub-toggle:hover { text-decoration: underline; }
@@ -1389,7 +1389,7 @@
 }
 .tx__sub-hint {
   padding: 4px 0;
-  font-size: calc(11px * var(--ts));
+  font-size: calc(12px * var(--ts));
   color: var(--ink-faint);
 }
 .tx__pop-item svg { width: calc(12px * var(--ts)); height: calc(12px * var(--ts)); flex-shrink: 0; }

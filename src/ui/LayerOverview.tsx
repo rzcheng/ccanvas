@@ -77,7 +77,7 @@ import '../styles/layers.css'
 // time behind a block cursor; it leaves by backspacing (layers.css).
 
 const T = {
-  preroll: 50, // the tiles fade in over the widgets
+  preroll: 80, // the tiles crossfade in over the widgets (and back, uncovering)
   intro: 340, // the pull-back, the whole way (shorter from part way)
   outro: 300,
   washIn: 180,
