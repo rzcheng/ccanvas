@@ -1,4 +1,6 @@
 // ccanvas desktop backend (pty + native dialogs/fs)
+#[cfg_attr(not(target_os = "macos"), path = "chrome_import_stub.rs")]
+mod chrome_import;
 mod desktop_sessions;
 mod editor;
 mod files;
@@ -159,6 +161,10 @@ pub fn run() {
             web_proxy::web_proxy_url,
             site_icon::site_icon,
             site_icon::app_icon,
+            chrome_import::chrome_profiles,
+            chrome_import::chrome_cookie_sites,
+            chrome_import::chrome_import,
+            chrome_import::web_sign_out_all,
             usage::claude_usage,
             transcript::transcript_summary,
             transcript::transcript_chunk,

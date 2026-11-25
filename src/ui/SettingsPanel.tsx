@@ -11,7 +11,9 @@ import {
   keyRecorder,
   type KeySeq,
 } from '../lib/settings'
-import { IconClose, IconPlus } from './icons'
+import { IconClose, IconPlus, IconSearch } from './icons'
+import { isTauri } from '../lib/backend'
+import { invoke } from '@tauri-apps/api/core'
 import '../styles/agent-tools.css'
 
 // How long to wait after the first press for a second one (a chord like ⌃X ⌃F).
@@ -110,6 +112,9 @@ export function SettingsPanel() {
         <div className="set__hint">
           Scales text in widgets, terminals and panels; widgets keep their size.
         </div>
+
+        <div className="set__section">Web sign-ins</div>
+        <WebSignIns />
       </div>
     </div>
   )
@@ -215,6 +220,195 @@ function CustomKeys() {
           Opens the tab finder. Include ⌃, ⌥ or ⌘ for it to work inside terminals.
         </span>
       </span>
+    </div>
+  )
+}
+
+// ---- web sign-ins (src-tauri/src/chrome_import.rs) ----
+// The web widget's browser keeps its own sign-ins. Here they can be brought
+// over from a Chrome profile, site by site (nothing is chosen for you), or
+// all signed out. Cookie values never come through here: only profile names,
+// site domains and counts.
+
+type ChromeProfile = { dir: string; name: string }
+type CookieSite = { domain: string; cookies: number }
+type ImportReport = { imported: number; skipped: number }
+
+function WebSignIns() {
+  const [open, setOpen] = useState(false)
+  const [profiles, setProfiles] = useState<ChromeProfile[] | null>(null)
+  const [profile, setProfile] = useState('')
+  const [sites, setSites] = useState<CookieSite[] | null>(null)
+  const [chosen, setChosen] = useState<Set<string>>(new Set())
+  const [filter, setFilter] = useState('')
+  const [busy, setBusy] = useState<null | 'list' | 'import' | 'signout'>(null)
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null)
+  const [armed, setArmed] = useState(false)
+
+  if (!isTauri())
+    return <div className="set__hint">Sign-ins are kept by the desktop app's browser.</div>
+
+  const fail = (e: unknown) => setNote({ ok: false, text: typeof e === 'string' ? e : 'That didn’t work.' })
+
+  const start = async () => {
+    setOpen(true)
+    setNote(null)
+    setSites(null)
+    setChosen(new Set())
+    try {
+      const ps = await invoke<ChromeProfile[]>('chrome_profiles')
+      setProfiles(ps)
+      if (ps.length === 1) void pick(ps[0].dir)
+      else if (!ps.length) setNote({ ok: false, text: 'No Chrome profile with cookies was found.' })
+    } catch (e) {
+      fail(e)
+    }
+  }
+
+  const pick = async (dir: string) => {
+    setProfile(dir)
+    setSites(null)
+    setChosen(new Set())
+    setNote(null)
+    if (!dir) return
+    setBusy('list')
+    try {
+      setSites(await invoke<CookieSite[]>('chrome_cookie_sites', { profile: dir }))
+    } catch (e) {
+      fail(e)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const run = async () => {
+    if (!chosen.size) return
+    setBusy('import')
+    setNote(null)
+    try {
+      const r = await invoke<ImportReport>('chrome_import', { profile, sites: [...chosen] })
+      setNote({
+        ok: true,
+        text: `Signed in to ${chosen.size} site${chosen.size === 1 ? '' : 's'} (${r.imported} cookie${r.imported === 1 ? '' : 's'}${
+          r.skipped ? `; ${r.skipped} in a format that can’t be read were left out` : ''
+        }). Reload a page that's open to see it.`,
+      })
+      setChosen(new Set())
+    } catch (e) {
+      fail(e)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const signOut = async () => {
+    if (!armed) {
+      setArmed(true)
+      window.setTimeout(() => setArmed(false), 4000)
+      return
+    }
+    setArmed(false)
+    setBusy('signout')
+    setNote(null)
+    try {
+      await invoke('web_sign_out_all')
+      setNote({ ok: true, text: 'Signed out of every site in the web browser.' })
+    } catch (e) {
+      fail(e)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const q = filter.trim().toLowerCase()
+  const shown = (sites ?? []).filter((x) => !q || x.domain.includes(q))
+  const toggle = (d: string) =>
+    setChosen((c) => {
+      const n = new Set(c)
+      if (n.has(d)) n.delete(d)
+      else n.add(d)
+      return n
+    })
+
+  return (
+    <div className="set__web">
+      <div className="set__hint">
+        Web widgets share one browser that remembers your sign-ins, apart from the app. Sites that sign
+        in with Google often refuse to inside an app; bringing the sign-in over from Chrome gets
+        round that.
+      </div>
+      <div className="set__web-actions">
+        {!open && (
+          <button className="set__btn" onClick={() => void start()}>
+            Import sign-ins from Chrome…
+          </button>
+        )}
+        <button
+          className={`set__btn${armed ? ' set__btn--danger' : ''}`}
+          disabled={busy === 'signout'}
+          onClick={() => void signOut()}
+        >
+          {armed ? 'Click again to sign out everywhere' : 'Sign out of all sites'}
+        </button>
+      </div>
+
+      {open && (
+        <div className="set__import">
+          {profiles && profiles.length > 1 && (
+            <select className="set__select" value={profile} onChange={(e) => void pick(e.target.value)}>
+              <option value="">Choose a Chrome profile…</option>
+              {profiles.map((p) => (
+                <option key={p.dir} value={p.dir}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {busy === 'list' && <div className="set__hint">Reading the profile's sites…</div>}
+          {sites && (
+            <>
+              <label className="set__find">
+                <IconSearch size={12} />
+                <input
+                  value={filter}
+                  placeholder={`Find among ${sites.length} sites`}
+                  spellCheck={false}
+                  onChange={(e) => setFilter(e.target.value)}
+                  onKeyDown={(e) => e.stopPropagation()}
+                />
+              </label>
+              <div className="set__sites">
+                {shown.map((x) => (
+                  <label key={x.domain} className="set__site">
+                    <input type="checkbox" checked={chosen.has(x.domain)} onChange={() => toggle(x.domain)} />
+                    <span className="set__site-name">{x.domain}</span>
+                    <span className="set__site-n">{x.cookies}</span>
+                  </label>
+                ))}
+                {!shown.length && <div className="set__hint">No sites match.</div>}
+              </div>
+              <div className="set__web-actions">
+                <button className="set__btn set__btn--go" disabled={!chosen.size || busy === 'import'} onClick={() => void run()}>
+                  {busy === 'import'
+                    ? 'Importing…'
+                    : chosen.size
+                      ? `Import ${chosen.size} site${chosen.size === 1 ? '' : 's'}`
+                      : 'Choose the sites to import'}
+                </button>
+                <button className="set__btn" onClick={() => setOpen(false)}>
+                  Cancel
+                </button>
+              </div>
+              <div className="set__hint">
+                macOS will ask to let ccanvas use “Chrome Safe Storage”: that is Chrome's key to its
+                cookies. It is used for this import only, never kept, and the cookies go straight into the
+                web browser's own store.
+              </div>
+            </>
+          )}
+        </div>
+      )}
+      {note && <div className={`set__note${note.ok ? '' : ' set__note--err'}`}>{note.text}</div>}
     </div>
   )
 }

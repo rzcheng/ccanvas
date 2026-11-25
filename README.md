@@ -233,6 +233,17 @@ searches Google.
   mode, where nothing moves. In the browser build, focus mode shows the preview
   with a note instead.
 
+- **Sign-ins stay.** Every web widget's browser shares one persistent store
+  of its own (macOS 14+), apart from the app, so signing in once keeps you
+  signed in across widgets and relaunches. *Settings → Web sign-ins* can bring
+  sign-ins over from Chrome: pick a profile, tick the sites (nothing is
+  chosen for you), and macOS asks once for Chrome's key ("Chrome Safe
+  Storage"). Their cookies are decrypted in the app and written straight
+  into the browser's store; the key isn't kept, and cookie values never
+  reach the canvas, its file, logs or the preview. *Sign out of all sites*
+  clears the store. Handy for sites that sign in with Google, which often
+  refuses to inside an app.
+
 Safety: the native view gets no access to ccanvas (no Tauri IPC or
 permissions, http(s) only, never the app's own origin). The preview proxy runs
 on its own loopback port (built into the desktop app; `npm run server` provides

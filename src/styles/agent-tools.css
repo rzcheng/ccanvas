@@ -1393,3 +1393,116 @@
   color: var(--ink-faint);
 }
 .tx__pop-item svg { width: calc(12px * var(--ts)); height: calc(12px * var(--ts)); flex-shrink: 0; }
+
+/* web sign-ins (SettingsPanel WebSignIns) */
+.set__web {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 3px;
+}
+.set__web-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.set__btn {
+  font-size: calc(12px * var(--ts));
+  color: var(--ink);
+  background: var(--panel-hi);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 5px 10px;
+}
+.set__btn:hover:not(:disabled) {
+  border-color: var(--line-hard);
+}
+.set__btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.set__btn--go {
+  color: var(--on-accent, #fff);
+  background: var(--accent);
+  border-color: transparent;
+}
+.set__btn--danger {
+  color: var(--led-waiting);
+  border-color: color-mix(in srgb, var(--led-waiting) 60%, transparent);
+}
+.set__import {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.set__select {
+  font-size: calc(12px * var(--ts));
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 6px;
+}
+.set__find {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  height: 28px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 7%, var(--bg));
+  color: var(--ink-faint);
+}
+.set__find input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  outline: none;
+  color: var(--ink);
+  font-size: calc(12px * var(--ts));
+}
+.set__sites {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 3px;
+}
+.set__site {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: calc(12px * var(--ts));
+}
+.set__site:hover {
+  background: var(--panel-hi);
+}
+.set__site input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.set__site-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+.set__site-n {
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--ts));
+  color: var(--ink-faint);
+}
+.set__note {
+  font-size: calc(11.5px * var(--ts));
+  line-height: 1.45;
+  color: var(--ink-dim);
+}
+.set__note--err {
+  color: var(--led-waiting);
+}

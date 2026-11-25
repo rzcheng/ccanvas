@@ -37,7 +37,7 @@ use tauri::{
 /// The profile every web widget shares (a WKWebsiteDataStore identifier on
 /// macOS 14+; a data directory elsewhere).
 #[cfg(target_os = "macos")]
-const PROFILE_ID: [u8; 16] = *b"ccanvas web view";
+pub(crate) const PROFILE_ID: [u8; 16] = *b"ccanvas web view";
 #[cfg(not(target_os = "macos"))]
 const PROFILE_DIR: &str = "web-profile";
 
@@ -283,6 +283,15 @@ pub async fn native_view_navigate(app: AppHandle, id: String, url: String) -> Re
         v.navigate(target).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Reload every open view (after signing out of all sites, so none keeps
+/// showing a signed-in page).
+#[cfg(target_os = "macos")]
+pub(crate) fn reload_all(_app: &AppHandle) {
+    for (_, v) in live().lock().unwrap().iter() {
+        let _ = v.reload();
+    }
 }
 
 /// The address bar's back / forward / reload.
