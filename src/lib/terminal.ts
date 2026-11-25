@@ -98,7 +98,17 @@ async function connectTauri(opts: PtyOpts, h: PtyHandlers): Promise<Term | null>
         if (opts.launch && !reused) void invoke('pty_write', { id: opts.id, data: opts.launch + '\r' })
       },
       send: (data) => void invoke('pty_write', { id: opts.id, data }),
-      resize: (cols, rows) => void invoke('pty_resize', { id: opts.id, cols, rows }),
+      // only a real change goes over IPC (a terminal re-fits every time it is
+      // shown, mostly to the size it already has)
+      resize: (() => {
+        let last = ''
+        return (cols: number, rows: number) => {
+          const key = `${cols}x${rows}`
+          if (key === last) return
+          last = key
+          void invoke('pty_resize', { id: opts.id, cols, rows })
+        }
+      })(),
       close: () => {
         offData()
         offExit()

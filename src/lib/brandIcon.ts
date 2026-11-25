@@ -10,7 +10,7 @@
 // are cached in memory too, so every card asks once per host.
 
 import { create } from 'zustand'
-import { useEffect, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useSyncExternalStore } from 'react'
 import type { WidgetElement } from './types'
 import { invoke } from '@tauri-apps/api/core'
 import { isTauri } from './backend'
@@ -28,34 +28,41 @@ export function setWebPage(id: string, url: string) {
 }
 
 // ---- the caches ----
+// One entry per site or app; a widget subscribes to its own entry only, so an
+// icon arriving re-renders just the widgets that show it.
 
 type Entry = string | null | Promise<string | null>
 const cache = new Map<string, Entry>()
-const listeners = new Set<() => void>()
-let version = 0
-const subscribe = (l: () => void) => {
-  listeners.add(l)
-  return () => listeners.delete(l)
-}
-const bump = () => {
-  version++
-  listeners.forEach((l) => l())
+const listeners = new Map<string, Set<() => void>>()
+
+function subscribeKey(key: string, l: () => void) {
+  let set = listeners.get(key)
+  if (!set) listeners.set(key, (set = new Set()))
+  set.add(l)
+  return () => {
+    set.delete(l)
+  }
 }
 
-function load(key: string, get: () => Promise<string | null>): string | null {
+/** The icon for `key` (data: URL), or null while it loads or where there's
+ *  none. */
+const snapshot = (key: string): string | null => {
   const v = cache.get(key)
-  if (typeof v === 'string' || v === null) return v
-  if (v === undefined) {
-    const p = get()
+  return typeof v === 'string' ? v : null
+}
+
+function load(key: string, get: () => Promise<string | null>) {
+  if (cache.has(key)) return
+  cache.set(
+    key,
+    get()
       .catch(() => null)
       .then((r) => {
         cache.set(key, r)
-        bump()
+        listeners.get(key)?.forEach((l) => l())
         return r
-      })
-    cache.set(key, p)
-  }
-  return null
+      }),
+  )
 }
 
 const hostKey = (url: string) => {
@@ -66,19 +73,17 @@ const hostKey = (url: string) => {
   }
 }
 
-/** A site's icon (data: URL), or null while it loads or where there's none
- *  (local pages, outside the desktop app). */
-function siteIcon(url: string): string | null {
-  if (!isTauri() || !isHttpUrl(url) || isLocalUrl(url)) return null
+/** The cache key and fetch for a source (null: nothing to fetch). */
+function request(src: BrandSource): { key: string; get: () => Promise<string | null> } | null {
+  if (!src || src.kind === 'github' || !isTauri()) return null
+  if (src.kind === 'app') {
+    const bundleId = src.bundleId
+    return { key: `app:${bundleId}`, get: () => invoke<string | null>('app_icon', { bundleId }) }
+  }
+  const url = src.url
+  if (!isHttpUrl(url) || isLocalUrl(url)) return null
   const host = hostKey(url)
-  if (!host) return null
-  return load(`site:${host}`, () => invoke<string | null>('site_icon', { url }))
-}
-
-/** An installed app's icon (data: URL), or null. */
-function appIcon(bundleId: string): string | null {
-  if (!isTauri()) return null
-  return load(`app:${bundleId}`, () => invoke<string | null>('app_icon', { bundleId }))
+  return host ? { key: `site:${host}`, get: () => invoke<string | null>('site_icon', { url }) } : null
 }
 
 // ---- which icon a widget gets ----
@@ -127,17 +132,19 @@ export function brandSource(el: WidgetElement, page?: string, npSource?: string 
   }
 }
 
-/** The image for a source: a data: URL once loaded, else null. */
-export function brandImage(src: BrandSource): string | null {
-  if (!src) return null
-  if (src.kind === 'site') return siteIcon(src.url)
-  if (src.kind === 'app') return appIcon(src.bundleId)
-  return null
-}
-
-/** Re-render when any icon arrives. */
-export function useBrandIcons(): number {
-  return useSyncExternalStore(subscribe, () => version)
+/** The image for a source: a data: URL once loaded, else null. Re-renders
+ *  only when this source's icon arrives. */
+export function useBrandImage(src: BrandSource): string | null {
+  const req = request(src)
+  const key = req?.key ?? null
+  const subscribe = useCallback((l: () => void) => (key ? subscribeKey(key, l) : () => {}), [key])
+  const img = useSyncExternalStore(subscribe, () => (key ? snapshot(key) : null))
+  useEffect(() => {
+    if (req) load(req.key, req.get)
+    // the key names the request
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+  return img
 }
 
 /** The page a web widget is on now (el.url until it has moved on). */
@@ -150,6 +157,7 @@ export function useWebPage(el: WidgetElement): string | undefined {
  *  so cards and tiles have it by the time they show. */
 export function usePrefetchSiteIcon(url: string | undefined) {
   useEffect(() => {
-    if (url) siteIcon(url)
+    const req = url ? request({ kind: 'site', url }) : null
+    if (req) load(req.key, req.get)
   }, [url])
 }

@@ -5,7 +5,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { ImageAddon } from '@xterm/addon-image'
 import '@xterm/xterm/css/xterm.css'
-import { acquireGpu, fitsGpu, releaseGpu } from '../lib/termGpu'
+import { acquireGpu, fitsGpu, GPU_HIDDEN_KEEP, releaseGpu } from '../lib/termGpu'
 import type { WidgetElement } from '../lib/types'
 import { claudeColorName } from '../lib/types'
 import { connectPty, type Term } from '../lib/terminal'
@@ -225,7 +225,14 @@ export function TerminalBody({
     // supersample factor changes.
     let gpu: WebglAddon | null = null
     let gpuFailures = 0
+    // hidden (another layer or tab, behind its stack): the WebGL renderer is
+    // kept a while, so switching back and forth doesn't tear a context down
+    // and build a new one each time (the pool still takes it back first if
+    // another terminal needs it)
+    let dropLater = 0
     const dropGpu = () => {
+      window.clearTimeout(dropLater)
+      dropLater = 0
       if (!gpu) return
       const g = gpu
       gpu = null
@@ -247,9 +254,14 @@ export function TerminalBody({
         !!host &&
         fitsGpu(host.clientWidth, host.clientHeight, kRef.current, window.devicePixelRatio || 1)
       if (!want) {
-        dropGpu()
+        const onlyHidden =
+          !!gpu && !onScreenRef.current && gpuFailures < 2 && term.buffer.active.type === 'alternate'
+        if (!onlyHidden) dropGpu()
+        else if (!dropLater) dropLater = window.setTimeout(() => !onScreenRef.current && dropGpu(), GPU_HIDDEN_KEEP)
         return
       }
+      window.clearTimeout(dropLater)
+      dropLater = 0
       if (gpu) {
         acquireGpu(el.id, dropGpu) // mark as recently used
         return
@@ -580,6 +592,7 @@ export function TerminalBody({
       linkProvider.dispose()
       ro.disconnect()
       // term.dispose() disposes the WebGL addon with the rest
+      window.clearTimeout(dropLater)
       gpu = null
       releaseGpu(el.id)
       syncRendererRef.current = () => {}

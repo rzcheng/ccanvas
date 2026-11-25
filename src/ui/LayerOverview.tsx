@@ -72,9 +72,8 @@ import '../styles/layers.css'
 // around at any moment, from wherever it is. A dive flies the chosen sheet
 // flat, then hands over the same way.
 //
-// Text arrives and leaves as a wash, never all at once: per tile (--w, in
-// reading order) and per line, top line first, typed in a character at a
-// time behind a block cursor; it leaves by backspacing (layers.css).
+// Text arrives and leaves as a wash, never all at once: each tile's text
+// fades in turn (--w, in reading order), and out the same way (layers.css).
 
 const T = {
   preroll: 80, // the tiles crossfade in over the widgets (and back, uncovering)
@@ -125,7 +124,6 @@ type Rec = {
   w?: number
   /** the content's opacity (it fades in over the canvas) */
   x?: number
-  washing?: boolean
   open?: boolean
   /** the accent edge and the shadow, as last written */
   ringOp?: number
@@ -190,9 +188,15 @@ export function LayerOverview() {
   const [view, setView] = useState<ProxyMode>(() =>
     localStorage.getItem(VIEW_KEY) === 'detail' ? 'detail' : 'map',
   )
-  // The other layers fade in from 100 ms, so their content is built a
-  // couple of frames in, not in the first frame.
-  const [ready, setReady] = useState(false)
+  // Your own layer's tiles are built with the overview; the others a ring
+  // at a time from the next frame on (nearest first, as they fade in that
+  // way), so no single frame builds every layer.
+  const [built, setBuilt] = useState(0)
+  useEffect(() => {
+    if (built >= n) return
+    const id = requestAnimationFrame(() => setBuilt((b) => b + 1))
+    return () => cancelAnimationFrame(id)
+  }, [built, n])
   // dragging a tile: the sheet (or rail label) it would drop on
   const [dropIdx, setDropIdx] = useState(-1)
   const [renaming, setRenaming] = useState<string | null>(null)
@@ -283,6 +287,11 @@ export function LayerOverview() {
     chrome: 0,
     chrome0: 0,
     order: layers.map((l) => l.id).join(','),
+    /** a dive asked for before it could start (a digit pressed while the
+     *  overview is still covering the widgets, or while it lands): taken
+     *  as soon as it can be, so no key press is lost */
+    pendingDive: -1,
+    pendingSelect: undefined as string | undefined,
   })
   const later = (fn: () => void, ms: number) => {
     C.current.timers.push(window.setTimeout(fn, ms))
@@ -395,6 +404,13 @@ export function LayerOverview() {
     // phase ends
     let el = (now - c.t0) / c.slow
     if (c.phase === 'fly' && fly(now, dt)) return
+    if (c.pendingDive >= 0 && canDive()) {
+      const [j, sel] = [c.pendingDive, c.pendingSelect]
+      c.pendingDive = -1
+      c.pendingSelect = undefined
+      dive(j, sel)
+      el = 0
+    }
     if (c.phase === 'dive' && el >= T.dive) {
       commit()
       c.landIdx = c.diveTo
@@ -639,12 +655,6 @@ export function LayerOverview() {
         r.world.style.setProperty('--tz', String(tz))
       }
       lastCams[i] = cam ?? fitOf(id)
-      // the clips and the cursor exist only while this sheet's text washes
-      const washing = wash[i] > 0 && wash[i] < 1 && (r.txt ?? 0) > 0
-      if (r.washing !== washing) {
-        r.washing = washing
-        toggle(r.sheet, 'is-washing', washing)
-      }
       // one opacity on the content's layer, not one per tile
       const cv = Math.round(cover[i] * 100) / 100
       if (r.x !== cv && r.world) {
@@ -860,6 +870,7 @@ export function LayerOverview() {
       if (c.phase === 'live') fadeOut()
       return
     }
+    c.pendingDive = -1
     if (c.phase === 'fly') {
       if (c.dir < 0) return
       c.dir = -1
@@ -898,14 +909,70 @@ export function LayerOverview() {
     c.committed = false
     kick()
   }
-  const flip = () => (C.current.phase === 'fly' && C.current.dir < 0 ? reopen() : close())
+  /** L (or a digit) while a dive is landing: turn it around into the
+   *  opening, from where it has got to, around the layer it dived into (the
+   *  canvas is already on it). Nothing waits for the landing to finish. */
+  const reopenFromLanding = () => {
+    const c = C.current
+    if (c.phase !== 'dive' && c.phase !== 'handover') return
+    const L = live.current
+    const j = c.phase === 'dive' ? c.diveTo : c.landIdx
+    const cam = c.phase === 'dive' ? c.diveCam : c.landCam
+    if (j < 0 || !cam || !c.L) return
+    const now = performance.now()
+    const el = (now - c.t0) / c.slow
+    // how far down the sheet has come, on the dive's own easing; a landing
+    // hand-over is all the way down, part crossfaded
+    const down = c.phase === 'dive' ? easeOut(clamp01(el / T.dive / 0.85)) : 1
+    c.H = c.phase === 'handover' ? clamp01(el / T.handover) : 0
+    c.here = j
+    c.pos = c.target = j
+    c.vel = 0
+    setFocusState(j)
+    c.startCam = cam
+    c.acc = ovPoses(c.L, L.layers.map((_, i) => i), j)
+    c.a = c.aFrom = c.aTo = 1 - down
+    c.aDur = 0
+    c.x = 1
+    c.w = 0
+    c.dir = 1
+    c.diveTo = -1
+    c.selectId = undefined
+    c.committed = false
+    for (const l of L.layers) rec(l.id).ring0 = l.id === L.layers[j]?.id ? 1 : 0
+    setPhase('fly', now)
+    kick()
+  }
+  const flip = () => {
+    const c = C.current
+    if (c.phase === 'dive' || c.phase === 'handover') return reopenFromLanding()
+    return c.phase === 'fly' && c.dir < 0 ? reopen() : close()
+  }
+  /** A dive can start: from the accordion, or an opening that has the
+   *  widgets covered. */
+  const canDive = () => {
+    const c = C.current
+    return c.phase === 'live' || (c.phase === 'fly' && c.dir > 0 && c.x >= 1 && c.H <= 0 && c.a > 0)
+  }
 
   /** Dive into layer j (and select one of its widgets). */
   const dive = (j: number, selectId?: string) => {
     const c = C.current
-    // from the accordion, or an opening that has the widgets covered
-    const flying = c.phase === 'fly' && c.dir > 0 && c.x >= 1 && c.H <= 0 && c.a > 0
-    if (c.phase !== 'live' && !flying) return
+    if (!canDive()) {
+      // too early (still covering the widgets) or landing: take it as soon as
+      // it can be taken; a landing turns back first
+      const opening = c.phase === 'fly' && c.dir > 0
+      // the layer it is already landing on: nothing to do
+      const landingOn = c.phase === 'dive' ? c.diveTo : c.phase === 'handover' ? c.landIdx : -1
+      if (j === landingOn) return
+      if (opening || c.phase === 'dive' || c.phase === 'handover') {
+        c.pendingDive = j
+        c.pendingSelect = selectId
+        if (!opening) reopenFromLanding()
+        kick()
+      }
+      return
+    }
     const L = live.current
     j = Math.max(0, Math.min(L.n - 1, j))
     const target = L.layers[j].id
@@ -1010,7 +1077,7 @@ export function LayerOverview() {
     gridTo(ws.camera)
     if (c.reduced) {
       // reduced motion: an opacity crossfade to a resting accordion
-      setReady(true)
+      setBuilt(99)
       setPhase('live')
       c.pos = c.target = c.here
       frame(performance.now())
@@ -1031,7 +1098,7 @@ export function LayerOverview() {
     frame(commitAt)
     kick()
     // build the other sheets' content once the open is under way
-    requestAnimationFrame(() => requestAnimationFrame(() => setReady(true)))
+
     sampleTransition('open', T.preroll + T.intro, {
       render: renderAt.current,
       commit: commitAt,
@@ -1053,7 +1120,7 @@ export function LayerOverview() {
   // and new tiles may have mounted, so the next frame re-applies everything
   useLayoutEffect(() => {
     for (const r of recs.current.values()) {
-      r.open = r.labOpen = r.surf = r.washing = undefined
+      r.open = r.labOpen = r.surf = undefined
       r.tiles = null
     }
     C.current.labH.clear()
@@ -1364,7 +1431,7 @@ export function LayerOverview() {
             <div className="lo-face" ref={(node) => void (rec(l.id).face = node)}>
               <div className="lo-glass" ref={(node) => void (rec(l.id).glass = node)} />
               <div className="lo-world" ref={(node) => void (rec(l.id).world = node)}>
-                {(ready || i === C.current.here) && (
+                {Math.abs(i - C.current.here) <= built && (
                   <SheetContent
                     els={byLayer.get(l.id) ?? []}
                     fs={Math.round(((C.current.fits.get(l.id)?.zoom ?? 0.5) * (C.current.L?.s ?? 0.45)) * 1000) / 1000}

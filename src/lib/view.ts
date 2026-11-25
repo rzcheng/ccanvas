@@ -7,8 +7,9 @@ import { clamp } from './geometry'
 import type { CanvasElement, WidgetElement } from './types'
 import { activeLayerElements, activeLayerId, hasLayers, layerOf } from './layers'
 
-/** Below this zoom, terminals and chats render as readable status cards. */
-export const FAR_ZOOM = 0.5
+/** Below this zoom, widgets render as readable status cards (well out, so a
+ *  widget you can still read stays itself). */
+export const FAR_ZOOM = 0.3
 
 /** A widget as it is now. Widget bodies are not re-rendered when only their
  *  position changes, so a handler placing something beside one reads it here. */
