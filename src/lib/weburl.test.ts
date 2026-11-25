@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hostOf, isLocalUrl, looksLikeLocalFile, looksLikeUrl, normalizeUrl } from './weburl'
+import { appOnlySite, hostOf, isLocalUrl, looksLikeLocalFile, looksLikeUrl, normalizeUrl, parseStart, videoEmbed } from './weburl'
 
 describe('normalizeUrl', () => {
   it('adds the right scheme', () => {
@@ -50,4 +50,65 @@ describe('looksLikeLocalFile', () => {
 it('hostOf falls back to the input', () => {
   expect(hostOf('https://example.com:8443/x')).toBe('example.com:8443')
   expect(hostOf('not a url')).toBe('not a url')
+})
+
+describe('videoEmbed', () => {
+  const id = 'dQw4w9WgXcQ'
+  const embed = `https://www.youtube.com/embed/${id}`
+  it('turns YouTube video links into the player', () => {
+    expect(videoEmbed(`https://www.youtube.com/watch?v=${id}`)).toBe(embed)
+    expect(videoEmbed(`https://youtube.com/watch?feature=share&v=${id}`)).toBe(embed)
+    expect(videoEmbed(`https://m.youtube.com/watch?v=${id}`)).toBe(embed)
+    expect(videoEmbed(`https://music.youtube.com/watch?v=${id}`)).toBe(embed)
+    expect(videoEmbed(`https://youtu.be/${id}?si=abc`)).toBe(embed)
+    expect(videoEmbed(`https://www.youtube.com/shorts/${id}`)).toBe(embed)
+    expect(videoEmbed(`https://www.youtube.com/live/${id}`)).toBe(embed)
+    expect(videoEmbed(`https://www.youtube-nocookie.com/embed/${id}`)).toBe(embed)
+  })
+  it('keeps the start time and playlist', () => {
+    expect(videoEmbed(`https://youtu.be/${id}?t=42`)).toBe(`${embed}?start=42`)
+    expect(videoEmbed(`https://www.youtube.com/watch?v=${id}&t=1m30s`)).toBe(`${embed}?start=90`)
+    expect(videoEmbed(`https://www.youtube.com/watch?v=${id}&list=PLabcdefghij`)).toBe(
+      `${embed}?list=PLabcdefghij`,
+    )
+    expect(videoEmbed('https://www.youtube.com/playlist?list=PLabcdefghij')).toBe(
+      'https://www.youtube.com/embed/videoseries?list=PLabcdefghij',
+    )
+  })
+  it('handles Vimeo', () => {
+    expect(videoEmbed('https://vimeo.com/76979871')).toBe('https://player.vimeo.com/video/76979871')
+    expect(videoEmbed('https://vimeo.com/76979871/abc123def0')).toBe(
+      'https://player.vimeo.com/video/76979871?h=abc123def0',
+    )
+  })
+  it('leaves everything else alone', () => {
+    expect(videoEmbed('https://www.youtube.com/')).toBeNull()
+    expect(videoEmbed('https://www.youtube.com/results?search_query=x')).toBeNull()
+    expect(videoEmbed('https://www.youtube.com/watch?v=short')).toBeNull()
+    expect(videoEmbed(`https://www.youtube.com/watch?v=${id}"><script>`)).toBeNull()
+    expect(videoEmbed(`https://notyoutube.com/watch?v=${id}`)).toBeNull()
+    expect(videoEmbed(`https://youtube.com.evil.test/watch?v=${id}`)).toBeNull()
+    expect(videoEmbed('https://vimeo.com/channels/staffpicks')).toBeNull()
+    expect(videoEmbed('https://example.com/')).toBeNull()
+    expect(videoEmbed('not a url')).toBeNull()
+  })
+})
+
+it('parseStart reads YouTube times', () => {
+  expect(parseStart('90')).toBe(90)
+  expect(parseStart('90s')).toBe(90)
+  expect(parseStart('1h2m3s')).toBe(3723)
+  expect(parseStart('2m')).toBe(120)
+  expect(parseStart('')).toBe(0)
+  expect(parseStart('soon')).toBe(0)
+  expect(parseStart(null)).toBe(0)
+})
+
+describe('appOnlySite', () => {
+  it('names YouTube pages that are not videos', () => {
+    expect(appOnlySite('https://www.youtube.com/')).toBe('YouTube')
+    expect(appOnlySite('https://youtube.com/@somechannel')).toBe('YouTube')
+    expect(appOnlySite('https://www.youtube.com/watch?v=dQw4w9WgXcQ')).toBeNull()
+    expect(appOnlySite('https://example.com/')).toBeNull()
+  })
 })

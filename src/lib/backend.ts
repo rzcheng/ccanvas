@@ -413,6 +413,13 @@ export function proxyUrl(base: string, target: string): string {
   return `${base}/proxy?url=${encodeURIComponent(target)}`
 }
 
+/** A video player (lib/weburl.ts videoEmbed) framed by the desktop app's
+ *  proxy, so it plays with a referrer: the app's own tauri:// page sends none,
+ *  and YouTube's player refuses to play without one. */
+export function playerUrl(base: string, embed: string): string {
+  return `${base}/player?src=${encodeURIComponent(embed)}`
+}
+
 /**
  * A streamable, range-request-capable URL for a local file path — used to play
  * video/audio in a <video>/<audio> element WITHOUT loading the whole file into
