@@ -16,7 +16,7 @@ import {
   IconPullOut,
   IconExternal,
   IconFocus,
-  IconUnfocus,
+  IconMinus,
   IconDesktop,
 } from '../ui/icons'
 import { flyFocus, cancelFlight } from '../lib/focusMotion'
@@ -616,26 +616,27 @@ export const WidgetFrame = memo(function WidgetFrame({
       >
         <IconTrash />
       </button>
-      {focusRole === 'on' && split ? (
+      {!focusRole && (
         <button
           className="widget__btn"
-          title="Close this pane"
+          title={el.minimized ? 'Restore' : 'Minimize to the title bar'}
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => useStore.getState().closePane(el.id)}
+          onClick={() => useStore.getState().toggleMinimized(el.id)}
         >
-          <IconUnfocus />
+          <IconMinus />
         </button>
-      ) : (
-        !focusRole && (
-          <button
-            className="widget__btn"
-            title={el.minimized ? 'Restore' : 'Minimize to the title bar'}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => useStore.getState().toggleMinimized(el.id)}
-          >
-            <IconClose />
-          </button>
-        )
+      )}
+      {/* X leaves where you've zoomed in to: a split pane closes, focus
+          returns to the canvas */}
+      {focusRole === 'on' && (
+        <button
+          className="widget__btn"
+          title={split ? 'Close this pane' : 'Back to canvas (Esc)'}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => (split ? useStore.getState().closePane(el.id) : useStore.getState().exitFocus())}
+        >
+          <IconClose />
+        </button>
       )}
     </>
   )
@@ -696,6 +697,14 @@ export const WidgetFrame = memo(function WidgetFrame({
             onClick={() => pullOutOfSpread(el.id)}
           >
             <IconPullOut />
+          </button>
+          <button
+            className="widget__btn"
+            title="Close the spread (Esc)"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => useStore.getState().closeSpread(null)}
+          >
+            <IconClose />
           </button>
         </div>
       ) : snapPreview ? (

@@ -18,7 +18,7 @@ import { useAgents } from '../lib/agents'
 import { focusWidget, orderedMirrors, orderedTerminals, splitCandidates, FOCUS_STRIP_H } from '../lib/view'
 import { MAX_PANES, PANE_GAP, dragDivider, paneBoxes } from '../lib/focusPanes'
 import { StatusGlyph, StatusIcon, WidgetSlotIcon } from '../widgets/widgetIcons'
-import { IconBack, IconSplit, IconUnfocus } from './icons'
+import { IconBack, IconClose, IconSplit } from './icons'
 import { slotRef } from './focusSlots'
 
 export function FocusStrip() {
@@ -98,8 +98,8 @@ export function FocusStrip() {
           {menu && <SplitMenu onClose={() => setMenu(false)} />}
         </span>
       )}
-      <button className="focus-strip__exit" title="Back to canvas (⌘⇧↵)" onClick={exit}>
-        <IconUnfocus />
+      <button className="focus-strip__exit" title="Back to canvas (Esc)" onClick={exit}>
+        <IconClose />
       </button>
     </div>
   )

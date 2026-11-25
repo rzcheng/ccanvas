@@ -7,7 +7,7 @@ import { WIDGET_ACCENT } from '../lib/types'
 import { useStore, selectActive } from '../store/workspace'
 import { useAgents, useDisplayStatus } from '../lib/agents'
 import { stacksOf, type Stack } from '../lib/stacks'
-import { IconStack, IconSpread, IconFocus, IconUnfocus, IconClose } from '../ui/icons'
+import { IconStack, IconSpread, IconFocus, IconUnfocus, IconMinus } from '../ui/icons'
 import { toggleFocus } from '../lib/view'
 import { WidgetSlotIcon } from './widgetIcons'
 
@@ -137,7 +137,7 @@ export function StackRail({
         onPointerDown={(e) => e.stopPropagation()}
         onClick={() => useStore.getState().toggleMinimized(stack.front.id)}
       >
-        <IconClose />
+        <IconMinus />
       </button>
     </div>
   )
