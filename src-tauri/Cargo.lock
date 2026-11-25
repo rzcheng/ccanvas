@@ -92,6 +92,7 @@ dependencies = [
  "portable-pty",
  "reqwest",
  "rustls",
+ "security-framework",
  "serde",
  "serde_json",
  "tauri",

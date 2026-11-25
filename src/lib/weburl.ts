@@ -8,8 +8,10 @@ export function normalizeUrl(raw: string): string {
   const v = raw.trim()
   if (!v) return ''
   if (/^https?:\/\//i.test(v)) return v
-  if (/^localhost(:\d+)?(\/|$)/i.test(v) || /^\d+\.\d+\.\d+\.\d+/.test(v)) return `http://${v}`
-  if (/^\d{2,5}(\/|$)/.test(v)) return `http://localhost:${v}`
+  // this machine and other local addresses are plain http, whatever follows the host
+  if (/^localhost(:\d+)?([/?#]|$)/i.test(v) || /^\d+\.\d+\.\d+\.\d+/.test(v) || /^\[[0-9a-f:]+\]/i.test(v))
+    return `http://${v}`
+  if (/^\d{2,5}([/?#]|$)/.test(v)) return `http://localhost:${v}`
   return `https://${v}`
 }
 

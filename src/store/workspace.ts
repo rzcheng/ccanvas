@@ -1302,9 +1302,11 @@ export const useStore = create<Store>((set, get) => ({
     clipboard = ws.elements.filter((e) => sel.has(e.id)).map((e) => ({ ...e }))
   },
 
+  // like ⌫, a cut never closes a widget (its session would end): widgets
+  // are copied, everything else is cut
   cutSelection: () => {
     get().copySelection()
-    get().deleteSelection()
+    get().deleteSelection({ keepWidgets: true })
   },
 
   pasteClipboard: (x, y) => {

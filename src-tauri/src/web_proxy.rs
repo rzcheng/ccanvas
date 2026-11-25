@@ -141,6 +141,9 @@ pub(crate) fn client() -> &'static reqwest::Client {
         // does the same; whichever runs first wins)
         let _ = rustls::crypto::ring::default_provider().install_default();
         reqwest::Client::builder()
+            // never through an HTTP(S)_PROXY from the environment: a proxy
+            // resolves names itself, which would get round PublicOnly
+            .no_proxy()
             .dns_resolver(PublicOnly)
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
                 if attempt.previous().len() > 10 {

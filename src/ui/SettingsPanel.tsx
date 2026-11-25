@@ -244,6 +244,7 @@ function WebSignIns() {
   const [busy, setBusy] = useState<null | 'list' | 'import' | 'signout'>(null)
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null)
   const [armed, setArmed] = useState(false)
+  const picked = useRef(0)
 
   if (!isTauri())
     return <div className="set__hint">Sign-ins are kept by the desktop app's browser.</div>
@@ -266,6 +267,8 @@ function WebSignIns() {
   }
 
   const pick = async (dir: string) => {
+    // only the latest profile's answer counts (a slow earlier one is dropped)
+    const ask = ++picked.current
     setProfile(dir)
     setSites(null)
     setChosen(new Set())
@@ -273,11 +276,12 @@ function WebSignIns() {
     if (!dir) return
     setBusy('list')
     try {
-      setSites(await invoke<CookieSite[]>('chrome_cookie_sites', { profile: dir }))
+      const found = await invoke<CookieSite[]>('chrome_cookie_sites', { profile: dir })
+      if (ask === picked.current) setSites(found)
     } catch (e) {
-      fail(e)
+      if (ask === picked.current) fail(e)
     } finally {
-      setBusy(null)
+      if (ask === picked.current) setBusy(null)
     }
   }
 
@@ -401,8 +405,8 @@ function WebSignIns() {
               </div>
               <div className="set__hint">
                 macOS will ask to let ccanvas use “Chrome Safe Storage”: that is Chrome's key to its
-                cookies. It is used for this import only, never kept, and the cookies go straight into the
-                web browser's own store.
+                cookies. Choose Allow (not Always Allow) to approve just this import. The key is used for
+                it only, never kept, and the cookies go straight into the web browser's own store.
               </div>
             </>
           )}

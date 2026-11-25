@@ -10,6 +10,12 @@ describe('normalizeUrl', () => {
     expect(normalizeUrl(' http://x.dev ')).toBe('http://x.dev')
     expect(normalizeUrl('')).toBe('')
   })
+  it('keeps local addresses on http whatever follows the host', () => {
+    expect(normalizeUrl('localhost:3000?x=1')).toBe('http://localhost:3000?x=1')
+    expect(normalizeUrl('localhost:5173#a')).toBe('http://localhost:5173#a')
+    expect(normalizeUrl('3000?x')).toBe('http://localhost:3000?x')
+    expect(normalizeUrl('[::1]:8080')).toBe('http://[::1]:8080')
+  })
 })
 
 describe('isLocalUrl', () => {

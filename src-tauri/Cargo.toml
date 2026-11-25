@@ -49,6 +49,9 @@ objc2-web-kit = { version = "0.3", default-features = false, features = ["std", 
 # Chrome sign-in import (chrome_import.rs): checking for macOS 14, zeroing secrets
 objc2 = "0.6"
 zeroize = "1"
+# reading Chrome's key in-process, so the Keychain grant is ccanvas's alone
+# (already in the build through the TLS stack)
+security-framework = "3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

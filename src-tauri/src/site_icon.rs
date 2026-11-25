@@ -113,18 +113,34 @@ pub async fn site_icon(app: AppHandle, url: String) -> Option<String> {
     if let Some(v) = cached(&app, &key) {
         return v;
     }
-    let found = find_site_icon(&page).await;
-    remember(&app, &key, &found);
+    // the site's front page, never the page itself: icons are per host, and
+    // a second GET of the page could spend a one-time link (a sign-in link,
+    // an OAuth callback) before the browser view does
+    let mut home = page.join("/").ok()?;
+    home.set_query(None);
+    home.set_fragment(None);
+    let (found, reached) = find_site_icon(&home).await;
+    // a site that couldn't be reached (offline, a timeout) is asked again next time
+    if found.is_some() || reached {
+        remember(&app, &key, &found);
+    }
     found
 }
 
-async fn find_site_icon(page: &Url) -> Option<String> {
+/// The icon, and whether the site answered at all.
+async fn find_site_icon(page: &Url) -> (Option<String>, bool) {
+    let mut reached = false;
     // the page's own links, best first; then the conventional spot
     let mut candidates = match fetch(page, MAX_PAGE).await {
-        Some((final_url, ctype, body)) if ctype.contains("html") => {
+        Ok(Some((final_url, ctype, body))) if ctype.contains("html") => {
+            reached = true;
             icon_links(&String::from_utf8_lossy(&body), &final_url)
         }
-        _ => Vec::new(),
+        Ok(_) => {
+            reached = true;
+            Vec::new()
+        }
+        Err(()) => Vec::new(),
     };
     if let Ok(ico) = page.join("/favicon.ico") {
         candidates.push(ico);
@@ -132,24 +148,31 @@ async fn find_site_icon(page: &Url) -> Option<String> {
     for c in candidates.into_iter().take(5) {
         if c.scheme() == "data" {
             if c.as_str().starts_with("data:image/") && c.as_str().len() < MAX_ICON {
-                return Some(c.to_string());
+                return (Some(c.to_string()), true);
             }
             continue;
         }
         if !crate::web_proxy::fetchable(&c) {
             continue;
         }
-        if let Some((_, ctype, body)) = fetch(&c, MAX_ICON).await {
-            if let Some(mime) = image_mime(&ctype, &body) {
-                return Some(data_url(mime, &body));
+        match fetch(&c, MAX_ICON).await {
+            Ok(Some((_, ctype, body))) => {
+                reached = true;
+                if let Some(mime) = image_mime(&ctype, &body) {
+                    return (Some(data_url(mime, &body)), true);
+                }
             }
+            Ok(None) => reached = true,
+            Err(()) => {}
         }
     }
-    None
+    (None, reached)
 }
 
-async fn fetch(url: &Url, max: usize) -> Option<(Url, String, Vec<u8>)> {
-    let mut resp = crate::web_proxy::client()
+/// The response: Ok(None) when the site answered with nothing usable (an
+/// error status, too big), Err when it couldn't be reached at all.
+async fn fetch(url: &Url, max: usize) -> Result<Option<(Url, String, Vec<u8>)>, ()> {
+    let Ok(mut resp) = crate::web_proxy::client()
         .get(url.clone())
         .header(
             "user-agent",
@@ -158,9 +181,11 @@ async fn fetch(url: &Url, max: usize) -> Option<(Url, String, Vec<u8>)> {
         .timeout(Duration::from_secs(8))
         .send()
         .await
-        .ok()?;
+    else {
+        return Err(());
+    };
     if !resp.status().is_success() {
-        return None;
+        return Ok(None);
     }
     let final_url = resp.url().clone();
     let ctype = resp
@@ -170,17 +195,17 @@ async fn fetch(url: &Url, max: usize) -> Option<(Url, String, Vec<u8>)> {
         .unwrap_or("")
         .to_ascii_lowercase();
     let mut body = Vec::new();
-    while let Some(chunk) = resp.chunk().await.ok()? {
+    while let Some(chunk) = resp.chunk().await.map_err(|_| ())? {
         body.extend_from_slice(&chunk);
         if body.len() > max {
             // a page's head is in its first bytes; an icon this big isn't one
             if ctype.contains("html") {
                 break;
             }
-            return None;
+            return Ok(None);
         }
     }
-    Some((final_url, ctype, body))
+    Ok(Some((final_url, ctype, body)))
 }
 
 /// What an icon's bytes are, from their first bytes (servers often send
@@ -217,7 +242,8 @@ fn image_mime(ctype: &str, b: &[u8]) -> Option<&'static str> {
 fn icon_links(html: &str, base: &Url) -> Vec<Url> {
     // the <base> of the page wins over its address
     let lower = html.to_ascii_lowercase();
-    let end = lower.find("</head>").unwrap_or(lower.len().min(MAX_PAGE));
+    // (the body is already bounded; slicing at a fixed length could split a character)
+    let end = lower.find("</head>").unwrap_or(lower.len());
     let head = &html[..end];
     let head_lower = &lower[..end];
     let mut found: Vec<(u32, Url)> = Vec::new();

@@ -240,9 +240,11 @@ export function WebBody({ el, active, onScreen }: { el: WidgetElement; active: b
         : current
   const externalTarget = fileMode ? abs : current
   // the preview frame loads too: from a new address until its load event
+  // (only when a frame is actually shown: a placeholder never loads)
+  const framed = !!frameSrc && !nativeWanted && !appOnly
   useEffect(() => {
-    if (frameSrc && !nativeWanted) setLoading(true)
-  }, [frameSrc, nativeWanted])
+    if (!nativeWanted) setLoading(framed)
+  }, [frameSrc, framed, nativeWanted])
   const [editingBar, setEditingBar] = useState(false)
   const brand = useBrand(el)
 

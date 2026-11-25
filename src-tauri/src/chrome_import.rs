@@ -450,6 +450,9 @@ fn decrypt(key: &[u8; 16], data: &[u8], host: &str, schema: u32) -> Option<Strin
 }
 
 /// Chrome Safe Storage's password, through macOS's own Keychain prompt.
+/// Read in-process (Security framework), not through `/usr/bin/security`:
+/// the prompt then names ccanvas, and an "Always Allow" grants only this
+/// signed app, never a tool any other process could run to read the key.
 fn keychain_password() -> Result<Vec<u8>, String> {
     // development builds only: the test folder's made-up key, so a test never
     // touches the Keychain (compiled out of release builds)
@@ -459,24 +462,17 @@ fn keychain_password() -> Result<Vec<u8>, String> {
             .map(String::into_bytes)
             .map_err(|_| "No test key.".to_string());
     }
-    let out = Command::new("/usr/bin/security")
-        .args([
-            "find-generic-password",
-            "-w",
-            "-s",
-            "Chrome Safe Storage",
-            "-a",
-            "Chrome",
-        ])
-        .output()
-        .map_err(|_| "Couldn't ask the Keychain for Chrome's key.".to_string())?;
-    let mut pw = out.stdout;
-    if !out.status.success() || pw.is_empty() {
+    let mut pw = security_framework::passwords::get_generic_password(
+        "Chrome Safe Storage",
+        "Chrome",
+    )
+    .map_err(|_| {
+        "The Keychain didn't hand over Chrome's key (the prompt was declined, or Chrome has none)."
+            .to_string()
+    })?;
+    if pw.is_empty() {
         pw.zeroize();
-        return Err("The Keychain didn't hand over Chrome's key (the prompt was declined, or Chrome has none).".into());
-    }
-    while pw.last().is_some_and(|b| *b == b'\n' || *b == b'\r') {
-        pw.pop();
+        return Err("Chrome has no key in the Keychain.".into());
     }
     Ok(pw)
 }
