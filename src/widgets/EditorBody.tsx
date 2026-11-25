@@ -141,8 +141,8 @@ export function EditorBody({ el, active }: { el: WidgetElement; active: boolean 
         automaticLayout: true, // re-layout when the widget is resized
         minimap: { enabled: false }, // kept lean — core editing surface only
         fontFamily: "'Spline Sans Mono', ui-monospace, 'SF Mono', Menlo, monospace",
-        fontSize: 12.5 * scaleOf(useSettings.getState().textSize),
-        lineHeight: Math.round(19 * scaleOf(useSettings.getState().textSize)),
+        fontSize: 13 * scaleOf(useSettings.getState().textSize),
+        lineHeight: Math.round(20 * scaleOf(useSettings.getState().textSize)),
         fontLigatures: true,
         letterSpacing: 0.2,
         scrollBeyondLastLine: false,
@@ -191,7 +191,7 @@ export function EditorBody({ el, active }: { el: WidgetElement; active: boolean 
   // follow the Settings text size
   const ts = useTextScale()
   useEffect(() => {
-    editorRef.current?.updateOptions({ fontSize: 12.5 * ts, lineHeight: Math.round(19 * ts) })
+    editorRef.current?.updateOptions({ fontSize: 13 * ts, lineHeight: Math.round(20 * ts) })
   }, [ts, ready])
 
   if (!hasPath) {

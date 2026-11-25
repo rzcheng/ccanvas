@@ -134,7 +134,7 @@ impl reqwest::dns::Resolve for PublicOnly {
     }
 }
 
-fn client() -> &'static reqwest::Client {
+pub(crate) fn client() -> &'static reqwest::Client {
     static C: OnceLock<reqwest::Client> = OnceLock::new();
     C.get_or_init(|| {
         // rustls needs a crypto provider chosen once per process (the updater

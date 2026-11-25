@@ -156,12 +156,12 @@
 /* ---------- tiles: a widget at its own position and size ----------
    Three faces (see LayerProxy): the block (.pt__fill), the text (screen-sized
    through --fs, faded by the sheet's --txt), and the widget look (--m: the
-   real widget's body, frame and title bar, crossfaded over the block). --h
-   wipes the widget look away top-down; --w is the text's wash. */
+   real widget's body, frame and title bar, crossfaded over the block); --w
+   is the text's wash. Landing, the whole sheet's content crossfades into the
+   real widgets under it (one opacity, LayerOverview). */
 .pt {
   position: absolute;
   --m: 0;
-  --h: 0;
   --w: 1;
   --dim: 1;
   --k2: var(--accent);
@@ -173,60 +173,18 @@
   inset: 0;
 }
 .pt__fill {
-  transform: scaleY(calc(1 - var(--h)));
-  transform-origin: 50% 100%;
   border-radius: calc(7px / var(--fs, 1));
   background: var(--lamp);
   border: calc(1px / var(--fs, 1)) solid var(--lamp-edge);
   opacity: calc(1 - var(--m));
 }
-/* the widget's frame, its body still the lamp: the card lands on the canvas
-   as a cover, and the real widget's landing takes it off (ui/landing.ts).
-   On a close it slides down off the tile (--h) behind a soft edge. */
+/* the widget's frame, its body still the lamp: the card that lands on the
+   canvas and crossfades into the real widget */
 .pt__real {
   border-radius: var(--r-md);
   border: 1px solid var(--line);
   background: var(--lamp);
   opacity: var(--m);
-  transform: translateY(calc(var(--h) * (100% + 28px)));
-}
-.pt__real::before {
-  content: '';
-  position: absolute;
-  left: -1px;
-  right: -1px;
-  bottom: 100%;
-  height: 28px;
-  background: linear-gradient(to bottom, transparent, var(--lamp));
-  opacity: clamp(0, var(--h) * 30, 1);
-  pointer-events: none;
-}
-/* landing on a layer (ui/landing.ts): laid on the real widgets' bodies
-   while their content arrives. The card's cover is the widget's lamp, with
-   a soft top edge; a terminal's covers under it are in its own background,
-   over what isn't typed yet, with the typing head. Each on its
-   own layer, moved by transform only. */
-.ld-cover,
-.ld-cursor {
-  position: absolute;
-  left: 0;
-  top: 0;
-  pointer-events: none;
-  z-index: 6;
-  will-change: transform;
-}
-/* the landed card, over everything else, its top edge soft */
-.ld-cover--lamp {
-  z-index: 8;
-  background: linear-gradient(to bottom, transparent, var(--lamp) 24px);
-}
-.ld-cursor {
-  z-index: 7;
-  background: color-mix(in srgb, var(--ink) 78%, transparent);
-}
-/* the cover slides off the tile: clip it there (only while handing over) */
-.lo-sheet.is-handover .pt {
-  overflow: hidden;
 }
 .pt--tagged .pt__real {
   border-color: color-mix(in srgb, var(--k2) 45%, var(--line));
@@ -245,7 +203,7 @@
   border: 1px solid var(--line);
   border-bottom-color: var(--line-soft);
   border-radius: var(--r-md) var(--r-md) 0 0;
-  opacity: calc(var(--m) * clamp(0, (1 - var(--h)) * 2.5, 1));
+  opacity: var(--m);
   pointer-events: none;
 }
 /* a labelled terminal or agent: tinted like its real title bar */

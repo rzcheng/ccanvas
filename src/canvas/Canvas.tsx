@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { hostOf, looksLikeLocalFile, normalizeUrl } from '../lib/weburl'
+import { hostOf, resolveAddress } from '../lib/weburl'
 import { isDesktopMirror, forkIntoTerminal, openInClaude } from '../lib/desktopSessions'
 import { useStore, selectActive, withGroupSiblings } from '../store/workspace'
 import type {
@@ -1336,10 +1336,11 @@ export function Canvas() {
     )
       init.path = rest
     if (rest && target === 'web') {
-      if (looksLikeLocalFile(rest)) init.path = rest
-      else {
-        init.url = normalizeUrl(rest)
-        init.title = hostOf(init.url)
+      const a = resolveAddress(rest)
+      if (a?.kind === 'file') init.path = a.path
+      else if (a) {
+        init.url = a.url
+        init.title = a.search ?? hostOf(a.url)
       }
     }
     if (rest && target === 'runner') init.cmd = rest

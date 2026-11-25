@@ -21,7 +21,7 @@ import {
 } from '../ui/icons'
 import { flyFocus, cancelFlight } from '../lib/focusMotion'
 import { toggleFocus } from '../lib/view'
-import { KIND_ICON, StatusGlyph, WidgetSlotIcon, showsStatus } from './widgetIcons'
+import { WidgetGlyph, WidgetSlotIcon, showsStatus } from './widgetIcons'
 import { useAgents, useDisplayStatus, sendTo, sendPrompt, isLive as isSessionLive, type AgentMetrics } from '../lib/agents'
 import { useAgentContext } from '../lib/context'
 import { useSyncSessionTitle } from '../lib/sessionTitle'
@@ -438,11 +438,14 @@ export const WidgetFrame = memo(function WidgetFrame({
   const paneOn = useStore((s) => split && s.focus?.id === el.id)
   // collapsed to its title bar (never while focused or spread out)
   const minimized = !!el.minimized && !focusRole && !spreadCard
-  // the status lamp its far card and its landing cover are drawn in
+  // the status lamp its far card is drawn in
   const sessionStatus = useDisplayStatus(el.id)
   const lampStatus = showsStatus(el) ? (sessionStatus ?? 'off') : 'kind'
   // far out, a status card stands in for the session's content
   const carded = hasCard && far && visible && !focusRole && !minimized
+  // zooming back in past the threshold, the card fades off over the content
+  // (which shows again at once, under it) instead of popping away
+  const cardOut = useCardFadeOut(carded, hasCard && !far && visible && !focusRole && !minimized)
   // this widget's own box: its pane of the focus box (where it flies home
   // from, once it has left the panes)
   const lastPaneBox = useRef<FocusState['box'] | null>(null)
@@ -790,7 +793,7 @@ export const WidgetFrame = memo(function WidgetFrame({
       >
         <WidgetErrorBoundary>
           <WidgetBody el={el} active={active} visible={visible} tabShown={tabShown} hidden={stackHidden} />
-          {carded && <FarCard el={el} />}
+          {(carded || cardOut) && <FarCard el={el} leaving={!carded} />}
         </WidgetErrorBoundary>
 
         {spreadCard && (
@@ -1031,7 +1034,31 @@ const STATUS_LABEL: Record<string, string> = {
   connecting: 'connecting',
   off: 'offline',
 }
-function FarCard({ el }: { el: WidgetElement }) {
+/** How long a far card takes to fade in or out (global.css: .term-card). */
+const CARD_FADE = 160
+
+/** True for CARD_FADE after `carded` turns off for a reason the card should
+ *  fade for (`fadeFor`: zoomed back in; not a focus, a minimize or a layer
+ *  switch, where it just goes). */
+function useCardFadeOut(carded: boolean, fadeFor: boolean): boolean {
+  const [out, setOut] = useState(false)
+  const was = useRef(carded)
+  useLayoutEffect(() => {
+    const leaving = was.current && !carded && fadeFor
+    was.current = carded
+    if (!leaving || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setOut(false)
+      return
+    }
+    setOut(true)
+    const t = window.setTimeout(() => setOut(false), CARD_FADE)
+    return () => window.clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [carded])
+  return out
+}
+
+function FarCard({ el, leaving }: { el: WidgetElement; leaving?: boolean }) {
   const live = showsStatus(el)
   const st = useDisplayStatus(el.id) ?? 'off'
   // a widget without a session status is tinted with its own accent
@@ -1041,10 +1068,10 @@ function FarCard({ el }: { el: WidgetElement }) {
   // element on the canvas on each zoom frame
   const zoom = useStore((s) => selectActive(s).camera.zoom)
   const folder = el.cwd ? el.cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() : null
-  const Icon = widgetGlyph(el) === 'mirror' ? IconDesktop : KIND_ICON[el.kind]
+  const glyph = widgetGlyph(el) === 'mirror' ? IconDesktop : undefined
   return (
     <div
-      className={`term-card${el.color ? ' term-card--tagged' : ''}`}
+      className={`term-card${el.color ? ' term-card--tagged' : ''}${leaving ? ' term-card--out' : ''}`}
       data-st={status}
       style={{
         ['--z' as string]: zoom,
@@ -1054,13 +1081,7 @@ function FarCard({ el }: { el: WidgetElement }) {
     >
       <div className="term-card__screen">
         <div className="term-card__lamp">
-          {live ? (
-            <StatusGlyph status={st} icon={<Icon />} className="term-card__glyph" />
-          ) : (
-            <span className="term-card__glyph">
-              <Icon />
-            </span>
-          )}
+          <WidgetGlyph el={el} status={live ? st : undefined} glyph={glyph} className="term-card__glyph" />
           <div className="term-card__name">{el.title}</div>
           <div className="term-card__status">{live ? (STATUS_LABEL[st] ?? st) : widgetType(el)}</div>
           <div className="term-card__sub">

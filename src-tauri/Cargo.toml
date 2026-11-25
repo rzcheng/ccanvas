@@ -39,12 +39,16 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 
 # a snapshot of a web widget's native view, shown while it's hidden on the
-# canvas (native_view.rs); all already in the build through wry
+# canvas (native_view.rs), and its cookie store (chrome_import.rs); all
+# already in the build through wry
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSDictionary", "NSError"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSDictionary", "NSError", "NSHTTPCookie", "NSString", "NSDate", "NSUUID", "NSArray", "NSSet", "NSObject"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSImage", "NSImageRep", "NSBitmapImageRep"] }
-objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKWebView", "WKSnapshotConfiguration"] }
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKWebView", "WKSnapshotConfiguration", "WKWebsiteDataStore", "WKHTTPCookieStore"] }
+# Chrome sign-in import (chrome_import.rs): checking for macOS 14, zeroing secrets
+objc2 = "0.6"
+zeroize = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

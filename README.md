@@ -205,8 +205,18 @@ File drag-and-drop needs the desktop app; the VS Code widget works here too.
 
 A **web** widget (quick insert `web`, alias `browser` `url` `site`; the
 command palette's *New: Web page*; or type an address into the palette) shows a
-page with a small address bar: back, forward, reload, the address, a local
-`.html` file (live-reloads on save) and ↗ to open it in your browser.
+page under a browser-style bar: back, forward, reload, a rounded address field
+(the site's icon, its host and then the rest of the path, with a thin line
+along the bottom while a page loads), a local `.html` file (live-reloads on
+save) and ↗ to open it in your browser. Type an address (`example.com`,
+`localhost:3000`, `3000`, an IP, `./index.html`) to go there; anything else
+searches Google.
+- **Its card shows the site.** Zoomed out, in the layers overview and in its
+  title bar, a web widget shows the icon of the page it's on now (YouTube's,
+  GitHub's…), fetched from the site itself (never a third-party icon service)
+  and cached per site. Now playing shows Spotify's or Music's icon, VS Code
+  its own, Claude chats and agents Claude's, and the GitHub widgets GitHub's
+  mark, each still ringed by its status (working, needs you, done).
 
 - **On the canvas it's a preview.** Local dev servers (`localhost:5173`) embed
   directly. Other sites load through a small proxy that strips the headers that
@@ -222,6 +232,17 @@ page with a small address bar: back, forward, reload, the address, a local
   command palette or anything else is over it, and it only exists in focus
   mode, where nothing moves. In the browser build, focus mode shows the preview
   with a note instead.
+
+- **Sign-ins stay.** Every web widget's browser shares one persistent store
+  of its own (macOS 14+), apart from the app, so signing in once keeps you
+  signed in across widgets and relaunches. *Settings → Web sign-ins* can bring
+  sign-ins over from Chrome: pick a profile, tick the sites (nothing is
+  chosen for you), and macOS asks once for Chrome's key ("Chrome Safe
+  Storage"). Their cookies are decrypted in the app and written straight
+  into the browser's store; the key isn't kept, and cookie values never
+  reach the canvas, its file, logs or the preview. *Sign out of all sites*
+  clears the store. Handy for sites that sign in with Google, which often
+  refuses to inside an app.
 
 Safety: the native view gets no access to ccanvas (no Tauri IPC or
 permissions, http(s) only, never the app's own origin). The preview proxy runs
@@ -328,9 +349,8 @@ several groups of agents, on one canvas without them crowding each other.
   scroll or press `↑` / `↓` to roll the accordion through the stack, then
   click a sheet or slat, press `⏎`, or press its digit to dive in: the text
   backspaces out, the sheet eases flat onto the canvas, its name
-  glides into the layer chip, and its tiles turn back into the live widgets:
-  each terminal and agent types its real output back in, row by row behind
-  a block cursor, and other widgets fill in from the top. `Esc` or `L` goes back the same way,
+  glides into the layer chip, and its tiles, landed as cards, crossfade into
+  the live widgets. `Esc` or `L` goes back the same way,
   and `L` turns the move around at any point, so tapping it quickly goes in
   and out from wherever it is. `⌥↑` / `⌥↓` and `⌥1`–`⌥9` switch
   instantly.

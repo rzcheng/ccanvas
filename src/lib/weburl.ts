@@ -15,6 +15,52 @@ export function normalizeUrl(raw: string): string {
 
 export const isHttpUrl = (u: string) => /^https?:\/\//i.test(u)
 
+/** A web search for `q` (what the address bar does with anything that isn't
+ *  an address). */
+export const searchUrl = (q: string) => `https://www.google.com/search?q=${encodeURIComponent(q.trim())}`
+
+/** The query of a search this bar made, or null for any other page. */
+export function searchQuery(url: string): string | null {
+  try {
+    const u = new URL(url)
+    if (!/^(www\.)?google\.[a-z.]+$/i.test(u.hostname) || u.pathname !== '/search') return null
+    return u.searchParams.get('q')
+  } catch {
+    return null
+  }
+}
+
+/** Typed into an address bar: a local file, an address, or a search. */
+export type Address = { kind: 'file'; path: string } | { kind: 'url'; url: string; search?: string }
+
+/** Is `v` (no spaces, no scheme) an address rather than words to search for?
+ *  `localhost:3000`, `3000`, `10.0.0.2`, `[::1]:8080`, `example.com/a`,
+ *  `myhost:8080`; not `v1.2` or `hello`. */
+function isAddress(v: string): boolean {
+  if (/^localhost(:\d+)?([/?#]|$)/i.test(v)) return true
+  if (/^\d{2,5}([/?#]|$)/.test(v)) return true
+  if (/^\d{1,3}(\.\d{1,3}){3}(:\d+)?([/?#]|$)/.test(v)) return true
+  if (/^\[[0-9a-f:]+\](:\d+)?([/?#]|$)/i.test(v)) return true
+  // a host with a port (`devbox:8080`)
+  if (/^[a-z0-9-]+:\d{2,5}([/?#]|$)/i.test(v)) return true
+  // a dotted host whose last label is a name, not a number (`v1.2` is not)
+  const host = /^([a-z0-9-]+(?:\.[a-z0-9-]+)+)(:\d+)?([/?#]|$)/i.exec(v)?.[1]
+  return !!host && /\.[a-z][a-z0-9-]*[a-z0-9]$/i.test(host) && !/\.\./.test(host)
+}
+
+/** What the web widget's bar (and quick insert) does with what was typed: a
+ *  local .html file, an address (scheme added), or else a Google search. */
+export function resolveAddress(raw: string): Address | null {
+  const v = raw.trim()
+  if (!v) return null
+  if (looksLikeLocalFile(v)) return { kind: 'file', path: v }
+  if (isHttpUrl(v)) return { kind: 'url', url: v }
+  if (!/\s/.test(v) && isAddress(v))
+    // a bare one-word host with a port is a machine on this network: plain http
+    return { kind: 'url', url: /^[a-z][a-z0-9-]*:\d/i.test(v) && !/^localhost/i.test(v) ? `http://${v}` : normalizeUrl(v) }
+  return { kind: 'url', url: searchUrl(v), search: v }
+}
+
 /** A dev server on this machine: embeds directly, no proxy needed. */
 export const isLocalUrl = (u: string) =>
   /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|\d+\.\d+\.\d+\.\d+)([:/?#]|$)/i.test(u)
@@ -132,5 +178,8 @@ export function videoEmbed(url: string): string | null {
 export function appOnlySite(url: string): string | null {
   const p = parse(url)
   if (!p || videoEmbed(url)) return null
-  return isYouTube(p.host) ? 'YouTube' : null
+  if (isYouTube(p.host)) return 'YouTube'
+  // Google answers a cookieless fetch of its results with a robot check
+  if (searchQuery(url) != null) return 'Google Search'
+  return null
 }

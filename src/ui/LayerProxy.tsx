@@ -3,7 +3,7 @@ import type { CanvasElement, WidgetElement } from '../lib/types'
 import { WIDGET_ACCENT } from '../lib/types'
 import { useAgents, useDisplayStatus } from '../lib/agents'
 import { baseName } from '../lib/backend'
-import { KIND_ICON, StatusGlyph, showsStatus } from '../widgets/widgetIcons'
+import { KIND_ICON, WidgetGlyph, showsStatus } from '../widgets/widgetIcons'
 import { IconDesktop } from './icons'
 import { pathWithin, widgetGlyph, widgetType } from '../lib/layers'
 
@@ -19,8 +19,8 @@ import { pathWithin, widgetGlyph, widgetType } from '../lib/layers'
 //    sheet is nearly flat;
 //  • the widget (--m): the real widget's frame and title bar (tint and
 //    folder included) crossfade in over the block, its body still the lamp,
-//    so the tile lands on the canvas as the card the real widget then takes
-//    off (ui/landing.ts). On a close, --h wipes it away top-down.
+//    so the tile lands on the canvas as a card, which then crossfades into
+//    the real widget under it (the overview fades the whole sheet's content).
 //
 // --w, the tile's wash, types the text in a character at a time, line after
 // line, with a block cursor (layers.css); each line carries its length
@@ -141,14 +141,8 @@ function WidgetTile({
   const shown = useDisplayStatus(el.id)
   const lastLine = useAgents((s) => (live ? s.lastLine[el.id] : undefined))
   const st = live ? (shown ?? 'off') : null
-  const Icon = glyphFor(el)
-  const icon = live ? (
-    <StatusGlyph status={st!} icon={<Icon />} className="pt__ic" />
-  ) : (
-    <span className="pt__ic">
-      <Icon />
-    </span>
-  )
+  // its brand (site or app icon) where it has one, ringed by its status
+  const icon = <WidgetGlyph el={el} status={live ? st! : undefined} glyph={glyphFor(el)} className="pt__ic" />
   // a widget moved here from another project keeps its folder: say so
   const guest = home && el.cwd && !pathWithin(home, el.cwd) ? baseName(el.cwd) : null
   // under the name, as on the canvas's far card: the status, or what it is
