@@ -71,7 +71,7 @@ export const LayerProxy = memo(function LayerProxy({
         data-pid={el.id}
         data-ord={ord}
         data-st="kind"
-        style={{ left: el.x, top: el.y, width: el.w, height: el.h, ['--k2' as string]: accentOf(el), ['--k' as string]: accentOf(el) }}
+        style={{ left: el.x, top: el.y, width: el.w, height: el.minimized ? 32 : el.h, ['--k2' as string]: accentOf(el), ['--k' as string]: accentOf(el) }}
       >
         <div className="pt__fill" />
         <div className="pt__real" />
@@ -174,11 +174,12 @@ function WidgetTile({
         left: el.x,
         top: el.y,
         width: el.w,
-        height: el.h,
+        // a minimized widget is just its title bar
+        height: el.minimized ? 32 : el.h,
         ['--k2' as string]: accentOf(el),
         ['--k' as string]: accentOf(el),
         ['--tw' as string]: el.w,
-        ['--th' as string]: el.h,
+        ['--th' as string]: el.minimized ? 32 : el.h,
         ['--chars' as string]: Math.max(6, el.title.length),
       }}
     >

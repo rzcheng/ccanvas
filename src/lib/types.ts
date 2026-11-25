@@ -180,6 +180,8 @@ export type WidgetElement = Base & {
   title: string
   // kind-specific payload
   url?: string // web preview
+  /** web: a real browser on the canvas too, not the preview (WebBody) */
+  live?: boolean
   note?: string // markdown note
   cwd?: string // terminal working dir hint
   path?: string // file/folder a files/editor/doc/log widget points at
@@ -226,6 +228,8 @@ export type WidgetElement = Base & {
   stackTitle?: string
   /** the widget's own size before it joined, restored when it leaves */
   stackRestore?: { w: number; h: number }
+  /** collapsed to its title bar (its session keeps running); w/h are kept */
+  minimized?: boolean
 }
 
 export type CanvasElement =

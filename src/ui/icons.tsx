@@ -127,6 +127,20 @@ export const IconClose = (p: P) => (
   </S>
 )
 
+export const IconTrash = (p: P) => (
+  <S {...p}>
+    <path d="M4 7h16M10 7V4.5h4V7M6.5 7l.9 12.5h9.2l.9-12.5M10 11v5M14 11v5" />
+  </S>
+)
+
+/** two panes side by side: split focus */
+export const IconSplit = (p: P) => (
+  <S {...p}>
+    <rect x="3.5" y="5" width="17" height="14" rx="2" />
+    <path d="M12 5v14" />
+  </S>
+)
+
 export const IconFit = (p: P) => (
   <S {...p}>
     <path d="M4 9V5a1 1 0 011-1h4" />

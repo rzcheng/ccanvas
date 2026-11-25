@@ -1,11 +1,13 @@
-// The real browser for a focused web widget: a native child webview laid over
-// the widget's body while it's in focus mode (the frontend half, which keeps it
-// in place and hides it under menus, is src/lib/nativeView.ts).
+// The real browser behind a web widget: a native child webview laid over the
+// widget's body (the frontend half, which keeps it in place and hides it under
+// menus, is src/lib/nativeView.ts). One per widget that shows one: each pane
+// in focus mode, and a "live" widget on the canvas while you're in it.
 //
 // A native view is drawn on top of the whole page as a plain rectangle, so it
-// can't follow the canvas's transforms; that's why it only exists in focus
-// mode, where the widget sits still at 100%. There is at most one, the focused
-// widget's: opening one for another widget closes the old one.
+// can't follow the canvas's transforms. On the canvas it is only shown while
+// the camera holds still, with its page zoom matched to the camera's; while
+// you pan or zoom (or work elsewhere) the widget shows a snapshot of it
+// instead (`native_view_snapshot`) and the view stays alive, hidden.
 //
 // Safety:
 //   • The view shows arbitrary sites, so it gets no Tauri IPC: capabilities
@@ -55,19 +57,18 @@ fn is_placeholder(url: &Url) -> bool {
     url.host_str() == Some("ccanvas-native-view.invalid")
 }
 
-struct Live {
-    /// the widget it belongs to
-    id: String,
-    view: Webview,
-}
+/// Most views alive at once (each is a whole browser engine page); opening
+/// one more closes the one used least recently.
+const MAX_VIEWS: usize = 8;
 
-fn live() -> &'static Mutex<Option<Live>> {
-    static L: OnceLock<Mutex<Option<Live>>> = OnceLock::new();
-    L.get_or_init(|| Mutex::new(None))
+/// The live views by widget id, least recently opened first.
+fn live() -> &'static Mutex<Vec<(String, Webview)>> {
+    static L: OnceLock<Mutex<Vec<(String, Webview)>>> = OnceLock::new();
+    L.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 /// The last page each widget's view showed, for `native_view_close` (kept
-/// even when a view is closed by another widget opening).
+/// even when a view is closed to make room for another).
 fn last_urls() -> &'static Mutex<HashMap<String, String>> {
     static U: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
     U.get_or_init(|| Mutex::new(HashMap::new()))
@@ -113,14 +114,14 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
     }
 }
 
-/// The live view, if it belongs to `id`.
+/// Widget `id`'s live view.
 fn view_of(id: &str) -> Option<Webview> {
     live()
         .lock()
         .unwrap()
-        .as_ref()
-        .filter(|l| l.id == id)
-        .map(|l| l.view.clone())
+        .iter()
+        .find(|(k, _)| k == id)
+        .map(|(_, v)| v.clone())
 }
 
 fn remember(id: &str, url: &Url) {
@@ -132,11 +133,11 @@ fn remember(id: &str, url: &Url) {
     }
 }
 
-fn close_view(l: Live) {
-    if let Ok(url) = l.view.url() {
-        remember(&l.id, &url);
+fn close_view(id: &str, view: Webview) {
+    if let Ok(url) = view.url() {
+        remember(id, &url);
     }
-    let _ = l.view.close();
+    let _ = view.close();
 }
 
 /// Open (or move and show) the native view for widget `id` at a canvas-local
@@ -160,14 +161,15 @@ pub async fn native_view_open(
     let window = app.get_window("main").ok_or("no main window")?;
 
     // held throughout, so two opens can't race into two views
-    let mut slot = live().lock().unwrap();
-    if let Some(l) = slot.as_ref().filter(|l| l.id == id) {
-        let _ = l.view.set_bounds(rect(x, y, w, h));
-        let _ = l.view.show();
+    let mut views = live().lock().unwrap();
+    if let Some((_, v)) = views.iter().find(|(k, _)| *k == id) {
+        let _ = v.set_bounds(rect(x, y, w, h));
+        let _ = v.show();
         return Ok(());
     }
-    if let Some(old) = slot.take() {
-        close_view(old);
+    while views.len() >= MAX_VIEWS {
+        let (old_id, old) = views.remove(0);
+        close_view(&old_id, old);
     }
     last_urls().lock().unwrap().remove(&id);
 
@@ -250,7 +252,7 @@ pub async fn native_view_open(
         let _ = view.close();
         return Err(e.to_string());
     }
-    *slot = Some(Live { id, view });
+    views.push((id, view));
     Ok(())
 }
 
@@ -297,22 +299,102 @@ pub async fn native_view_go(id: String, action: String) {
     };
 }
 
-/// Close widget `id`'s view (focus moved on) and return the last page it
-/// showed, so the widget can keep it.
+/// Match the page's zoom to the canvas camera (1 in focus mode).
+#[tauri::command]
+pub async fn native_view_zoom(id: String, zoom: f64) {
+    if let Some(v) = view_of(&id) {
+        let _ = v.set_zoom(zoom.clamp(0.25, 3.0));
+    }
+}
+
+/// A JPEG of what the view shows right now, as a data URL, for the widget to
+/// stand in with while the view is hidden. None where it can't be taken.
+#[tauri::command]
+pub async fn native_view_snapshot(id: String) -> Option<String> {
+    let view = view_of(&id)?;
+    snapshot::take(&view).await
+}
+
+/// Close widget `id`'s view and return the last page it showed, so the
+/// widget can keep it.
 #[tauri::command]
 pub async fn native_view_close(id: String) -> Option<String> {
     let taken = {
-        let mut slot = live().lock().unwrap();
-        if slot.as_ref().is_some_and(|l| l.id == id) {
-            slot.take()
-        } else {
-            None
-        }
+        let mut views = live().lock().unwrap();
+        views
+            .iter()
+            .position(|(k, _)| *k == id)
+            .map(|i| views.remove(i))
     };
-    if let Some(l) = taken {
-        close_view(l);
+    if let Some((id, view)) = taken {
+        close_view(&id, view);
     }
     last_urls().lock().unwrap().remove(&id)
+}
+
+#[cfg(target_os = "macos")]
+mod snapshot {
+    use base64::Engine;
+    use block2::RcBlock;
+    use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage};
+    use objc2_foundation::{NSDictionary, NSError};
+    use objc2_web_kit::WKWebView;
+    use std::sync::mpsc;
+    use std::time::Duration;
+    use tauri::Webview;
+
+    /// JPEG of a native view (WKWebView's own snapshot), as a data URL.
+    pub async fn take(view: &Webview) -> Option<String> {
+        let (tx, rx) = mpsc::channel::<Option<Vec<u8>>>();
+        view.with_webview(move |pv| {
+            // runs on the main thread, where WebKit must be called
+            let wk = pv.inner() as *const WKWebView;
+            if wk.is_null() {
+                let _ = tx.send(None);
+                return;
+            }
+            let tx = std::sync::Mutex::new(Some(tx));
+            let done = RcBlock::new(move |img: *mut NSImage, _err: *mut NSError| {
+                // SAFETY: WebKit hands back a valid image or null
+                let jpeg = unsafe { img.as_ref() }.and_then(encode);
+                if let Some(tx) = tx.lock().ok().and_then(|mut t| t.take()) {
+                    let _ = tx.send(jpeg);
+                }
+            });
+            // SAFETY: `wk` is this webview's live WKWebView, used on the main thread
+            unsafe { (*wk).takeSnapshotWithConfiguration_completionHandler(None, &done) };
+        })
+        .ok()?;
+        let bytes = tauri::async_runtime::spawn_blocking(move || {
+            rx.recv_timeout(Duration::from_secs(3)).ok().flatten()
+        })
+        .await
+        .ok()??;
+        Some(format!(
+            "data:image/jpeg;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        ))
+    }
+
+    fn encode(img: &NSImage) -> Option<Vec<u8>> {
+        let tiff = img.TIFFRepresentation()?;
+        let rep = NSBitmapImageRep::imageRepWithData(&tiff)?;
+        // SAFETY: an empty properties dictionary is valid (default quality)
+        let data = unsafe {
+            rep.representationUsingType_properties(
+                NSBitmapImageFileType::JPEG,
+                &NSDictionary::new(),
+            )
+        }?;
+        Some(data.to_vec())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod snapshot {
+    pub async fn take(_view: &tauri::Webview) -> Option<String> {
+        None
+    }
 }
 
 #[cfg(test)]

@@ -1,19 +1,20 @@
-// The real browser behind a focused web widget (desktop app only).
+// The real browser behind a web widget (desktop app only).
 //
-// On the canvas a web widget is an <iframe>, which can follow the board's CSS
-// transforms. A native webview can't: it's a plain rectangle drawn on top of
-// the whole page. So it is only used in focus mode, where the widget sits in a
-// fixed, untransformed box. This hook keeps one native view (Rust side:
+// A native webview can't follow the board's CSS transforms: it's a plain
+// rectangle drawn on top of the whole page. This hook keeps one (Rust side:
 // src-tauri/src/native_view.rs) exactly over a placeholder element:
-//   • it opens once the focus flight has landed (the placeholder is at 100%
-//     scale and holding still), and closes the moment focus moves on;
-//   • it follows the placeholder's rect every frame (window resize, focus
-//     strip or chrome changes), stopping short of the floating toolbar along
-//     the bottom edge;
-//   • it hides whenever anything else in the page covers the placeholder
-//     (menus, the command palette, popovers: being native, it would sit on
-//     top of them) and while the window isn't visible.
-// Only the focused widget mounts it, so at most one native view is alive.
+//   • it opens once the placeholder is laid out and holding still (a focus
+//     flight has landed), and closes when `want` goes false;
+//   • in focus mode (`follow`) it tracks the placeholder's rect every frame
+//     (window resize, strip changes, pane dividers); on the canvas it hides
+//     the moment the placeholder moves (pan, zoom, drag) and comes back once
+//     it holds still, at a page zoom matching the camera's;
+//   • it stops short of the floating toolbar along the bottom edge, and hides
+//     whenever anything else in the page covers the placeholder (menus, the
+//     palette, another widget: being native, it would sit on top of them),
+//     while `visible` is false, and while the window isn't visible;
+//   • with `snapshots`, it keeps a recent picture of the page for the widget
+//     to show while the view is hidden.
 
 import { useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
@@ -62,7 +63,7 @@ function overlayOf(hit: Element, host: HTMLElement): Element {
 
 /**
  * Does anything in the page sit over `host`? Probes a grid of points; each
- * must land on the placeholder itself (or the widget's own click shield).
+ * must land on the placeholder itself (or the widget's own shield or resize corners).
  * Returns null when something covers it (a menu, the palette: hide the view),
  * else how many px to trim off its bottom so it ends above the floating chrome
  * along the bottom edge (0 when nothing is there).
@@ -80,7 +81,8 @@ function probe(host: HTMLElement, r: DOMRect): number | null {
       const hit = document.elementFromPoint(x, y)
       if (!hit) continue // off-window
       if (host.contains(hit)) continue
-      if (widget?.contains(hit) && hit.closest('.widget__shield')) continue
+      // the widget's own click shield and resize corners don't count
+      if (widget?.contains(hit) && hit.closest('.widget__shield, .widget__resize')) continue
       const top = overlayOf(hit, host).getBoundingClientRect().top
       if (top < r.bottom - CHROME_BAND) return null
       trim = Math.max(trim, r.bottom - top + 8)
@@ -88,12 +90,29 @@ function probe(host: HTMLElement, r: DOMRect): number | null {
   return trim
 }
 
+/** The scale the placeholder is drawn at on screen (the canvas zoom). */
+const drawnScale = (host: HTMLElement, r: DOMRect) => (host.offsetWidth ? r.width / host.offsetWidth : 1)
+
 /** Laid out at its final size, no flight transform or clip in progress? */
 function settled(host: HTMLElement, r: DOMRect): boolean {
   if (Math.abs(r.width - host.offsetWidth) > 0.5 || Math.abs(r.height - host.offsetHeight) > 0.5) return false
   const widget = host.closest<HTMLElement>('.widget')
   return !widget?.style.clipPath
 }
+
+export type NativeViewOptions = {
+  /** may it show right now? (it stays alive, hidden, while false) */
+  visible?: boolean
+  /** track the placeholder while it moves (focus) instead of hiding (canvas) */
+  follow?: boolean
+  /** keep a recent snapshot of the page for while it's hidden */
+  snapshots?: boolean
+}
+
+/** Frames the placeholder must hold still before the view (re)appears. */
+const STILL_FRAMES = { follow: 2, canvas: 8 }
+/** How often a shown view's snapshot is refreshed. */
+const SNAPSHOT_MS = 1500
 
 /**
  * Keep a native view over `hostRef` while `want` is true. `url` is where it
@@ -107,11 +126,13 @@ export function useNativeView(
   hostRef: React.RefObject<HTMLElement | null>,
   onClose: (lastUrl: string | null) => void,
   handlers: NativeViewHandlers,
+  opts: NativeViewOptions = {},
 ) {
   const [state, setState] = useState<NativeViewState>('off')
   const [shown, setShown] = useState(false)
-  const latest = useRef({ url, onClose, handlers })
-  latest.current = { url, onClose, handlers }
+  const [snapshot, setSnapshot] = useState<string | null>(null)
+  const latest = useRef({ url, onClose, handlers, opts })
+  latest.current = { url, onClose, handlers, opts }
 
   // events from the native side, for this widget only
   useEffect(() => {
@@ -136,6 +157,23 @@ export function useNativeView(
       return
     }
     let alive = true
+    // calls to the view go out in order (a zoom lands before the show)
+    let chain: Promise<unknown> = Promise.resolve()
+    const call = <T,>(cmd: string, args: Record<string, unknown>) => {
+      const p = chain.then(() => invoke<T>(cmd, { id, ...args }))
+      chain = p.catch(() => {})
+      return p
+    }
+    let zoomSent = 1
+    let snapTimer = 0
+    const snap = () =>
+      call<string | null>('native_view_snapshot', {}).then((s) => {
+        if (alive && s) setSnapshot(s)
+      })
+    const setSnapping = (on: boolean) => {
+      window.clearInterval(snapTimer)
+      snapTimer = on && latest.current.opts.snapshots ? window.setInterval(() => void snap(), SNAPSHOT_MS) : 0
+    }
     let opened = false
     let opening = false
     let sentRect: Rect | null = null
@@ -161,11 +199,18 @@ export function useNativeView(
       // straight away whenever the box moved
       if (moved || frame % 8 === 0) trim = probe(host, dr)
       const rect = { ...box, h: box.h - (trim ?? 0) }
-      // wait for the flight in to land (and, to open, hold still a moment)
-      const ready = settled(host, dr) && rect.w > 40 && rect.h > 40
-      const show = ready && !document.hidden && trim !== null
+      const o = latest.current.opts
+      const follow = o.follow ?? true
+      // focus: wait for the flight in to land, at 100%. Canvas: any zoom (the
+      // page zooms to match), as long as it holds still
+      const scale = follow ? 1 : drawnScale(host, dr)
+      const still = stillFrames >= (follow ? STILL_FRAMES.follow : STILL_FRAMES.canvas)
+      const ready =
+        (follow ? settled(host, dr) : scale >= 0.3) && rect.w > 40 && rect.h > 40
+      const show =
+        ready && !document.hidden && trim !== null && (o.visible ?? true) && (still || (opened && follow && visible))
       if (!opened) {
-        if (!show || stillFrames < 2 || opening) return
+        if (!show || opening) return
         opening = true
         setState('opening')
         void invoke('native_view_open', { id, url: latest.current.url, ...rect })
@@ -179,6 +224,12 @@ export function useNativeView(
             sentRect = rect
             setState('live')
             setShown(true)
+            if (scale !== 1) {
+              zoomSent = scale
+              void call('native_view_zoom', { zoom: scale })
+            }
+            setSnapping(true)
+            window.setTimeout(() => alive && visible && void snap(), 800)
           })
           .catch(() => {
             if (alive) setState('failed')
@@ -186,14 +237,22 @@ export function useNativeView(
           })
         return
       }
+      if (show && Math.abs(scale - zoomSent) > 0.001) {
+        zoomSent = scale
+        void call('native_view_zoom', { zoom: scale })
+      }
       if (show && !sameRect(sentRect, rect)) {
         sentRect = rect
-        void invoke('native_view_bounds', { id, ...rect })
+        void call('native_view_bounds', rect)
       }
       if (show !== visible) {
         visible = show
         setShown(show)
-        void invoke('native_view_visible', { id, visible: show })
+        setSnapping(show)
+        // leaving because you worked elsewhere (not a move): picture it first
+        if (!show && !moved && o.snapshots && !document.hidden)
+          void snap().finally(() => !visible && void call('native_view_visible', { visible: false }))
+        else void call('native_view_visible', { visible: show })
       }
     }
     raf = requestAnimationFrame(tick)
@@ -204,7 +263,8 @@ export function useNativeView(
       if (document.hidden && opened && visible) {
         visible = false
         setShown(false)
-        void invoke('native_view_visible', { id, visible: false })
+        setSnapping(false)
+        void call('native_view_visible', { visible: false })
       }
     }
     document.addEventListener('visibilitychange', onVis)
@@ -212,6 +272,8 @@ export function useNativeView(
     return () => {
       alive = false
       cancelAnimationFrame(raf)
+      window.clearInterval(snapTimer)
+      setSnapshot(null)
       document.removeEventListener('visibilitychange', onVis)
       setShown(false)
       if (opened || opening)
@@ -228,6 +290,8 @@ export function useNativeView(
     state,
     /** the native view is on screen right now (not hidden under a menu) */
     shown: live && shown,
+    /** a recent picture of the page (with `snapshots`), for while it's hidden */
+    snapshot,
     navigate: (to: string) => live && void invoke('native_view_navigate', { id, url: to }),
     back: () => live && void invoke('native_view_go', { id, action: 'back' }),
     forward: () => live && void invoke('native_view_go', { id, action: 'forward' }),
