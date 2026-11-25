@@ -47,6 +47,7 @@ import {
   summary,
   type PerfRun,
 } from '../lib/layersPerf'
+import { isHiddenMember, stacksOf } from '../lib/stacks'
 import { LayerProxy, type ProxyMode } from './LayerProxy'
 import '../styles/layers.css'
 
@@ -1660,18 +1661,24 @@ const SheetContent = memo(function SheetContent({
   fs: number
   home?: string
 }) {
+  // a stack shows only its front, as on the canvas (the members behind it
+  // would otherwise draw in z order, and the last one would cover the front)
+  const shown = useMemo(() => {
+    const stacks = stacksOf(els)
+    return stacks.size ? els.filter((e) => !isHiddenMember(e, stacks)) : els
+  }, [els])
   const { ord, covered } = useMemo(() => {
-    const ws = els.filter((e): e is WidgetElement => e.type === 'widget')
+    const ws = shown.filter((e): e is WidgetElement => e.type === 'widget')
     const rank = readingOrder(ws)
     const ord = new Map(ws.map((w, i) => [w.id, rank[i]]))
     const s = Math.max(0.02, fs)
     // the text block: about 200 × 64 screen px from the tile's top-left
     return { ord, covered: coveredLabels(ws, 200 / s, 64 / s) }
-  }, [els, fs])
+  }, [shown, fs])
   let widgets = 0
   return (
     <>
-      {els.map((e) => {
+      {shown.map((e) => {
         const capped = e.type === 'widget' && ++widgets > PROXY_CAP
         return (
           <LayerProxy
