@@ -542,3 +542,7 @@ export function coveredLabels(els: Array<Box & { id: string }>, lw: number, lh: 
   })
   return out
 }
+
+/** The longest word in a name, in characters: names on far cards and tiles
+ *  are fitted so no word is broken across lines. */
+export const longestWord = (s: string) => Math.max(3, ...s.split(/\s+/).map((w) => w.length))

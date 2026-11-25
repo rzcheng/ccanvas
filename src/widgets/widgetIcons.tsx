@@ -27,7 +27,7 @@ import {
   IconMusic,
 } from '../ui/icons'
 import { useNowPlaying } from '../lib/nowplaying'
-import { brandImage, brandSource, useBrandIcons, useWebPage, type BrandSource } from '../lib/brandIcon'
+import { brandSource, useBrandImage, useWebPage, type BrandSource } from '../lib/brandIcon'
 
 export const KIND_ICON: Record<WidgetKind, (p: { className?: string; size?: number }) => JSX.Element> = {
   terminal: IconTerminal,
@@ -172,13 +172,12 @@ const GITHUB_MARK = (
 /** A widget's brand icon as an element (an <img> of a site or app icon, or
  *  GitHub's mark), or null: then its kind's glyph shows. */
 export function useBrand(el: WidgetElement): React.ReactNode {
-  useBrandIcons()
   const page = useWebPage(el)
   const npSource = useNowPlaying((s) => (el.kind === 'nowplaying' && s.np.kind === 'track' ? s.np.track.source : null))
   const src: BrandSource = brandSource(el, page, npSource)
+  const img = useBrandImage(src)
   if (!src) return null
   if (src.kind === 'github') return GITHUB_MARK
-  const img = brandImage(src)
   // a site's icon sits on a light tile, as browsers show favourites: many are
   // drawn for a white page (GitHub's is black), and the cards are dark
   if (img)

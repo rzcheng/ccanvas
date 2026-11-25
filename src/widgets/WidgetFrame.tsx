@@ -51,7 +51,7 @@ import { MirrorAsk, MirrorWaitChip } from './MirrorStatus'
 import { openInClaude } from '../lib/desktopSessions'
 import { WidgetErrorBoundary } from '../ui/WidgetErrorBoundary'
 import { stacksOf, type Stack } from '../lib/stacks'
-import { widgetGlyph, widgetType } from '../lib/layers'
+import { longestWord, widgetGlyph, widgetType } from '../lib/layers'
 import { StackRail, StackEdges } from './StackRail'
 import { useSpreadCardDrag, isSpreadDragging } from './useSpreadCardDrag'
 
@@ -1076,6 +1076,7 @@ function FarCard({ el, leaving }: { el: WidgetElement; leaving?: boolean }) {
       style={{
         ['--z' as string]: zoom,
         ['--chars' as string]: Math.max(6, el.title.length),
+        ['--lw' as string]: longestWord(el.title),
         ['--k' as string]: el.color ?? WIDGET_ACCENT[el.kind],
       }}
     >

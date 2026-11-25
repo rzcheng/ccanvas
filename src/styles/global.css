@@ -5797,11 +5797,13 @@ button.web__tag:hover {
   white-space: nowrap;
   overflow: hidden;
 }
-/* The name is never cut short with an ellipsis: it takes one, two or three
-   lines, whichever lets it be largest in the room it has (the width, about
-   half an em per character in this face, and about two fifths of the
-   height), between 10px and the tier's cap. Lines after the first lose a
-   little to word breaks, hence the slack. */
+/* The name is never cut short with an ellipsis, and a word is never broken:
+   it stays on one line while that is readable (16px or more), else takes
+   two or three lines, whichever lets it be largest in the room it has (the
+   width, about half an em per character in this face, and about two fifths
+   of the height), and never so large its longest word (--lw) won't fit,
+   between 10px and the tier's cap. Lines after the first lose a little to
+   word breaks, hence the slack. */
 .term-card__name {
   --cap: 14px;
   --nw: calc(100cqw - 2 * var(--pad));
@@ -5812,17 +5814,27 @@ button.web__tag:hover {
   line-height: 1.15;
   font-size: clamp(
     10px,
-    max(
-      min(var(--nw) / var(--cw), var(--nh) / 1.15),
-      min(var(--nw) * 1.7 / var(--cw), var(--nh) / 2.3),
-      min(var(--nw) * 2.4 / var(--cw), var(--nh) / 3.45)
+    min(
+      max(
+        min(var(--nw) / (var(--chars) * 0.56), var(--nh) / 1.15),
+        min(
+          max(min(var(--nw) * 1.7 / var(--cw), var(--nh) / 2.3), min(var(--nw) * 2.4 / var(--cw), var(--nh) / 3.45)),
+          16px
+        )
+      ),
+      var(--nw) / (var(--lw, 8) * 0.58)
     ),
     var(--cap)
   );
   white-space: normal;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   text-wrap: balance;
   max-height: calc(3 * 1.15em);
+}
+/* a site's or app's own icon carries its own margin: a little larger */
+.term-card__glyph.status-icon--brand {
+  width: calc(var(--gs) * 1.25);
+  height: calc(var(--gs) * 1.25);
 }
 .term-card__status {
   font: 500 11px/1.2 var(--font-mono);
@@ -5844,15 +5856,17 @@ button.web__tag:hover {
 .term-card[data-st='waiting'] .term-card__ctx--hot {
   color: inherit;
 }
+/* a card that can only show its icon shows it centred and as large as
+   it comfortably fits */
 @container tcard (min-width: 24px) and (min-height: 16px) {
   .term-card__glyph {
     display: grid;
-    --gs: min(62cqmin, 16px);
+    --gs: min(64cqmin, 20px);
   }
 }
 @container tcard (min-width: 50px) and (min-height: 32px) {
   .term-card__glyph {
-    --gs: min(58cqmin, 26px);
+    --gs: min(60cqmin, 34px);
   }
   .term-card--tagged .term-card__lamp::before {
     display: block;

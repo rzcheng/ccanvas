@@ -344,11 +344,10 @@ several groups of agents, on one canvas without them crowding each other.
   title bar doesn't change), then the canvas settles back into an accordion of
   every layer around the one you're on, which faces you while the rest fold
   into thin slats above and below it, higher layers higher up. As it
-  settles, the tiles' text types in down the sheet, a character at a time,
-  line after line, behind a block cursor. Hover,
+  settles, the tiles' text fades in down the sheet. Hover,
   scroll or press `↑` / `↓` to roll the accordion through the stack, then
   click a sheet or slat, press `⏎`, or press its digit to dive in: the text
-  backspaces out, the sheet eases flat onto the canvas, its name
+  fades out, the sheet eases flat onto the canvas, its name
   glides into the layer chip, and its tiles, landed as cards, crossfade into
   the live widgets. `Esc` or `L` goes back the same way,
   and `L` turns the move around at any point, so tapping it quickly goes in

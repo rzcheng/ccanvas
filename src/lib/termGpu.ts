@@ -15,6 +15,9 @@
 
 /** Live WebGL terminals at most. */
 export const GPU_POOL = 8
+/** How long a hidden terminal keeps its WebGL renderer (ms): long enough
+ *  that flicking between layers never rebuilds one. */
+export const GPU_HIDDEN_KEEP = 30_000
 /** Largest drawing buffer, in device pixels, a WebGL terminal may have. */
 export const GPU_MAX_PIXELS = 4096 * 4096
 /** Largest side of that buffer (WebGL canvases are capped near 16k). */

@@ -5,7 +5,7 @@ import { useAgents, useDisplayStatus } from '../lib/agents'
 import { baseName } from '../lib/backend'
 import { KIND_ICON, WidgetGlyph, showsStatus } from '../widgets/widgetIcons'
 import { IconDesktop } from './icons'
-import { pathWithin, widgetGlyph, widgetType } from '../lib/layers'
+import { longestWord, pathWithin, widgetGlyph, widgetType } from '../lib/layers'
 
 // A static stand-in for one element on an overview sheet: a tile at the
 // widget's own position and size. Text only, a handful of nodes: no xterm,
@@ -22,9 +22,8 @@ import { pathWithin, widgetGlyph, widgetType } from '../lib/layers'
 //    so the tile lands on the canvas as a card, which then crossfades into
 //    the real widget under it (the overview fades the whole sheet's content).
 //
-// --w, the tile's wash, types the text in a character at a time, line after
-// line, with a block cursor (layers.css); each line carries its length
-// (--n) for that. Run backwards, it backspaces.
+// --w, the tile's wash, fades its text in (and out), staggered down the
+// sheet in reading order (layers.css).
 
 const STATUS_WORD: Record<string, string> = {
   working: 'working',
@@ -64,6 +63,8 @@ export const LayerProxy = memo(function LayerProxy({
   /** the layer's folder: a widget from another project says where it's from */
   home?: string
 }) {
+  // a minimized widget is only its title bar on the canvas: no tile for it
+  if (el.type === 'widget' && el.minimized) return null
   if (el.type === 'widget')
     return rect ? (
       <div
@@ -103,9 +104,6 @@ export const LayerProxy = memo(function LayerProxy({
 function glyphFor(el: WidgetElement) {
   return widgetGlyph(el) === 'mirror' ? IconDesktop : KIND_ICON[el.kind]
 }
-
-/** A line's length, for typing it in a character at a time. */
-const chars = (s: string) => ({ ['--n' as string]: Math.min(s.length, 120) })
 
 /** A few lines of what a non-terminal widget shows. */
 function otherLines(el: WidgetElement): string[] {
@@ -175,6 +173,7 @@ function WidgetTile({
         ['--tw' as string]: el.w,
         ['--th' as string]: el.minimized ? 32 : el.h,
         ['--chars' as string]: Math.max(6, el.title.length),
+        ['--lw' as string]: longestWord(el.title),
       }}
     >
       <div className="pt__fill" />
@@ -188,16 +187,16 @@ function WidgetTile({
         <div className="pt__txt">
           <div className="pt__top">
             {icon}
-            <span className="pt__tt" style={chars(el.title)}>
+            <span className="pt__tt">
               <i>{el.title}</i>
             </span>
           </div>
-          <span className="pt__tm" style={chars(meta)}>
+          <span className="pt__tm">
             <i>{meta}</i>
           </span>
           <span className="pt__tls">
             {lines.map((l, i) => (
-              <span key={i} className="pt__tl" style={chars(l)}>
+              <span key={i} className="pt__tl">
                 <i>{l}</i>
               </span>
             ))}

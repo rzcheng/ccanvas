@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { isTauri } from './backend'
+import { useStore } from '../store/workspace'
 
 /** Can this build host a native child webview? (desktop app only) */
 export function nativeViewSupported(): boolean {
@@ -207,8 +208,16 @@ export function useNativeView(
       const still = stillFrames >= (follow ? STILL_FRAMES.follow : STILL_FRAMES.canvas)
       const ready =
         (follow ? settled(host, dr) : scale >= 0.3) && rect.w > 40 && rect.h > 40
+      // the layers overview covers the canvas from its very first frame: a view
+      // drawn above the page must not wait for the next probe to hide
+      const covered = !!useStore.getState().layerOverview && !follow
       const show =
-        ready && !document.hidden && trim !== null && (o.visible ?? true) && (still || (opened && follow && visible))
+        ready &&
+        !covered &&
+        !document.hidden &&
+        trim !== null &&
+        (o.visible ?? true) &&
+        (still || (opened && follow && visible))
       if (!opened) {
         if (!show || opening) return
         opening = true

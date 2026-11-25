@@ -262,12 +262,14 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: calc(3px / var(--fs, 1));
-  padding: calc(9px / var(--fs, 1)) calc(10px / var(--fs, 1));
+  /* a tile showing only its glyph keeps no room for the hidden lines, so
+     the glyph sits in the middle */
+  gap: calc(var(--on-name) * 3px / var(--fs, 1));
+  padding: calc(var(--on-name) * 9px / var(--fs, 1)) calc(var(--on-name) * 10px / var(--fs, 1));
   text-align: center;
   color: var(--lamp-ink);
   overflow: hidden;
-  opacity: var(--txt, 0);
+  opacity: calc(var(--txt, 0) * var(--w, 1));
   pointer-events: none;
   /* --tz: the world's counter-scale while the sheet grows to the canvas */
   transform: scale(var(--tz, 1));
@@ -277,17 +279,27 @@
   display: flex;
   flex-direction: column;
   max-width: 100%;
-  gap: calc(5px / var(--fs, 1));
+  gap: calc(var(--on-name) * 5px / var(--fs, 1));
   align-items: center;
   opacity: calc(1 - var(--m));
   transform: translateY(calc(var(--m) * -3px / var(--fs, 1))) scale(calc(1 - var(--m) * 0.08));
   transform-origin: 50% 0;
 }
-/* the glyph: about a fifth of the tile's height, 12 to 26 screen px */
+/* the glyph: about a fifth of the tile's height, 12 to 26 screen px; on a
+   tile too small for its name it is all there is, so it is larger (up to
+   two fifths of the tile, 14 to 40 screen px), centred */
 .pt__top .pt__ic {
-  --gs: clamp(12px / var(--fs, 1), var(--th) * 0.2px, 26px / var(--fs, 1));
+  --gs: calc(
+    var(--on-name) * clamp(12px / var(--fs, 1), var(--th) * 0.2px, 26px / var(--fs, 1)) +
+      (1 - var(--on-name)) * clamp(14px / var(--fs, 1), min(var(--tw), var(--th)) * 0.5px, 40px / var(--fs, 1))
+  );
   width: var(--gs);
   height: var(--gs);
+}
+/* a site's or app's own icon carries its own margin: a little larger */
+.pt__top .pt__ic.status-icon--brand {
+  width: calc(var(--gs) * 1.25);
+  height: calc(var(--gs) * 1.25);
 }
 .pt[data-st='kind'] .pt__top .pt__ic {
   color: color-mix(in srgb, var(--k) 72%, var(--ink));
@@ -299,15 +311,17 @@
 .pt {
   --sw: calc(var(--tw) * var(--fs, 1));
   --sh: calc(var(--th) * var(--fs, 1));
+  --on-name: clamp(0, min(var(--sw) - 64, var(--sh) - 40) * 1000, 1);
 }
 .pt__tt {
-  --on: clamp(0, min(var(--sw) - 64, var(--sh) - 40) * 1000, 1);
+  --on: var(--on-name);
 }
 .pt__tm {
   --on: clamp(0, min(var(--sw) - 110, var(--sh) - 70) * 1000, 1);
 }
-/* the name, fitted like the far card's (global.css): one to three lines,
-   as large as the tile allows, never cut short with an ellipsis */
+/* the name, fitted like the far card's (global.css): one line while that is
+   readable, else two or three, as large as the tile allows; never cut short
+   with an ellipsis, and never broken inside a word */
 .pt__tt {
   --nw: calc(var(--tw) * 1px - min(20px / var(--fs, 1), var(--tw) * 0.16px));
   --nh: calc(var(--th) * 0.42px);
@@ -320,10 +334,15 @@
     var(--on) *
       clamp(
         8px * var(--ts) / var(--fs, 1),
-        max(
-          min(var(--nw) / var(--cw), var(--nh) / 1.15),
-          min(var(--nw) * 1.7 / var(--cw), var(--nh) / 2.3),
-          min(var(--nw) * 2.4 / var(--cw), var(--nh) / 3.45)
+        min(
+          max(
+            min(var(--nw) / (var(--chars) * 0.56), var(--nh) / 1.15),
+            min(
+              max(min(var(--nw) * 1.7 / var(--cw), var(--nh) / 2.3), min(var(--nw) * 2.4 / var(--cw), var(--nh) / 3.45)),
+              16px * var(--ts) / var(--fs, 1)
+            )
+          ),
+          var(--nw) / (var(--lw, 8) * 0.58)
         ),
         24px * var(--ts) / var(--fs, 1)
       )
@@ -336,7 +355,7 @@
   display: block;
   max-height: calc(3 * 1.15em);
   overflow: hidden;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   text-wrap: balance;
 }
 .pt__tm,
@@ -359,7 +378,7 @@
   align-items: center;
   max-width: 100%;
   min-width: 0;
-  margin-top: calc(4px / var(--fs, 1));
+  margin-top: calc(var(--on-name) * 4px / var(--fs, 1));
 }
 .pt__tl {
   color: color-mix(in srgb, var(--lamp-ink) 60%, transparent);
@@ -375,68 +394,9 @@
   overflow: hidden;
 }
 
-/* The wash (--w, 0 → 1, one value per tile) types the text in: the title,
-   then the type line, then the last line, a character at a time on the
-   empty tile, with a block cursor that hops down the lines and rests at the
-   end of the last one for a beat. Backwards, it backspaces, bottom line
-   first. Each line's own progress (--p) comes from --w in CSS, and the
-   words are cut with clip-path only: no text changes, no layout, and JS
-   writes one value per tile. The clips and the cursor exist only on a
-   sheet whose text is washing (.is-washing), so a sheet at rest has none.
-   Mono lines step exactly a character (1ch); the title, in a proportional
-   face, steps in even slices of its length (--n characters). */
-.pt__top {
-  --s: 0;
-  --d: 0.3;
-}
-.pt__tm {
-  --s: 0.3;
-  --d: 0.24;
-}
-.pt__tl {
-  --s: 0.54;
-  --d: 0.28;
-}
-.pt__top,
-.pt__tm,
-.pt__tl {
-  --p: clamp(0, (var(--w) - var(--s)) / var(--d), 1);
-}
-.pt__tt {
-  --f: calc(round(down, var(--p) * var(--n, 1), 1) / var(--n, 1));
-}
-.pt__tm,
-.pt__tl {
-  --x: round(down, var(--p) * var(--n, 0), 1);
-}
-.pt__top > .pt__ic {
-  opacity: clamp(0, var(--p) * 4, 1);
-}
-.lo-sheet.is-washing .pt__tt > i {
-  clip-path: inset(0 calc((1 - var(--f)) * 100%) 0 0);
-}
-.lo-sheet.is-washing .pt__tm > i,
-.lo-sheet.is-washing .pt__tl > i {
-  clip-path: inset(0 max(0px, calc(100% - var(--x) * 1ch)) 0 0);
-}
-/* the cursor: the cell after the last character, while its line types;
-   on the last line it stays until the tile's wash is nearly done */
-.lo-sheet.is-washing .pt__tm::after,
-.lo-sheet.is-washing .pt__tl::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0.1em;
-  width: 100%;
-  height: 1.2em;
-  background: color-mix(in srgb, var(--ink) 78%, transparent);
-  clip-path: inset(0 calc(100% - (var(--x) + 1) * 1ch) 0 calc(var(--x) * 1ch));
-  opacity: calc(clamp(0, var(--p) * 1000, 1) * clamp(0, (1 - var(--p)) * 1000, 1));
-  pointer-events: none;
-}
-.lo-sheet.is-washing .pt__tl::after {
-  opacity: calc(clamp(0, var(--p) * 1000, 1) * clamp(0, (0.96 - var(--w)) * 1000, 1));
-}
+/* The wash (--w, 0 → 1, one value per tile, staggered in reading order by
+   the overview) fades a tile's text in as the deck settles, and out as it
+   leaves: opacity only, nothing typed or clipped. */
 /* the spinner turns only on the open sheet (a moving part inside a slat
    would repaint it every frame) */
 .lo-sheet:not(.is-open) .pt .status-icon svg {
