@@ -17,6 +17,7 @@ import { IconExternal } from './icons'
 export function AttentionBar() {
   const status = useAgents((s) => s.status)
   const focused = useStore((s) => s.focus?.id != null)
+  const spread = useStore((s) => s.spread != null)
   const ws = useStore(selectActive)
   const setSelection = useStore((s) => s.setSelection)
   const setActiveWidget = useStore((s) => s.setActiveWidget)
@@ -27,8 +28,9 @@ export function AttentionBar() {
     (e): e is WidgetElement =>
       e.type === 'widget' && (e.kind === 'agent' || isDesktopMirror(e)) && status[e.id] === 'waiting',
   )
-  // in focus mode the strip's chip says who needs you, and this would sit on it
-  if (waiting.length === 0 || focused) return null
+  // in focus mode the strip's chip says who needs you, and this would sit on
+  // it; a spread stack's header has the same corner
+  if (waiting.length === 0 || focused || spread) return null
 
   const goto = (el: WidgetElement) => {
     revealLayerOf(el.id)
