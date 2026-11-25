@@ -41,6 +41,7 @@ import { resetFlowState } from '../lib/flow'
 import { startTracking, stopTracking } from '../lib/tracker'
 import { killPty } from '../lib/terminal'
 import { useSettings } from '../lib/settings'
+import { addPane, equalSizes, MAX_PANES, removePane } from '../lib/focusPanes'
 import {
   BASE_LAYER_ID,
   MAX_LAYERS,
@@ -285,10 +286,16 @@ export type SpreadState = {
   drag?: { id: string; to: number | null }
 }
 
-/** Focus mode: one widget fills the canvas area at 100% while the board dims. */
+/** Focus mode: one widget fills the canvas area at 100% while the board dims,
+ *  or several side by side (panes, lib/focusPanes.ts). */
 export type FocusState = {
-  /** the widget filling the view; null while the last one flies home */
+  /** the pane you're working in (the only one, unless split); null while the
+   *  last ones fly home */
   id: string | null
+  /** every widget in focus, left to right (empty while flying home) */
+  panes: string[]
+  /** each pane's share of the width (sums to 1) */
+  sizes: number[]
   /** widgets flying back to their spot on the canvas */
   returning: string[]
   /** the box the focused widget fills, in canvas-local screen px */
@@ -533,8 +540,17 @@ export type Store = {
   enterFocus: (id: string, box: FocusState['box']) => void
   /** fly the focused widget home */
   exitFocus: () => void
-  /** while focused: fly the current widget home and this one out */
+  /** while focused: work in this pane, or fly the current one home and put
+   *  this one in its place */
   swapFocus: (id: string) => void
+  /** while focused: add a widget as a pane beside the current one */
+  splitFocus: (id: string) => void
+  /** while split: fly one pane home (the last one leaves focus) */
+  closePane: (id: string) => void
+  /** while split: the panes' widths after a divider drag */
+  setPaneSizes: (sizes: number[]) => void
+  /** collapse a widget (or its whole stack) to its title bar, or restore it */
+  toggleMinimized: (id: string) => void
   /** a widget finished flying home */
   finishFocusReturn: (id: string) => void
   /** drop focus at once, no flight (tab or layer switch, widget removed) */
@@ -973,7 +989,21 @@ export const useStore = create<Store>((set, get) => ({
   removeElements: (ids) => {
     const set_ = new Set(ids)
     const f = get().focus
-    if (f && ((f.id && set_.has(f.id)) || f.returning.some((r) => set_.has(r)))) set({ focus: null })
+    if (f && (f.panes.some((p) => set_.has(p)) || f.returning.some((r) => set_.has(r)))) {
+      // a removed pane just goes; the rest stay in focus
+      let rest = { panes: f.panes, sizes: f.sizes }
+      for (const p of f.panes) if (set_.has(p)) rest = removePane(rest.panes, rest.sizes, p)
+      set({
+        focus: rest.panes.length
+          ? {
+              ...f,
+              ...rest,
+              id: f.id && rest.panes.includes(f.id) ? f.id : rest.panes[0],
+              returning: f.returning.filter((r) => !set_.has(r)),
+            }
+          : null,
+      })
+    }
     // tracking ends if the tracked agent itself is being removed
     const trackId = get().trackingAgentId
     if (trackId && set_.has(trackId)) get().stopTrackingAgent(false)
@@ -2032,8 +2062,10 @@ export const useStore = create<Store>((set, get) => ({
       })),
     )
     // focused on this stack: the new front takes the focused spot in place
+    // (unless it's already a pane of its own, when the stack is split)
     const f = get().focus
-    if (f?.id && f.id !== id && st.members.some((m) => m.id === f.id)) set({ focus: { ...f, id, instant: true } })
+    if (f?.id && f.id !== id && !f.panes.includes(id) && st.members.some((m) => m.id === f.id))
+      set({ focus: { ...f, id, panes: f.panes.map((p) => (p === f.id ? id : p)), instant: true } })
   },
 
   cycleStack: (id, dir) => {
@@ -2139,8 +2171,16 @@ export const useStore = create<Store>((set, get) => ({
     frontIfHidden(get, set, id)
     // a stacked widget is focused as its stack's front
     const front = (el.stackId && stackOfId(ws.elements, id)?.front.id) || id
+    if (el.minimized) get().toggleMinimized(front)
     set({
-      focus: { id: front, returning: (st.focus?.returning ?? []).filter((r) => r !== front), box, instant: false },
+      focus: {
+        id: front,
+        panes: [front],
+        sizes: [1],
+        returning: (st.focus?.returning ?? []).filter((r) => r !== front),
+        box,
+        instant: false,
+      },
       spread: null,
       stackDrop: null,
       selection: [front],
@@ -2150,7 +2190,15 @@ export const useStore = create<Store>((set, get) => ({
   exitFocus: () => {
     const f = get().focus
     if (!f?.id) return
-    set({ focus: { ...f, id: null, returning: [...f.returning.filter((r) => r !== f.id), f.id] } })
+    set({
+      focus: {
+        ...f,
+        id: null,
+        panes: [],
+        sizes: [],
+        returning: [...f.returning.filter((r) => !f.panes.includes(r)), ...f.panes],
+      },
+    })
   },
 
   swapFocus: (id) => {
@@ -2158,10 +2206,89 @@ export const useStore = create<Store>((set, get) => ({
     if (!f?.id || f.id === id) return
     const el = get().active()?.elements.find((e) => e.id === id)
     if (!el || el.type !== 'widget') return
+    // already a pane: just work there
+    if (f.panes.includes(id)) {
+      set({ focus: { ...f, id, instant: false }, selection: [id] })
+      return
+    }
+    if (el.minimized) get().toggleMinimized(id)
     set({
-      focus: { ...f, id, returning: [...f.returning.filter((r) => r !== f.id && r !== id), f.id], instant: false },
+      focus: {
+        ...f,
+        id,
+        panes: f.panes.map((p) => (p === f.id ? id : p)),
+        returning: [...f.returning.filter((r) => r !== f.id && r !== id), f.id],
+        instant: false,
+      },
       selection: [id],
     })
+  },
+
+  splitFocus: (id) => {
+    const f = get().focus
+    if (!f?.id || f.panes.includes(id) || f.panes.length >= MAX_PANES) return
+    const el = get().active()?.elements.find((e) => e.id === id)
+    if (!el || el.type !== 'widget') return
+    if (el.minimized) get().toggleMinimized(id)
+    const panes = addPane(f.panes, f.id, id)
+    set({
+      focus: {
+        ...f,
+        id,
+        panes,
+        sizes: equalSizes(panes.length),
+        returning: f.returning.filter((r) => r !== id),
+        instant: false,
+      },
+      selection: [id],
+    })
+  },
+
+  closePane: (id) => {
+    const f = get().focus
+    if (!f?.id || !f.panes.includes(id)) return
+    if (f.panes.length === 1) return get().exitFocus()
+    const rest = removePane(f.panes, f.sizes, id)
+    const at = f.panes.indexOf(id)
+    set({
+      focus: {
+        ...f,
+        ...rest,
+        id: f.id === id ? rest.panes[Math.max(0, at - 1)] : f.id,
+        returning: [...f.returning.filter((r) => r !== id), id],
+        instant: false,
+      },
+    })
+  },
+
+  setPaneSizes: (sizes) => {
+    const f = get().focus
+    if (f && sizes.length === f.panes.length) set({ focus: { ...f, sizes } })
+  },
+
+  toggleMinimized: (id) => {
+    const ws = get().active()
+    const el = ws?.elements.find((e) => e.id === id)
+    if (!ws || !el || el.type !== 'widget') return
+    // a stack collapses and opens as one
+    const ids = el.stackId
+      ? new Set(ws.elements.filter((e) => e.type === 'widget' && e.stackId === el.stackId).map((e) => e.id))
+      : new Set([id])
+    const on = !el.minimized
+    // a pane being collapsed leaves focus first
+    const f = get().focus
+    if (on && f) for (const p of f.panes) if (ids.has(p)) get().closePane(p)
+    get().beginHistory()
+    set((s) =>
+      patchActive(s, (w) => ({
+        ...w,
+        dirty: true,
+        elements: w.elements.map((e) =>
+          ids.has(e.id) && e.type === 'widget' ? { ...e, minimized: on || undefined } : e,
+        ),
+      })),
+    )
+    if (on && ids.has(get().activeWidgetId ?? '')) set({ activeWidgetId: null })
   },
 
   finishFocusReturn: (id) => {

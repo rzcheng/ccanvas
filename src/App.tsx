@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { viewport, viewCenter, orderedTerminals, focusWidget, cycleTerminal, exitTerminal, toggleFocus } from './lib/view'
+import { viewport, viewCenter, orderedTerminals, focusWidget, cycleTerminal, exitTerminal, toggleFocus, splitNext } from './lib/view'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { desktopMirrorsSupported, isTauri } from './lib/backend'
@@ -126,6 +126,12 @@ export default function App() {
       if (e.shiftKey && e.key === 'Enter') {
         stop()
         toggleFocus()
+        return
+      }
+      // ⌘\ in focus mode: put the next widget beside (a stack-mate first)
+      if (!e.shiftKey && e.key === '\\' && useStore.getState().focus?.id) {
+        stop()
+        splitNext()
         return
       }
       if (!e.shiftKey && /^Digit[1-9]$/.test(e.code)) {

@@ -24,19 +24,21 @@ import {
   appOnlySite,
 } from '../lib/weburl'
 import { nativeViewSupported, useNativeView } from '../lib/nativeView'
-import { focusWidget, toggleFocus } from '../lib/view'
+import { focusWidget } from '../lib/view'
 import { useFocusSlot, stopCanvas } from '../ui/focusSlots'
 import { IconReload, IconWeb, IconFile, IconBack, IconForward, IconExternal } from '../ui/icons'
 
 // Web widget. Two modes, stored on the same widget (setting one clears the other):
 //   • URL  (el.url)  — an http(s) page. On the canvas it's an <iframe>: local
 //     dev servers embed directly, remote sites load through the preview proxy
-//     (framing headers stripped, no cookies: a preview). Focused in the desktop
-//     app, a real native browser takes over the body (lib/nativeView.ts), with
-//     one persistent profile so logins stick.
-//     Full JS apps don't survive the preview, so video pages (YouTube, Vimeo)
-//     play in the site's own embeddable player instead, and the rest of such a
-//     site (appOnlySite) shows a card that sends you to focus mode.
+//     (framing headers stripped, no cookies: a preview), and video pages
+//     (YouTube, Vimeo) play in the site's own embeddable player. In focus mode
+//     (each pane, when split) a real native browser takes over the body
+//     (lib/nativeView.ts), with one persistent profile so logins stick.
+//     A "live" widget (el.live: the tag in the bar, and on by itself for full
+//     JS apps like YouTube that the preview can't run) keeps that browser on
+//     the canvas too: shown while you're in the widget and the camera holds
+//     still, a snapshot of it otherwise.
 //   • File (el.path) — a local .html file rendered via the iframe's srcDoc from
 //     its contents (read through the backend), watched on disk for live reload.
 
@@ -51,9 +53,11 @@ const DEFAULT_TITLE = 'web'
 
 type History = { list: string[]; at: number }
 
-export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) {
+export function WebBody({ el, active, onScreen }: { el: WidgetElement; active: boolean; onScreen: boolean }) {
   const mutateElement = useStore((s) => s.mutateElement)
-  const focused = useStore((s) => s.focus?.id === el.id)
+  // in focus mode: one of the panes, and (unsplit) the one the strip is for
+  const inPane = useStore((s) => !!s.focus?.panes.includes(el.id))
+  const focused = useStore((s) => inPane && s.focus?.panes.length === 1)
   const [input, setInput] = useState(el.url ?? el.path ?? '')
   // where the page is now (the bar shows it unless you're typing)
   const [current, setCurrent] = useState(el.url ?? '')
@@ -91,8 +95,20 @@ export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) 
     }
   }, [])
 
-  // ---- the native browser (focus mode, desktop app) ----
-  const nativeWanted = focused && !fileMode && isHttpUrl(current) && nativeViewSupported()
+  // ---- the native browser (focus panes, and live widgets on the canvas) ----
+  const canNative = !fileMode && isHttpUrl(current) && nativeViewSupported()
+  // a site the preview can't run turns live by itself
+  useEffect(() => {
+    if (el.live === undefined && el.url && appOnlySite(el.url) && nativeViewSupported())
+      mutateElement(el.id, (w) => {
+        ;(w as WidgetElement).live = true
+      })
+  }, [el.id, el.url, el.live, mutateElement])
+  const liveOnCanvas = canNative && !!el.live && onScreen && !isLocalUrl(current)
+  const nativeWanted = canNative && (inPane || liveOnCanvas)
+  // on the canvas the view shows while you're in the widget; before that it
+  // shows once by itself, just long enough to take a first snapshot
+  const [warm, setWarm] = useState(false)
   const native = useNativeView(
     el.id,
     current,
@@ -116,7 +132,16 @@ export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) 
       onNewWindow: (url) => openBeside(el.id, url),
       onExitFocus: () => useStore.getState().exitFocus(),
     },
+    // (a live widget keeps its picture fresh in focus too, for its way home)
+    inPane
+      ? { follow: true, snapshots: !!el.live }
+      : { follow: false, visible: active || !warm, snapshots: true },
   )
+  useEffect(() => {
+    if (native.state !== 'live' || warm) return
+    const t = window.setTimeout(() => setWarm(true), 2500)
+    return () => window.clearTimeout(t)
+  }, [native.state, warm])
   const nativeLive = native.state === 'live' || native.state === 'opening'
 
   // the preview proxy reports in-page link clicks so the bar and history follow
@@ -289,17 +314,25 @@ export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) 
           live
         </span>
       )}
-      {remote && !focused && (
+      {remote && !inPane && (
         <button
-          className="web__tag"
+          className={`web__tag${el.live && nativeViewSupported() ? ' web__tag--on' : ''}`}
           title={
-            nativeViewSupported()
-              ? 'On the canvas this is a preview. Focus the widget (⌘⇧↵) for the full browser, with your logins.'
-              : 'On the canvas this is a preview: no logins, and some pages won’t work.'
+            !nativeViewSupported()
+              ? 'A preview: no logins, and some pages won’t work.'
+              : el.live
+                ? 'Full browser, with your logins. Click for the lighter preview.'
+                : 'A preview: no logins. Click for the full browser here.'
           }
-          onClick={() => nativeViewSupported() && toggleFocus(el.id)}
+          onClick={() => {
+            if (!nativeViewSupported()) return
+            useStore.getState().beginHistory()
+            mutateElement(el.id, (w) => {
+              ;(w as WidgetElement).live = !el.live
+            })
+          }}
         >
-          preview
+          {el.live && nativeViewSupported() ? 'live' : 'preview'}
         </button>
       )}
       {!inStrip && (
@@ -350,25 +383,19 @@ export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) 
         // the native view is drawn over this box; it shows through while the
         // view is hidden under a menu or still opening
         <div ref={hostRef} className="web__native" style={{ pointerEvents: 'auto' }}>
-          {!native.shown && <span>{hostOf(current)}</span>}
+          {!native.shown &&
+            (native.snapshot ? (
+              <img className="web__snap" src={native.snapshot} alt="" draggable={false} />
+            ) : (
+              <span>{hostOf(current)}</span>
+            ))}
         </div>
       ) : appOnly ? (
         <div className="web__empty web__apponly">
           <IconWeb className="" />
-          <div>
-            {appOnly} needs a full browser; the canvas preview can't run it.
-            <br />
-            {nativeViewSupported()
-              ? 'Browse it in focus mode. A video you open there plays right here.'
-              : 'Paste a video link to play it here, or open the site in your browser.'}
-          </div>
-          <button
-            className="web__cta"
-            onClick={() =>
-              nativeViewSupported() ? toggleFocus(el.id) : void openExternal(current)
-            }
-          >
-            {nativeViewSupported() ? 'Open in focus mode' : 'Open in your browser'}
+          <div>{appOnly} doesn't run in the preview.</div>
+          <button className="web__cta" onClick={() => void openExternal(current)}>
+            Open in your browser
           </button>
         </div>
       ) : frameSrc ? (

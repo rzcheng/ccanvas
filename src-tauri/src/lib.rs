@@ -153,6 +153,8 @@ pub fn run() {
             native_view::native_view_navigate,
             native_view::native_view_go,
             native_view::native_view_close,
+            native_view::native_view_zoom,
+            native_view::native_view_snapshot,
             web_proxy::web_proxy_url,
             usage::claude_usage,
             transcript::transcript_summary,

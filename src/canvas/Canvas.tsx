@@ -40,7 +40,7 @@ import {
   type MenuItem,
 } from '../ui/ContextMenu'
 import { IconExternal, IconLayers } from '../ui/icons'
-import { FocusStrip } from '../ui/FocusStrip'
+import { FocusStrip, FocusDividers } from '../ui/FocusStrip'
 import { focusBox, viewCenter } from '../lib/view'
 import { ElementView } from './ElementView'
 import { TextElement } from './TextElement'
@@ -1593,6 +1593,7 @@ export function Canvas() {
       {/* selection + marquee + handles + snap guides (screen space) */}
       <div className="overlay">
         <FocusStrip />
+        <FocusDividers />
         {(dropTarget || snapLock) && (() => {
           const box = snapLock ? snapLock.box : dropTarget!
           const r = screenRectOf(box)

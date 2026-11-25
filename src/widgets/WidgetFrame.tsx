@@ -3,9 +3,22 @@ import { createPortal } from 'react-dom'
 import { useFocusSlot, stopCanvas } from '../ui/focusSlots'
 import type { WidgetElement } from '../lib/types'
 import { WIDGET_ACCENT, AGENT_COLORS, claudeColorName } from '../lib/types'
-import { useStore, selectActive } from '../store/workspace'
+import { useShallow } from 'zustand/react/shallow'
+import { useStore, selectActive, type FocusState } from '../store/workspace'
+import { paneBoxes } from '../lib/focusPanes'
 import { elementBounds, edgeLines, snapValue } from '../lib/geometry'
-import { IconClose, IconLock, IconTag, IconSettings, IconPullOut, IconExternal, IconFocus, IconDesktop } from '../ui/icons'
+import {
+  IconClose,
+  IconTrash,
+  IconLock,
+  IconTag,
+  IconSettings,
+  IconPullOut,
+  IconExternal,
+  IconFocus,
+  IconUnfocus,
+  IconDesktop,
+} from '../ui/icons'
 import { flyFocus, cancelFlight } from '../lib/focusMotion'
 import { toggleFocus } from '../lib/view'
 import { KIND_ICON, StatusGlyph, WidgetSlotIcon, showsStatus } from './widgetIcons'
@@ -113,7 +126,9 @@ export const WidgetFrame = memo(function WidgetFrame({
   const active = activeWidgetId === el.id
   const stackFront = !!stack && stack.front.id === el.id
   // stacked behind another member: stays mounted (live) but out of sight
-  const stackHidden = !!stack && !stackFront && !spreadCard
+  // (a member split into a focus pane of its own shows)
+  const inFocusPane = useStore((s) => !!s.focus?.panes.includes(el.id))
+  const stackHidden = !!stack && !stackFront && !spreadCard && !inFocusPane
   // untagged terminals/agents follow the palette's accent
   const accent =
     el.color ?? (el.kind === 'terminal' || el.kind === 'agent' ? 'var(--accent)' : WIDGET_ACCENT[el.kind])
@@ -176,7 +191,8 @@ export const WidgetFrame = memo(function WidgetFrame({
   const grab = (e: React.PointerEvent) => {
     e.stopPropagation()
     // a focused widget is pinned to the view: its bar selects, never drags
-    if (useStore.getState().focus?.id === el.id) {
+    if (useStore.getState().focus?.panes.includes(el.id)) {
+      useStore.getState().swapFocus(el.id)
       setSelection([el.id])
       return
     }
@@ -194,7 +210,7 @@ export const WidgetFrame = memo(function WidgetFrame({
 
   // only widgets that aren't live or self-managed (i.e. web) keep the shield,
   // and never while focused (it's the one thing on screen to work in)
-  const focusedHere = useStore((s) => s.focus?.id === el.id)
+  const focusedHere = useStore((s) => !!s.focus?.panes.includes(el.id))
   const shielded = !isLive && !isNote && !focusedHere && (!active || tool !== 'select')
 
   // live bodies: a single click selects + focuses the widget and keeps the
@@ -412,14 +428,28 @@ export const WidgetFrame = memo(function WidgetFrame({
   // the focus box at 100% scale (counter-scaled against the camera) and
   // lib/focusMotion animates the way in and out.
   const focusRole = useStore((s) =>
-    s.focus?.id === el.id ? 'on' : s.focus?.returning.includes(el.id) ? 'back' : null,
+    s.focus?.panes.includes(el.id) ? 'on' : s.focus?.returning.includes(el.id) ? 'back' : null,
   )
+  // split focus: every pane keeps its own title bar (the strip carries the
+  // header only when one widget fills the view)
+  const split = useStore((s) => (s.focus?.panes.length ?? 0) > 1)
+  const inStrip = focusRole === 'on' && !split
+  // the pane you're working in, when split
+  const paneOn = useStore((s) => split && s.focus?.id === el.id)
+  // collapsed to its title bar (never while focused or spread out)
+  const minimized = !!el.minimized && !focusRole && !spreadCard
   // the status lamp its far card and its landing cover are drawn in
   const sessionStatus = useDisplayStatus(el.id)
   const lampStatus = showsStatus(el) ? (sessionStatus ?? 'off') : 'kind'
   // far out, a status card stands in for the session's content
-  const carded = hasCard && far && visible && !focusRole
-  const focusBoxNow = useStore((s) => (focusRole ? s.focus?.box ?? null : null))
+  const carded = hasCard && far && visible && !focusRole && !minimized
+  // this widget's own box: its pane of the focus box (where it flies home
+  // from, once it has left the panes)
+  const lastPaneBox = useRef<FocusState['box'] | null>(null)
+  const focusBoxNow = useStore(
+    useShallow((s) => (focusRole ? paneBoxOf(s.focus, el.id, lastPaneBox.current) : null)),
+  )
+  if (focusRole === 'on' && focusBoxNow) lastPaneBox.current = focusBoxNow
   const focusCam = useStore((s) => (focusRole ? selectActive(s).camera : null))
   const nodeRef = useRef<HTMLDivElement>(null)
   // spread view: click a card to focus it, drag to reorder or pull it out
@@ -434,7 +464,7 @@ export const WidgetFrame = memo(function WidgetFrame({
     if (!node) return
     const st = useStore.getState()
     const cam = selectActive(st).camera
-    const box = st.focus?.box
+    const box = paneBoxOf(st.focus, el.id, lastPaneBox.current)
     const home = { x: el.x * cam.zoom + cam.x, y: el.y * cam.zoom + cam.y, w: el.w * cam.zoom, h: el.h * cam.zoom }
     if (focusRole === 'on' && prev !== 'on' && box) {
       // a stack tab switched while focused swaps in place, no flight
@@ -577,21 +607,42 @@ export const WidgetFrame = memo(function WidgetFrame({
       </button>
       <button
         className="widget__btn widget__btn--danger"
-        title="Close widget"
+        title="Delete widget"
         onPointerDown={(e) => e.stopPropagation()}
         onClick={() => {
           beginHistory()
           removeElements([el.id])
         }}
       >
-        <IconClose />
+        <IconTrash />
       </button>
+      {focusRole === 'on' && split ? (
+        <button
+          className="widget__btn"
+          title="Close this pane"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => useStore.getState().closePane(el.id)}
+        >
+          <IconUnfocus />
+        </button>
+      ) : (
+        !focusRole && (
+          <button
+            className="widget__btn"
+            title={el.minimized ? 'Restore' : 'Minimize to the title bar'}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => useStore.getState().toggleMinimized(el.id)}
+          >
+            <IconClose />
+          </button>
+        )
+      )}
     </>
   )
 
   return (
     <>
-    {stackFront && !spreadCard && !focusRole && visible && <StackEdges el={el} stack={stack!} />}
+    {stackFront && !spreadCard && !focusRole && !minimized && visible && <StackEdges el={el} stack={stack!} />}
     <div
       className={`widget${selected && !spreadCard ? ' widget--selected' : ''}${
         active ? ' widget--active' : ''
@@ -601,7 +652,9 @@ export const WidgetFrame = memo(function WidgetFrame({
         stackHidden ? ' widget--stack-hidden' : ''
       }${spreadCard ? ' widget--spread' : ''}${spreadCard?.hi && !spreadCard.closing ? ' widget--spread-hi' : ''}${cardClass}${
         snapRole ? ` widget--snap-${snapRole}` : ''
-      }${focusRole ? ` widget--focus widget--focus-${focusRole}` : ''}`}
+      }${focusRole ? ` widget--focus widget--focus-${focusRole}` : ''}${minimized ? ' widget--min' : ''}${
+        paneOn ? ' widget--pane-on' : ''
+      }`}
       ref={nodeRef}
       data-widget-id={el.id}
       data-st={lampStatus}
@@ -615,6 +668,9 @@ export const WidgetFrame = memo(function WidgetFrame({
           height: el.h,
           zIndex: el.z,
           '--k': accent,
+          // the body keeps its full height under the collapsed frame, so a
+          // terminal never reflows (or resizes its pty) for a minimize
+          '--body-h': minimized ? `${el.h - 2 - HEAD_H}px` : undefined,
           ...spreadStyle,
           ...focusStyle,
         } as React.CSSProperties
@@ -647,14 +703,21 @@ export const WidgetFrame = memo(function WidgetFrame({
       ) : (
       // focused, the header tucks away as the widget flies in (its parts show
       // in the focus strip instead) and grows back as it flies home
-      <div className={`widget__head${focusRole === 'on' ? ' widget__head--tucked' : ''}`}>
+      <div className={`widget__head${inStrip ? ' widget__head--tucked' : ''}`}>
       <div className="widget__head-in">
-      {focusRole === 'on' ? (
+      {inStrip ? (
         <div className="widget__bar" aria-hidden>
           <span className="widget__icon">
             <WidgetSlotIcon el={el} />
           </span>
           <span className="widget__title">{el.title}</span>
+        </div>
+      ) : focusRole === 'on' ? (
+        // a pane of split focus: its own bar, pinned in place
+        <div className="widget__bar widget__bar--pane" onPointerDown={grab}>
+          {titleBits}
+          <span className="widget__bar-spacer" />
+          <div className="widget__actions">{actionButtons}</div>
         </div>
       ) : stackFront ? (
         <StackRail stack={stack!} onGrab={grab} />
@@ -664,10 +727,12 @@ export const WidgetFrame = memo(function WidgetFrame({
         onPointerDown={grab}
         onDoubleClick={(e) => {
           // double-click the empty part of a title bar to focus it (as a Mac
-          // window zooms); the title itself still renames
+          // window zooms), or to open it back up when minimized; the title
+          // itself still renames
           const t = e.target as HTMLElement
           if (t.closest('button, input, .widget__title')) return
-          toggleFocus(el.id)
+          if (el.minimized) useStore.getState().toggleMinimized(el.id)
+          else toggleFocus(el.id)
         }}
       >
         {titleBits}
@@ -688,7 +753,7 @@ export const WidgetFrame = memo(function WidgetFrame({
       </div>
       </div>
       )}
-      {focusRole === 'on' && (
+      {inStrip && (
         <FocusHeader accent={accent}>
           {{
             title: stackFront ? <StackRail stack={stack!} onGrab={() => {}} /> : titleBits,
@@ -743,6 +808,7 @@ export const WidgetFrame = memo(function WidgetFrame({
       {!el.locked &&
         !spreadCard &&
         !focusRole &&
+        !minimized &&
         CORNERS.map((c) => (
           <div
             key={c}
@@ -758,6 +824,22 @@ export const WidgetFrame = memo(function WidgetFrame({
     </>
   )
 })
+
+/** Height of a widget's title bar (the stack rail is the same), px. */
+const HEAD_H = 30
+
+/** A widget's box in focus mode: its pane's column of the focus box, or
+ *  (flying home, no longer a pane) the last pane box it had. */
+function paneBoxOf(
+  f: FocusState | null,
+  id: string,
+  last: FocusState['box'] | null,
+): FocusState['box'] | null {
+  if (!f) return null
+  const i = f.panes.indexOf(id)
+  if (i >= 0) return paneBoxes(f.box, f.sizes)[i]
+  return last ?? f.box
+}
 
 /** Take a member out of a spread stack; the spread stays open while 2+ remain. */
 export function pullOutOfSpread(id: string) {
@@ -891,7 +973,9 @@ const WidgetBody = memo(
     return (
       <>
       {el.kind === 'note' && <NoteBody el={el} active={active} />}
-      {el.kind === 'web' && <WebBody el={el} active={active} />}
+      {el.kind === 'web' && (
+        <WebBody el={el} active={active} onScreen={visible && tabShown !== false && !hidden && !el.minimized} />
+      )}
       {el.kind === 'video' && <VideoBody el={el} active={active} />}
       {el.kind === 'mediainfo' && <MediaInfoBody el={el} />}
       {el.kind === 'claude' && <ClaudeBody el={el} />}

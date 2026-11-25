@@ -189,3 +189,35 @@ export function toggleFocus(id?: string) {
   if (!el || el.type !== 'widget') return
   st.enterFocus(target, focusBox())
 }
+
+// ---------- split focus ----------
+
+/** What can go beside the focused widget(s): the active pane's stack-mates
+ *  first (in tab order), then every other widget on the layer in reading
+ *  order. Nothing already in a pane. */
+export function splitCandidates(): WidgetElement[] {
+  const st = useStore.getState()
+  const f = st.focus
+  if (!f?.id) return []
+  const ws = selectActive(st)
+  const cur = ws.elements.find((e) => e.id === f.id)
+  const stackId = cur?.type === 'widget' ? cur.stackId : undefined
+  const free = (e: CanvasElement): e is WidgetElement => e.type === 'widget' && !f.panes.includes(e.id)
+  const mates = stackId
+    ? ws.elements
+        .filter(free)
+        .filter((e) => e.stackId === stackId)
+        .sort((a, b) => (a.stackOrder ?? 0) - (b.stackOrder ?? 0))
+    : []
+  const rest = inReadingOrder((e): e is WidgetElement => free(e) && (!stackId || e.stackId !== stackId))
+  return [...mates, ...rest]
+}
+
+/** ⌘\: put the next candidate beside the focused widget (its stack-mate
+ *  first). Returns false when there's nothing to add. */
+export function splitNext(): boolean {
+  const next = splitCandidates()[0]
+  if (!next) return false
+  useStore.getState().splitFocus(next.id)
+  return true
+}
