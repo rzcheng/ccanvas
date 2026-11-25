@@ -8,6 +8,8 @@
 // URLs resolve upstream, and a small script keeps in-page links inside the
 // preview (and tells the widget where it went). It's a preview: no cookies, no
 // logins. The full browser is the native view in focus mode (native_view.rs).
+// Videos don't go through the page proxy: `GET /player?src=` frames the
+// site's own player (see "video players" below).
 //
 // Safety:
 //   • It listens on its own random loopback port, so a proxied page runs on an
@@ -158,15 +160,26 @@ fn client() -> &'static reqwest::Client {
 
 // ---------- serving ----------
 
-fn respond(s: &mut TcpStream, status: u16, reason: &str, ctype: &str, body: &[u8]) {
+fn send(s: &mut TcpStream, status: u16, reason: &str, ctype: &str, extra: &str, body: &[u8]) {
     let head = format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\n\
-         Cache-Control: no-store\r\nReferrer-Policy: no-referrer\r\n\
-         X-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
+         Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n{extra}\
+         Connection: close\r\n\r\n",
         body.len()
     );
     let _ = s.write_all(head.as_bytes());
     let _ = s.write_all(body);
+}
+
+fn respond(s: &mut TcpStream, status: u16, reason: &str, ctype: &str, body: &[u8]) {
+    send(
+        s,
+        status,
+        reason,
+        ctype,
+        "Referrer-Policy: no-referrer\r\n",
+        body,
+    );
 }
 
 fn fail(s: &mut TcpStream, status: u16, reason: &str, msg: &str) {
@@ -201,18 +214,24 @@ fn handle(mut s: TcpStream, port: u16) {
     }
     let mut parts = request_line.split(' ');
     let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
-    if method != "GET" || !(path == "/proxy" || path.starts_with("/proxy?")) {
+    let route = path.split('?').next().unwrap_or("");
+    if method != "GET" || !matches!(route, "/proxy" | "/player") {
         return fail(&mut s, 404, "Not Found", "not found");
     }
-    let target = Url::parse(&format!("http://proxy{path}"))
-        .ok()
-        .and_then(|u| {
-            u.query_pairs()
-                .find(|(k, _)| k == "url")
-                .map(|(_, v)| v.into_owned())
-        })
-        .and_then(|t| Url::parse(&t).ok());
-    let Some(target) = target.filter(fetchable) else {
+    if route == "/player" {
+        return match query_url(path, "src").filter(player_src) {
+            Some(src) => send(
+                &mut s,
+                200,
+                "OK",
+                "text/html; charset=utf-8",
+                PLAYER_HEADERS,
+                player_page(&src).as_bytes(),
+            ),
+            None => fail(&mut s, 400, "Bad Request", "not a video player"),
+        };
+    }
+    let Some(target) = query_url(path, "url").filter(fetchable) else {
         return fail(
             &mut s,
             400,
@@ -257,6 +276,53 @@ fn handle(mut s: TcpStream, port: u16) {
         }
         Err(e) => fail(&mut s, 502, "Bad Gateway", &e.to_string()),
     }
+}
+
+/// The URL in query parameter `key` of a request path.
+fn query_url(path: &str, key: &str) -> Option<Url> {
+    Url::parse(&format!("http://proxy{path}"))
+        .ok()?
+        .query_pairs()
+        .find(|(k, _)| k == key)
+        .and_then(|(_, v)| Url::parse(&v).ok())
+}
+
+// ---------- video players ----------
+//
+// Video sites ship a player made to be framed (youtube.com/embed/…), which is
+// how a video plays on the canvas: a full site like youtube.com is a JS app
+// the preview can't run. But YouTube's player refuses to play without a
+// Referer ("Error 153"), and WebKit sends none from the app's own tauri://
+// page. So `GET /player?src=` serves a page from this loopback origin that
+// frames the player and sends only that origin as the referrer. It frames
+// nothing but the known players.
+
+const PLAYER_HEADERS: &str = "Referrer-Policy: strict-origin-when-cross-origin\r\n\
+    Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; \
+    frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com\r\n";
+
+/// A framable video player: YouTube's /embed/ or Vimeo's /video/, over https.
+pub(crate) fn player_src(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.port().is_none()
+        && match url.host_str() {
+            Some("www.youtube.com" | "www.youtube-nocookie.com") => {
+                url.path().starts_with("/embed/")
+            }
+            Some("player.vimeo.com") => url.path().starts_with("/video/"),
+            _ => false,
+        }
+}
+
+fn player_page(src: &Url) -> String {
+    format!(
+        "<!doctype html><meta charset=\"utf-8\"><title>player</title>\
+         <style>html,body{{margin:0;height:100%;background:#000;overflow:hidden}}\
+         iframe{{display:block;border:0;width:100%;height:100%}}</style>\
+         <iframe src=\"{}\" allow=\"autoplay; encrypted-media; fullscreen; picture-in-picture\" \
+         allowfullscreen></iframe>",
+        attr_escape(src.as_str())
+    )
 }
 
 // ---------- page rewriting ----------
@@ -365,6 +431,45 @@ mod tests {
         let at = out.find("<HEAD lang=en>").unwrap() + "<HEAD lang=en>".len();
         assert!(out[at..].starts_with("<base href=\"https://example.com/a?b=%22c%22\">"));
         assert!(out.contains("var here=\"https://example.com/a?b=%22c%22\""));
+    }
+
+    #[test]
+    fn player_frames_only_video_players() {
+        for ok in [
+            "https://www.youtube.com/embed/dQw4w9WgXcQ?start=42",
+            "https://www.youtube.com/embed/videoseries?list=PLabcdefghij",
+            "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+            "https://player.vimeo.com/video/76979871",
+        ] {
+            assert!(player_src(&u(ok)), "{ok} should be allowed");
+        }
+        for bad in [
+            "http://www.youtube.com/embed/dQw4w9WgXcQ",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://www.youtube.com:8443/embed/dQw4w9WgXcQ",
+            "https://youtube.com.evil.test/embed/x",
+            "https://evil.test/embed/x",
+            "https://player.vimeo.com/api/x",
+            "http://127.0.0.1:7531/embed/x",
+            "javascript:alert(1)",
+        ] {
+            assert!(!player_src(&u(bad)), "{bad} should be refused");
+        }
+        let page = player_page(&u("https://www.youtube.com/embed/x?a=1&b=\"><script>"));
+        assert!(
+            page.contains("src=\"https://www.youtube.com/embed/x?a=1&amp;b=%22%3E%3Cscript%3E\"")
+        );
+        assert!(!page.contains("<script"));
+    }
+
+    #[test]
+    fn query_urls() {
+        assert_eq!(
+            query_url("/player?src=https%3A%2F%2Fa.test%2Fx%3Fy%3D1", "src").map(String::from),
+            Some("https://a.test/x?y=1".to_string())
+        );
+        assert!(query_url("/player?url=https%3A%2F%2Fa.test%2F", "src").is_none());
+        assert!(query_url("/player?src=not%20a%20url", "src").is_none());
     }
 
     #[test]

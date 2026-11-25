@@ -6,6 +6,7 @@ import {
   previewProxy,
   openExternal,
   proxyUrl,
+  playerUrl,
   pickPath,
   readFile,
   watchPath,
@@ -13,7 +14,15 @@ import {
   baseName,
   isTauri,
 } from '../lib/backend'
-import { normalizeUrl, isHttpUrl, isLocalUrl, looksLikeLocalFile, hostOf } from '../lib/weburl'
+import {
+  normalizeUrl,
+  isHttpUrl,
+  isLocalUrl,
+  looksLikeLocalFile,
+  hostOf,
+  videoEmbed,
+  appOnlySite,
+} from '../lib/weburl'
 import { nativeViewSupported, useNativeView } from '../lib/nativeView'
 import { focusWidget, toggleFocus } from '../lib/view'
 import { useFocusSlot, stopCanvas } from '../ui/focusSlots'
@@ -25,8 +34,14 @@ import { IconReload, IconWeb, IconFile, IconBack, IconForward, IconExternal } fr
 //     (framing headers stripped, no cookies: a preview). Focused in the desktop
 //     app, a real native browser takes over the body (lib/nativeView.ts), with
 //     one persistent profile so logins stick.
+//     Full JS apps don't survive the preview, so video pages (YouTube, Vimeo)
+//     play in the site's own embeddable player instead, and the rest of such a
+//     site (appOnlySite) shows a card that sends you to focus mode.
 //   • File (el.path) — a local .html file rendered via the iframe's srcDoc from
 //     its contents (read through the backend), watched on disk for live reload.
+
+/** What a video player's frame may do (the player page passes it on). */
+const PLAYER_ALLOW = 'autoplay; encrypted-media; fullscreen; picture-in-picture'
 
 const SANDBOX =
   'allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock allow-popups-to-escape-sandbox allow-presentation'
@@ -184,7 +199,19 @@ export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) 
   }
 
   const proxied = !!proxyBase && isHttpUrl(current) && !isLocalUrl(current)
-  const frameSrc = current ? (proxied ? proxyUrl(proxyBase!, current) : current) : ''
+  // a video plays in its site's player: in the desktop app through the proxy's
+  // player page (it needs a referrer), in a browser framed directly
+  const embed = fileMode ? null : videoEmbed(current)
+  const appOnly = fileMode ? null : appOnlySite(current)
+  const frameSrc = !current
+    ? ''
+    : embed
+      ? isTauri() && proxyBase
+        ? playerUrl(proxyBase, embed)
+        : embed
+      : proxied
+        ? proxyUrl(proxyBase!, current)
+        : current
   const externalTarget = fileMode ? abs : current
 
   const step = (d: 1 | -1) => {
@@ -325,6 +352,25 @@ export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) 
         <div ref={hostRef} className="web__native" style={{ pointerEvents: 'auto' }}>
           {!native.shown && <span>{hostOf(current)}</span>}
         </div>
+      ) : appOnly ? (
+        <div className="web__empty web__apponly">
+          <IconWeb className="" />
+          <div>
+            {appOnly} needs a full browser; the canvas preview can't run it.
+            <br />
+            {nativeViewSupported()
+              ? 'Browse it in focus mode. A video you open there plays right here.'
+              : 'Paste a video link to play it here, or open the site in your browser.'}
+          </div>
+          <button
+            className="web__cta"
+            onClick={() =>
+              nativeViewSupported() ? toggleFocus(el.id) : void openExternal(current)
+            }
+          >
+            {nativeViewSupported() ? 'Open in focus mode' : 'Open in your browser'}
+          </button>
+        </div>
       ) : frameSrc ? (
         <iframe
           ref={frameRef}
@@ -332,6 +378,8 @@ export function WebBody({ el, active }: { el: WidgetElement; active: boolean }) 
           src={frameSrc}
           title={el.title}
           sandbox={SANDBOX}
+          allow={embed ? PLAYER_ALLOW : undefined}
+          allowFullScreen={!!embed}
           style={{ pointerEvents: active || focused ? 'auto' : 'none' }}
         />
       ) : (
