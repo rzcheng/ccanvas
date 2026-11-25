@@ -19,8 +19,8 @@ import { pathWithin, widgetGlyph, widgetType } from '../lib/layers'
 //    sheet is nearly flat;
 //  • the widget (--m): the real widget's frame and title bar (tint and
 //    folder included) crossfade in over the block, its body still the lamp,
-//    so the tile lands on the canvas as the card the real widget then takes
-//    off (ui/landing.ts). On a close, --h wipes it away top-down.
+//    so the tile lands on the canvas as a card, which then crossfades into
+//    the real widget under it (the overview fades the whole sheet's content).
 //
 // --w, the tile's wash, types the text in a character at a time, line after
 // line, with a block cursor (layers.css); each line carries its length

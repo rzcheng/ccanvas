@@ -48,7 +48,6 @@ import {
   type PerfRun,
 } from '../lib/layersPerf'
 import { LayerProxy, type ProxyMode } from './LayerProxy'
-import { cancelLanding, prepLanding, startLanding } from './landing'
 import '../styles/layers.css'
 
 // The layers overview: the canvas pulls back into a deck of every layer on
@@ -66,25 +65,26 @@ import '../styles/layers.css'
 // fades in over its live widget, at the same pixel spot and looking like it,
 // so the canvas stands still while its widgets dim to blocks; then the
 // canvas pulls back into the accordion and, as it settles, its text washes
-// in. Closing runs back down the same path, ending with the tiles stepping
-// aside for the real, already-mounted widgets, whose content then arrives
-// (ui/landing.ts: terminals type in, the rest fill in from the top). L turns
-// it around at any moment, from wherever it is. A dive flies the chosen
-// sheet flat, then hands over the same way.
+// in. Closing runs back down the same path, ending with the tiles
+// crossfading into the real, already-mounted (and already painted) widgets
+// under them: one opacity on the sheet's content, after the backdrop has
+// gone, so nothing on the canvas repaints and nothing dips. L turns it
+// around at any moment, from wherever it is. A dive flies the chosen sheet
+// flat, then hands over the same way.
 //
 // Text arrives and leaves as a wash, never all at once: per tile (--w, in
 // reading order) and per line, top line first, typed in a character at a
 // time behind a block cursor; it leaves by backspacing (layers.css).
 
 const T = {
-  preroll: 70, // the tiles fade in over the widgets
-  intro: 480, // the pull-back, the whole way (shorter from part way)
-  outro: 420,
-  washIn: 260,
-  washOut: 110,
-  uncover: 120, // a reopen takes the wipe back
-  dive: 440,
-  handover: 200,
+  preroll: 50, // the tiles fade in over the widgets
+  intro: 340, // the pull-back, the whole way (shorter from part way)
+  outro: 300,
+  washIn: 180,
+  washOut: 90,
+  uncover: 100, // a reopen takes the crossfade back
+  dive: 320,
+  handover: 180, // the tiles crossfade into the real widgets
   fade: 120, // reduced motion: crossfades only
   hover: 70,
   snap: 140,
@@ -122,7 +122,6 @@ type Rec = {
   // last values written, so a frame touches only what changed
   txt?: number
   m?: number
-  h?: number
   w?: number
   /** the content's opacity (it fades in over the canvas) */
   x?: number
@@ -158,6 +157,12 @@ function textScale(): number {
   return Number.isFinite(v) && v > 0 ? v : 1.1
 }
 const toggle = (node: Element | null | undefined, cls: string, on: boolean) => node?.classList.toggle(cls, on)
+/** The hand-over, at `u` (0 → 1): the backdrop goes first, while the cards
+ *  still cover their widgets (it is the canvas's own grid, so nothing
+ *  shows), then the cards crossfade into the real widgets. Overlapping the
+ *  two would let the backdrop dim the widgets mid-fade. */
+const handBg = (u: number) => 1 - clamp01(u / 0.25)
+const handFade = (u: number) => easeOut(clamp01((u - 0.2) / 0.8))
 
 export function LayerOverview() {
   const ws = useStore(selectActive)
@@ -278,9 +283,6 @@ export function LayerOverview() {
     chrome: 0,
     chrome0: 0,
     order: layers.map((l) => l.id).join(','),
-    /** the real widgets' content is arriving (ui/landing.ts): the landed
-     *  sheet's stand-ins have stepped aside */
-    landing: false,
   })
   const later = (fn: () => void, ms: number) => {
     C.current.timers.push(window.setTimeout(fn, ms))
@@ -392,16 +394,11 @@ export function LayerOverview() {
 
     // phase ends
     let el = (now - c.t0) / c.slow
-    // lay the landing's covers on the real widgets a few frames ahead, while
-    // layout is clean (ui/landing.ts)
-    if (c.phase === 'dive' && el > T.dive * 0.7) prepLanding()
-    if (c.phase === 'fly' && c.dir < 0 && c.a < 0.2 && c.H <= 0) prepLanding()
     if (c.phase === 'fly' && fly(now, dt)) return
     if (c.phase === 'dive' && el >= T.dive) {
       commit()
       c.landIdx = c.diveTo
       c.landCam = c.diveCam
-      c.landing = startLanding(now, c.slow)
       setPhase('handover', now)
       el = 0
     }
@@ -427,8 +424,7 @@ export function LayerOverview() {
     const cover = ls.map(() => 1) // the sheet's content fades in over the canvas
     const ring = ls.map(() => 0) // the accent edge
     const shadow = ls.map(() => 0.75)
-    let hand = -1 // the hand-over's progress, on sheet `handIdx`
-    let handIdx = -1
+    let handIdx = -1 // the sheet handing over to the canvas
     let bgOp = 1
     let chromeOp = 1
     let labOp = 1
@@ -467,20 +463,18 @@ export function LayerOverview() {
       }
       cams[c.here] = lerpCam(c.startCam, fitOf(ls[c.here].id), a)
       // the tiles fade in over the widgets, stand in for them in flight (the
-      // widget look giving way to the block), and wipe away over them at the
-      // end of a close
-      // (once the real widgets are landing, the stand-ins have stepped aside)
-      cover[c.here] = c.landing ? 0 : easeOut(c.x)
+      // widget look giving way to the block), and crossfade back into them
+      // at the end of a close
+      cover[c.here] = easeOut(c.x) * (1 - handFade(c.H))
       morph[c.here] = 1 - clamp01(a / 0.7)
-      hand = c.H
       handIdx = c.here
       // the sheet's own surface fades in as it leaves the canvas
       surf[c.here] = clamp01(a / 0.5)
       for (let i = 0; i < N; i++) ring[i] = (rec(ls[i].id).ring0 ?? 0) * clamp01((a - 0.7) / 0.3)
       shadow[c.here] = 0.75 * clamp01(a / 0.4) + 0.25 * ring[c.here]
       // the backdrop is the canvas's own grid: it drops in once the tiles
-      // cover the widgets, and fades as they wipe away
-      bgOp = c.H > 0 ? 1 - clamp01(c.H / 0.35) : a > 0 || c.x >= 1 ? 1 : 0
+      // cover the widgets, and goes before they crossfade away
+      bgOp = c.H > 0 ? handBg(c.H) : a > 0 || c.x >= 1 ? 1 : 0
       chromeOp = clamp01((a - 0.3) / 0.5)
       labOp = clamp01((a - 0.5) / 0.45)
       dist = ls.map((_, i) => i - c.pos)
@@ -563,15 +557,14 @@ export function LayerOverview() {
       for (let i = 0; i < N; i++) poses.push(ovFlat(i === j))
       if (j >= 0) {
         cams[j] = c.landCam
-        // the real widgets are landing: the stand-ins step aside at once
-        if (c.landing) cover[j] = 0
+        // the cards crossfade into the real widgets under them
+        cover[j] = 1 - handFade(u)
         morph[j] = 1
         surf[j] = 0
         shadow[j] = 0
       }
-      hand = u
       handIdx = j
-      bgOp = 1 - clamp01(u / 0.4)
+      bgOp = handBg(u)
       chromeOp = 0
       labOp = 0
       dist = ls.map((_, i) => i - j)
@@ -659,7 +652,7 @@ export function LayerOverview() {
         r.world.style.opacity = cv < 1 ? String(cv) : ''
       }
       // hidden tiles need no writes (each one restyles its tile)
-      if (cv > 0) applyTiles(r, morph[i], i === handIdx && hand > 0 ? hand : 0, wash[i])
+      if (cv > 0) applyTiles(r, morph[i], wash[i])
     }
     c.poses = poses
     c.cams = lastCams
@@ -685,13 +678,13 @@ export function LayerOverview() {
   const frameRef = useRef(frame)
   frameRef.current = frame
 
-  /** Blocks → widgets (--m), the hand-over wipe (--h) and the text's wash
-   *  (--w), each in reading order. */
-  const applyTiles = (r: Rec, m: number, h: number, w: number) => {
+  /** Blocks → widgets (--m) and the text's wash (--w), each in reading
+   *  order. */
+  const applyTiles = (r: Rec, m: number, w: number) => {
     // re-query after a render (tiles may have mounted); tiles that just
-    // mounted already rest (m 0, h 0, w 1), so a sheet at rest needs no writes
-    const rest = m === 0 && h === 0 && w === 1
-    if (r.m === m && r.h === h && r.w === w && (r.tiles || rest)) return
+    // mounted already rest (m 0, w 1), so a sheet at rest needs no writes
+    const rest = m === 0 && w === 1
+    if (r.m === m && r.w === w && (r.tiles || rest)) return
     const root = r.world
     if (!root) return
     const fresh = !r.tiles
@@ -703,16 +696,10 @@ export function LayerOverview() {
     for (const tile of tiles) {
       const ord = Number(tile.dataset.ord) || 0
       if (fresh || r.m !== m) tile.style.setProperty('--m', each(m, ord).toFixed(3))
-      // each widget fills in quickly, then settles: eased per tile (unless
-      // the real widgets are landing: ui/landing.ts)
-      if (fresh || r.h !== h) {
-        tile.style.setProperty('--h', easeOut(each(h, ord)).toFixed(3))
-      }
       // the wash runs down the sheet in reading order
       if (fresh || r.w !== w) tile.style.setProperty('--w', each(w, ord, 0.4).toFixed(3))
     }
     r.m = m
-    r.h = h
     r.w = w
   }
 
@@ -803,8 +790,6 @@ export function LayerOverview() {
       // flat on the canvas again: the tiles give way to the real widgets
       // (a close that never finished covering them just fades them back)
       if (c.a <= 0) {
-        // the real widgets' content arrives as the stand-ins step aside
-        if (c.H <= 0 && c.x >= 1 && !c.landing) c.landing = startLanding(now, c.slow)
         if (c.H > 0 || c.x >= 1) c.H = Math.min(1, c.H + ms / T.handover)
         else c.x = Math.max(0, c.x - ms / T.preroll)
       }
@@ -812,7 +797,7 @@ export function LayerOverview() {
     const k = c.aDur > 0 ? clamp01((now - c.aT0) / c.slow / c.aDur) : 1
     c.a = lerp(c.aFrom, c.aTo, easeOut(k))
     // the text washes in once the deck has nearly settled, and out at once
-    const wTo = c.dir > 0 && c.a > 0.8 ? 1 : 0
+    const wTo = c.dir > 0 && c.a > 0.7 ? 1 : 0
     c.w = wTo > c.w ? Math.min(1, c.w + ms / T.washIn) : Math.max(0, c.w - ms / T.washOut)
     if (c.dir > 0 && c.aTo === 1 && k >= 1 && c.w >= 1) {
       setPhase('live', now)
@@ -838,7 +823,10 @@ export function LayerOverview() {
   // ---------- actions ----------
   const go = (i: number) => {
     const c = C.current
-    if (c.phase !== 'live') return
+    // while it's still opening, the roll waits for the accordion to settle
+    // (no key is dropped for being early)
+    const opening = c.phase === 'fly' && c.dir > 0
+    if (c.phase !== 'live' && !opening) return
     i = Math.max(0, Math.min(live.current.n - 1, Math.round(i)))
     c.target = i
     setFocusState(i)
@@ -908,9 +896,6 @@ export function LayerOverview() {
     if (c.phase !== 'fly' || c.dir > 0) return
     c.dir = 1
     c.committed = false
-    // the stand-ins come back over the widgets, as they were
-    cancelLanding()
-    c.landing = false
     kick()
   }
   const flip = () => (C.current.phase === 'fly' && C.current.dir < 0 ? reopen() : close())
@@ -1019,8 +1004,6 @@ export function LayerOverview() {
     const c = C.current
     const root = rootRef.current!
     const commitAt = performance.now()
-    // a landing still running from the last close stops here
-    cancelLanding()
     measure(true)
     // the backdrop is the canvas (same colour and grid, at the same camera),
     // so dropping it in over the live canvas is invisible
@@ -1061,9 +1044,6 @@ export function LayerOverview() {
       cancelAnimationFrame(C.current.raf)
       C.current.raf = 0
       C.current.phase = 'gone'
-      // a landing carries on without the overview (ui/landing.ts); covers
-      // laid on for one that never started come off
-      if (!C.current.landing) cancelLanding()
     }
     // mount only: the open sequence runs once
     // eslint-disable-next-line react-hooks/exhaustive-deps

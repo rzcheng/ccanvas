@@ -438,7 +438,7 @@ export const WidgetFrame = memo(function WidgetFrame({
   const paneOn = useStore((s) => split && s.focus?.id === el.id)
   // collapsed to its title bar (never while focused or spread out)
   const minimized = !!el.minimized && !focusRole && !spreadCard
-  // the status lamp its far card and its landing cover are drawn in
+  // the status lamp its far card is drawn in
   const sessionStatus = useDisplayStatus(el.id)
   const lampStatus = showsStatus(el) ? (sessionStatus ?? 'off') : 'kind'
   // far out, a status card stands in for the session's content

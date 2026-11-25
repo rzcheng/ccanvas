@@ -5455,7 +5455,7 @@ button.web__tag:hover {
   visibility: hidden;
 }
 /* A status lamp's colours, one source for the far card, the layers
-   overview's tiles and the landing's covers (anything with data-st): --lamp
+   overview's tiles (anything with data-st): --lamp
    fills, --lamp-edge rims, --lamp-ink writes on it. Waiting is solid amber;
    a widget without a session status ('kind') is tinted with its accent. */
 [data-st] {
