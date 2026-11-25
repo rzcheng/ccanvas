@@ -24,6 +24,7 @@ import { toggleFocus } from '../lib/view'
 import { WidgetGlyph, WidgetSlotIcon, showsStatus } from './widgetIcons'
 import { useAgents, useDisplayStatus, sendTo, sendPrompt, isLive as isSessionLive, type AgentMetrics } from '../lib/agents'
 import { useAgentContext } from '../lib/context'
+import { useNowPlaying } from '../lib/nowplaying'
 import { useSyncSessionTitle } from '../lib/sessionTitle'
 import { FAR_ZOOM, focusWidget, passesLabelFilter } from '../lib/view'
 import { NoteBody } from './NoteBody'
@@ -134,9 +135,8 @@ export const WidgetFrame = memo(function WidgetFrame({
     el.color ?? (el.kind === 'terminal' || el.kind === 'agent' ? 'var(--accent)' : WIDGET_ACCENT[el.kind])
   // terminals/agents are live: drag the block, click to enter (see pressBlock)
   const isTerminal = el.kind === 'terminal' || el.kind === 'agent'
-  // zoomed far out, every widget becomes a status card (the music player
-  // keeps its own look: its art and title read at any size)
-  const hasCard = el.kind !== 'nowplaying'
+  // zoomed far out, every widget becomes a status card
+  const hasCard = true
   // a user-chosen colour tints the whole faceplate so it reads when zoomed out
   const tagged = isTerminal && !!el.color
   // app-like panels work the same way, without a shield over their content
@@ -1069,22 +1069,26 @@ function FarCard({ el, leaving }: { el: WidgetElement; leaving?: boolean }) {
   const zoom = useStore((s) => selectActive(s).camera.zoom)
   const folder = el.cwd ? el.cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() : null
   const glyph = widgetGlyph(el) === 'mirror' ? IconDesktop : undefined
+  // the music player's card names the song, with the artist (or paused) under it
+  const np = useNowPlaying((s) => (el.kind === 'nowplaying' && s.np.kind === 'track' ? s.np.track : null))
+  const name = np?.title || el.title
+  const line = np ? (np.playing ? np.artist || 'playing' : 'paused') : live ? (STATUS_LABEL[st] ?? st) : widgetType(el)
   return (
     <div
       className={`term-card${el.color ? ' term-card--tagged' : ''}${leaving ? ' term-card--out' : ''}`}
       data-st={status}
       style={{
         ['--z' as string]: zoom,
-        ['--chars' as string]: Math.max(6, el.title.length),
-        ['--lw' as string]: longestWord(el.title),
+        ['--chars' as string]: Math.max(6, name.length),
+        ['--lw' as string]: longestWord(name),
         ['--k' as string]: el.color ?? WIDGET_ACCENT[el.kind],
       }}
     >
       <div className="term-card__screen">
         <div className="term-card__lamp">
           <WidgetGlyph el={el} status={live ? st : undefined} glyph={glyph} className="term-card__glyph" />
-          <div className="term-card__name">{el.title}</div>
-          <div className="term-card__status">{live ? (STATUS_LABEL[st] ?? st) : widgetType(el)}</div>
+          <div className="term-card__name">{name}</div>
+          <div className="term-card__status">{line}</div>
           <div className="term-card__sub">
             {folder && <span className="term-card__folder">{folder}</span>}
             {(el.kind === 'agent' || el.mirrorOf === 'desktop') && <CardContext el={el} />}
