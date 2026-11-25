@@ -176,17 +176,17 @@
   transform: scaleY(calc(1 - var(--h)));
   transform-origin: 50% 100%;
   border-radius: calc(7px / var(--fs, 1));
-  background: color-mix(in srgb, var(--panel-2) 55%, var(--bg));
-  border: calc(1px / var(--fs, 1)) solid var(--line);
+  background: var(--lamp);
+  border: calc(1px / var(--fs, 1)) solid var(--lamp-edge);
   opacity: calc(1 - var(--m));
 }
-/* the widget's own body colour and frame (WidgetFrame). Handing over, it
-   slides down off the tile (--h) behind a soft edge, so the real widget's
-   content fills in from the top, a line at a time. */
+/* the widget's frame, its body still the lamp: the card lands on the canvas
+   as a cover, and the real widget's landing takes it off (ui/landing.ts).
+   On a close it slides down off the tile (--h) behind a soft edge. */
 .pt__real {
   border-radius: var(--r-md);
   border: 1px solid var(--line);
-  background: var(--bg);
+  background: var(--lamp);
   opacity: var(--m);
   transform: translateY(calc(var(--h) * (100% + 28px)));
 }
@@ -197,14 +197,14 @@
   right: -1px;
   bottom: 100%;
   height: 28px;
-  background: linear-gradient(to bottom, transparent, var(--bg));
+  background: linear-gradient(to bottom, transparent, var(--lamp));
   opacity: clamp(0, var(--h) * 30, 1);
   pointer-events: none;
 }
 /* landing on a layer (ui/landing.ts): laid on the real widgets' bodies
-   while their content arrives. A terminal's covers are in its own
-   background, over what isn't typed yet, with the typing head; any other
-   body's one cover is in its own colour, with a soft top edge. Each on its
+   while their content arrives. The card's cover is the widget's lamp, with
+   a soft top edge; a terminal's covers under it are in its own background,
+   over what isn't typed yet, with the typing head. Each on its
    own layer, moved by transform only. */
 .ld-cover,
 .ld-cursor {
@@ -215,8 +215,10 @@
   z-index: 6;
   will-change: transform;
 }
-.ld-cover--fill {
-  background: linear-gradient(to bottom, transparent, var(--ld-bg) 24px);
+/* the landed card, over everything else, its top edge soft */
+.ld-cover--lamp {
+  z-index: 8;
+  background: linear-gradient(to bottom, transparent, var(--lamp) 24px);
 }
 .ld-cursor {
   z-index: 7;
@@ -228,18 +230,6 @@
 }
 .pt--tagged .pt__real {
   border-color: color-mix(in srgb, var(--k2) 45%, var(--line));
-}
-.pt--working .pt__fill,
-.pt--connecting .pt__fill {
-  border-color: color-mix(in srgb, var(--led-working) 55%, var(--line));
-  background: color-mix(in srgb, var(--led-working) 12%, var(--panel-2));
-}
-.pt--waiting .pt__fill {
-  border-color: var(--led-waiting);
-  background: color-mix(in srgb, var(--led-waiting) 14%, var(--panel-2));
-}
-.pt--rect .pt__fill {
-  background: color-mix(in srgb, var(--k2) 22%, var(--panel));
 }
 .pt__bar {
   position: absolute;
@@ -312,8 +302,12 @@
   inset: 0;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: calc(3px / var(--fs, 1));
   padding: calc(9px / var(--fs, 1)) calc(10px / var(--fs, 1));
+  text-align: center;
+  color: var(--lamp-ink);
   overflow: hidden;
   opacity: var(--txt, 0);
   pointer-events: none;
@@ -323,60 +317,94 @@
 }
 .pt__top {
   display: flex;
-  gap: calc(7px / var(--fs, 1));
-  align-items: flex-start;
+  flex-direction: column;
+  max-width: 100%;
+  gap: calc(5px / var(--fs, 1));
+  align-items: center;
   opacity: calc(1 - var(--m));
   transform: translateY(calc(var(--m) * -3px / var(--fs, 1))) scale(calc(1 - var(--m) * 0.08));
-  transform-origin: 0 0;
+  transform-origin: 50% 0;
 }
+/* the glyph: about a fifth of the tile's height, 12 to 26 screen px */
 .pt__top .pt__ic {
-  width: calc(15px / var(--fs, 1));
-  height: calc(15px / var(--fs, 1));
-  margin-top: calc(1px / var(--fs, 1));
-  color: var(--ink-faint);
+  --gs: clamp(12px / var(--fs, 1), var(--th) * 0.2px, 26px / var(--fs, 1));
+  width: var(--gs);
+  height: var(--gs);
+}
+.pt[data-st='kind'] .pt__top .pt__ic {
+  color: color-mix(in srgb, var(--k) 72%, var(--ink));
+}
+/* Tiers by the tile's size on screen, as on the far card: the glyph alone
+   on a small tile, the name from about 64×40, the status line from about
+   110×70. A hidden line is sized to nothing (a tile can't be a size
+   container: its own size is in world units). */
+.pt {
+  --sw: calc(var(--tw) * var(--fs, 1));
+  --sh: calc(var(--th) * var(--fs, 1));
 }
 .pt__tt {
+  --on: clamp(0, min(var(--sw) - 64, var(--sh) - 40) * 1000, 1);
+}
+.pt__tm {
+  --on: clamp(0, min(var(--sw) - 110, var(--sh) - 70) * 1000, 1);
+}
+/* the name, fitted like the far card's (global.css): one to three lines,
+   as large as the tile allows, never cut short with an ellipsis */
+.pt__tt {
+  --nw: calc(var(--tw) * 1px - min(20px / var(--fs, 1), var(--tw) * 0.16px));
+  --nh: calc(var(--th) * 0.42px);
+  --cw: calc(var(--chars) * 0.54);
   position: relative;
   min-width: 0;
-  font-family: var(--font-sans);
-  font-size: calc(14px * var(--ts) / 1.1 / var(--fs, 1));
-  font-weight: 600;
-  line-height: 1.28;
-  color: var(--ink);
+  max-width: 100%;
+  font-family: var(--font-label);
+  font-size: calc(
+    var(--on) *
+      clamp(
+        8px * var(--ts) / var(--fs, 1),
+        max(
+          min(var(--nw) / var(--cw), var(--nh) / 1.15),
+          min(var(--nw) * 1.7 / var(--cw), var(--nh) / 2.3),
+          min(var(--nw) * 2.4 / var(--cw), var(--nh) / 3.45)
+        ),
+        24px * var(--ts) / var(--fs, 1)
+      )
+  );
+  font-weight: 700;
+  line-height: 1.15;
   overflow: hidden;
 }
 .pt__tt > i {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  display: block;
+  max-height: calc(3 * 1.15em);
   overflow: hidden;
   overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 .pt__tm,
 .pt__tl {
   position: relative;
+  max-width: 100%;
   font-family: var(--font-mono);
-  font-size: calc(11.5px * var(--ts) / 1.1 / var(--fs, 1));
+  font-size: calc(var(--on, 1) * 11.5px * var(--ts) / 1.1 / var(--fs, 1));
   line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
   opacity: clamp(0, 1 - var(--m) * 1.6, 1);
 }
 .pt__tm {
-  color: var(--ink-faint);
+  color: color-mix(in srgb, var(--lamp-ink) 80%, transparent);
 }
 .pt__tls {
-  margin-top: auto;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  max-width: 100%;
   min-width: 0;
+  margin-top: calc(4px / var(--fs, 1));
 }
 .pt__tl {
-  color: var(--ink-ghost);
-}
-.pt--waiting .pt__tl {
-  color: var(--led-waiting);
+  color: color-mix(in srgb, var(--lamp-ink) 60%, transparent);
 }
 .pt__tt > i,
 .pt__tm > i,
@@ -387,7 +415,6 @@
 .pt__tl > i {
   display: block;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* The wash (--w, 0 → 1, one value per tile) types the text in: the title,
@@ -456,6 +483,14 @@
    would repaint it every frame) */
 .lo-sheet:not(.is-open) .pt .status-icon svg {
   animation-play-state: paused;
+}
+/* on the solid amber lamp, the glyph is drawn in the lamp's ink */
+.pt[data-st='waiting'] .pt__txt .status-icon__fill {
+  fill: var(--on-amber);
+}
+.pt[data-st='waiting'] .pt__txt .status-icon__halo {
+  stroke: var(--on-amber);
+  stroke-opacity: 0.5;
 }
 .lo-sheet .pt .status-icon--waiting::after {
   display: none;

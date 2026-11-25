@@ -12,13 +12,15 @@ import { pathWithin, widgetGlyph, widgetType } from '../lib/layers'
 // Monaco or iframe.
 //
 // A tile has three faces, blended by custom properties the overview sets:
-//  • the block (the fill): coloured by status, all that shows on a slat;
-//  • the text (status icon, two-line title, meta and last line), faded by
-//    the sheet's --txt, so it shows only while the sheet is nearly flat;
-//  • the widget (--m): the real widget's look (its body colour, frame and
-//    title bar, tint and folder included) crossfades in over the block, so
-//    nothing snaps. Then --h wipes it away top-down to hand over to the real
-//    widget underneath.
+//  • the block (the fill): the status lamp (data-st), all that shows on a slat;
+//  • the text, laid out like the canvas's far card: glyph, the name as large
+//    as fits, then the status or what it is (and with V, a few lines of
+//    what it shows), faded by the sheet's --txt, so it shows only while the
+//    sheet is nearly flat;
+//  • the widget (--m): the real widget's frame and title bar (tint and
+//    folder included) crossfade in over the block, its body still the lamp,
+//    so the tile lands on the canvas as the card the real widget then takes
+//    off (ui/landing.ts). On a close, --h wipes it away top-down.
 //
 // --w, the tile's wash, types the text in a character at a time, line after
 // line, with a block cursor (layers.css); each line carries its length
@@ -68,7 +70,8 @@ export const LayerProxy = memo(function LayerProxy({
         className="pt pt--rect"
         data-pid={el.id}
         data-ord={ord}
-        style={{ left: el.x, top: el.y, width: el.w, height: el.h, ['--k2' as string]: accentOf(el) }}
+        data-st="kind"
+        style={{ left: el.x, top: el.y, width: el.w, height: el.h, ['--k2' as string]: accentOf(el), ['--k' as string]: accentOf(el) }}
       >
         <div className="pt__fill" />
         <div className="pt__real" />
@@ -148,11 +151,15 @@ function WidgetTile({
   )
   // a widget moved here from another project keeps its folder: say so
   const guest = home && el.cwd && !pathWithin(home, el.cwd) ? baseName(el.cwd) : null
-  const meta = widgetType(el) + (guest ? ` · ↗ ${guest}` : '')
-  const lines = live
-    ? [lastLine || STATUS_WORD[st!] || '', ...(mode === 'detail' && el.cwd ? [baseName(el.cwd)] : [])]
-    : otherLines(el)
-  const shownLines = mode === 'detail' ? lines.slice(0, 4) : lines.slice(0, 1)
+  // under the name, as on the canvas's far card: the status, or what it is
+  const meta = (live ? STATUS_WORD[st!] || '' : widgetType(el)) + (guest ? ` · ↗ ${guest}` : '')
+  // V (detail) adds a few lines of what it shows
+  const lines =
+    mode !== 'detail'
+      ? []
+      : live
+        ? [lastLine || '', el.cwd ? baseName(el.cwd) : ''].filter(Boolean)
+        : otherLines(el).slice(0, 4)
   // the real title bar: a labelled terminal or agent is tinted, and the
   // folder follows the title (WidgetFrame)
   const tagged = (el.kind === 'terminal' || el.kind === 'agent') && !!el.color
@@ -162,7 +169,18 @@ function WidgetTile({
       className={`pt${st ? ` pt--${st}` : ''}${dim ? ' is-dim' : ''}${tagged ? ' pt--tagged' : ''}`}
       data-pid={el.id}
       data-ord={ord}
-      style={{ left: el.x, top: el.y, width: el.w, height: el.h, ['--k2' as string]: accentOf(el) }}
+      data-st={st ?? 'kind'}
+      style={{
+        left: el.x,
+        top: el.y,
+        width: el.w,
+        height: el.h,
+        ['--k2' as string]: accentOf(el),
+        ['--k' as string]: accentOf(el),
+        ['--tw' as string]: el.w,
+        ['--th' as string]: el.h,
+        ['--chars' as string]: Math.max(6, el.title.length),
+      }}
     >
       <div className="pt__fill" />
       <div className="pt__real" />
@@ -183,7 +201,7 @@ function WidgetTile({
             <i>{meta}</i>
           </span>
           <span className="pt__tls">
-            {shownLines.map((l, i) => (
+            {lines.map((l, i) => (
               <span key={i} className="pt__tl" style={chars(l)}>
                 <i>{l}</i>
               </span>

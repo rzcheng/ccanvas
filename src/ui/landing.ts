@@ -1,12 +1,13 @@
 // Landing on a layer: the real widgets' content arrives instead of popping
-// in. As the layers overview hands over (a dive, or a close back onto the
-// layer you're on), each widget on screen keeps its frame and title bar and
-// its body fills in, top of the screen first: a terminal or agent types its
-// real output in, row by row behind a block cursor; anything else fills in
-// from the top behind a soft edge.
+// in. The overview's tiles land as cards (frame, title bar and a body in the
+// widget's status lamp, data-st), and as it hands over (a dive, or a close
+// back onto the layer you're on) each widget on screen takes that card off,
+// top of the screen first: the lamp slides down off the body behind a soft
+// edge, and a terminal or agent under it types its real output in, row by
+// row behind a block cursor.
 //
-// Nothing on the widgets changes: a cover in the body's own colour (and, for
-// a terminal, the cursor) is laid over each body, and only its transform
+// Nothing on the widgets changes: covers (the lamp; for a terminal, covers in
+// its own background and the cursor) are laid over each body, and only their transform
 // moves, on its own layer, so the content under it is never repainted. The
 // covers are laid on hidden a few frames early (`prepLanding`, at the start
 // of a frame while layout is clean), shown in the same frame the overview's
@@ -95,7 +96,9 @@ function prepSome(n: number) {
     // a body that moved since it was listed is read again
     const now = body.getBoundingClientRect()
     const rr = now.top === r.top && now.left === r.left && now.width === r.width ? r : now
-    batch.push(readTerminal(body, rr, delay) ?? fill(body, rr, delay))
+    batch.push(lamp(body, rr, delay))
+    const typing = readTerminal(body, rr, delay)
+    if (typing) batch.push(typing)
   }
   for (const j of batch) j.parts = j.make()
   jobs.push(...batch)
@@ -247,23 +250,17 @@ function readTerminal(body: HTMLElement, br: DOMRect, delay: number): Job | null
   }
 }
 
-/** Any other widget: one cover in its body's colour slides down off it. */
-function fill(body: HTMLElement, br: DOMRect, delay: number): Job {
-  const bg = bodyColour(body)
+/** The card: one cover in the widget's lamp colour (the widget's data-st,
+ *  global.css) slides down off the body. */
+function lamp(body: HTMLElement, br: DOMRect, delay: number): Job {
   const bh = body.offsetHeight || br.height
   const make = () => {
-    const cover = part(body, 'ld-cover ld-cover--fill')
-    cover.style.cssText += `;width:100%;height:${bh + FEATHER}px;--ld-bg:${bg}`
+    const cover = part(body, 'ld-cover ld-cover--lamp')
+    cover.style.cssText += `;width:100%;height:${bh + FEATHER}px`
     cover.style.transform = `translate3d(0, ${-FEATHER}px, 0)`
     return [cover]
   }
   return { body, parts: [], make, delay, dur: FILL, bh }
-}
-
-/** What the body looks like when empty: a status card's colour, else its
- *  content's own background, else the body's. */
-function bodyColour(body: HTMLElement): string {
-  return opaque(body.querySelector(':scope > .term-card'), body.firstElementChild, body)
 }
 
 /** The first of these with a background you can't see through. */

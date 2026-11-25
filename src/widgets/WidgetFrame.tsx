@@ -5,10 +5,10 @@ import type { WidgetElement } from '../lib/types'
 import { WIDGET_ACCENT, AGENT_COLORS, claudeColorName } from '../lib/types'
 import { useStore, selectActive } from '../store/workspace'
 import { elementBounds, edgeLines, snapValue } from '../lib/geometry'
-import { IconClose, IconLock, IconTag, IconSettings, IconPullOut, IconExternal, IconFocus } from '../ui/icons'
+import { IconClose, IconLock, IconTag, IconSettings, IconPullOut, IconExternal, IconFocus, IconDesktop } from '../ui/icons'
 import { flyFocus, cancelFlight } from '../lib/focusMotion'
 import { toggleFocus } from '../lib/view'
-import { KIND_ICON, StatusGlyph, WidgetSlotIcon } from './widgetIcons'
+import { KIND_ICON, StatusGlyph, WidgetSlotIcon, showsStatus } from './widgetIcons'
 import { useAgents, useDisplayStatus, sendTo, sendPrompt, isLive as isSessionLive, type AgentMetrics } from '../lib/agents'
 import { useAgentContext } from '../lib/context'
 import { useSyncSessionTitle } from '../lib/sessionTitle'
@@ -38,6 +38,7 @@ import { MirrorAsk, MirrorWaitChip } from './MirrorStatus'
 import { openInClaude } from '../lib/desktopSessions'
 import { WidgetErrorBoundary } from '../ui/WidgetErrorBoundary'
 import { stacksOf, type Stack } from '../lib/stacks'
+import { widgetGlyph, widgetType } from '../lib/layers'
 import { StackRail, StackEdges } from './StackRail'
 import { useSpreadCardDrag, isSpreadDragging } from './useSpreadCardDrag'
 
@@ -118,9 +119,9 @@ export const WidgetFrame = memo(function WidgetFrame({
     el.color ?? (el.kind === 'terminal' || el.kind === 'agent' ? 'var(--accent)' : WIDGET_ACCENT[el.kind])
   // terminals/agents are live: drag the block, click to enter (see pressBlock)
   const isTerminal = el.kind === 'terminal' || el.kind === 'agent'
-  // sessions with a status (terminals, agents, chat transcripts) become a
-  // status card when zoomed far out
-  const hasCard = isTerminal || el.kind === 'transcript'
+  // zoomed far out, every widget becomes a status card (the music player
+  // keeps its own look: its art and title read at any size)
+  const hasCard = el.kind !== 'nowplaying'
   // a user-chosen colour tints the whole faceplate so it reads when zoomed out
   const tagged = isTerminal && !!el.color
   // app-like panels work the same way, without a shield over their content
@@ -413,6 +414,9 @@ export const WidgetFrame = memo(function WidgetFrame({
   const focusRole = useStore((s) =>
     s.focus?.id === el.id ? 'on' : s.focus?.returning.includes(el.id) ? 'back' : null,
   )
+  // the status lamp its far card and its landing cover are drawn in
+  const sessionStatus = useDisplayStatus(el.id)
+  const lampStatus = showsStatus(el) ? (sessionStatus ?? 'off') : 'kind'
   // far out, a status card stands in for the session's content
   const carded = hasCard && far && visible && !focusRole
   const focusBoxNow = useStore((s) => (focusRole ? s.focus?.box ?? null : null))
@@ -600,6 +604,7 @@ export const WidgetFrame = memo(function WidgetFrame({
       }${focusRole ? ` widget--focus widget--focus-${focusRole}` : ''}`}
       ref={nodeRef}
       data-widget-id={el.id}
+      data-st={lampStatus}
       data-wheel="zoom"
       aria-hidden={stackHidden || undefined}
       style={
@@ -711,7 +716,7 @@ export const WidgetFrame = memo(function WidgetFrame({
       >
         <WidgetErrorBoundary>
           <WidgetBody el={el} active={active} visible={visible} tabShown={tabShown} hidden={stackHidden} />
-          {carded && <TermCard el={el} />}
+          {carded && <FarCard el={el} />}
         </WidgetErrorBoundary>
 
         {spreadCard && (
@@ -921,10 +926,10 @@ const WidgetBody = memo(
     sameBesidesPlace(a.el, b.el),
 )
 
-// Zoomed-out summary of a terminal, agent or chat transcript: name, colour, status, context use and
-// the latest line of output, sized in screen pixels (via its --z) so it
-// stays readable however far out you are. Sits over the live terminal, which
-// keeps running underneath.
+// Zoomed far out, a widget's summary card: its colour, glyph, name and
+// status (or what it is), sized in screen pixels (via its --z) so it stays
+// readable however far out you are. Sits over the widget, which keeps
+// running underneath. The layers overview draws the same card (LayerProxy).
 const STATUS_LABEL: Record<string, string> = {
   working: 'working',
   waiting: 'needs you',
@@ -933,23 +938,38 @@ const STATUS_LABEL: Record<string, string> = {
   connecting: 'connecting',
   off: 'offline',
 }
-function TermCard({ el }: { el: WidgetElement }) {
-  const status = useDisplayStatus(el.id) ?? 'off'
+function FarCard({ el }: { el: WidgetElement }) {
+  const live = showsStatus(el)
+  const st = useDisplayStatus(el.id) ?? 'off'
+  // a widget without a session status is tinted with its own accent
+  const status = live ? st : 'kind'
   // the card sizes itself in screen px from the zoom. Set here rather than on
   // the world layer: a custom property changed on the world restyled every
   // element on the canvas on each zoom frame
   const zoom = useStore((s) => selectActive(s).camera.zoom)
   const folder = el.cwd ? el.cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() : null
+  const Icon = widgetGlyph(el) === 'mirror' ? IconDesktop : KIND_ICON[el.kind]
   return (
     <div
-      className={`term-card term-card--${status}${el.color ? ' term-card--tagged' : ''}`}
-      style={{ ['--z' as string]: zoom, ['--chars' as string]: Math.max(6, el.title.length) }}
+      className={`term-card${el.color ? ' term-card--tagged' : ''}`}
+      data-st={status}
+      style={{
+        ['--z' as string]: zoom,
+        ['--chars' as string]: Math.max(6, el.title.length),
+        ['--k' as string]: el.color ?? WIDGET_ACCENT[el.kind],
+      }}
     >
       <div className="term-card__screen">
         <div className="term-card__lamp">
-          <StatusGlyph status={status} icon={<KindIcon kind={el.kind} />} className="term-card__glyph" />
+          {live ? (
+            <StatusGlyph status={st} icon={<Icon />} className="term-card__glyph" />
+          ) : (
+            <span className="term-card__glyph">
+              <Icon />
+            </span>
+          )}
           <div className="term-card__name">{el.title}</div>
-          <div className="term-card__status">{STATUS_LABEL[status] ?? status}</div>
+          <div className="term-card__status">{live ? (STATUS_LABEL[st] ?? st) : widgetType(el)}</div>
           <div className="term-card__sub">
             {folder && <span className="term-card__folder">{folder}</span>}
             {(el.kind === 'agent' || el.mirrorOf === 'desktop') && <CardContext el={el} />}
@@ -958,10 +978,6 @@ function TermCard({ el }: { el: WidgetElement }) {
       </div>
     </div>
   )
-}
-function KindIcon({ kind }: { kind: WidgetElement['kind'] }) {
-  const I = KIND_ICON[kind]
-  return <I />
 }
 function CardContext({ el }: { el: WidgetElement }) {
   const ctx = useAgentContext(el.cwd, el.sessionId, el.model)

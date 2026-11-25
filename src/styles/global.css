@@ -5403,24 +5403,50 @@ button.web__tag:hover {
 .widget__body--carded > :not(.term-card):not(.widget__shield):not(.widget__spread-hit) {
   visibility: hidden;
 }
-.term-card {
+/* A status lamp's colours, one source for the far card, the layers
+   overview's tiles and the landing's covers (anything with data-st): --lamp
+   fills, --lamp-edge rims, --lamp-ink writes on it. Waiting is solid amber;
+   a widget without a session status ('kind') is tinted with its accent. */
+[data-st] {
   --st: var(--led-idle);
   --on-amber: #2b1f0a;
+  --lamp: color-mix(in srgb, var(--st) 18%, var(--panel));
+  --lamp-edge: color-mix(in srgb, var(--st) 42%, transparent);
+  --lamp-ink: var(--ink);
+}
+[data-st='working'],
+[data-st='connecting'] {
+  --st: var(--led-working);
+}
+[data-st='done'] {
+  --st: var(--led-done);
+}
+[data-st='waiting'] {
+  --st: var(--led-waiting);
+  --lamp: var(--led-waiting);
+  --lamp-edge: transparent;
+  --lamp-ink: var(--on-amber);
+}
+[data-st='idle'] {
+  --lamp: var(--panel-2);
+  --lamp-edge: var(--line);
+}
+[data-st='off'] {
+  --lamp: var(--panel);
+  --lamp-edge: var(--line-soft);
+  --lamp-ink: var(--ink-faint);
+}
+[data-st='kind'] {
+  --st: var(--k);
+  --lamp: color-mix(in srgb, var(--k) 14%, var(--panel));
+  --lamp-edge: color-mix(in srgb, var(--k) 34%, transparent);
+}
+.term-card {
   position: absolute;
   inset: 0;
   z-index: 3;
   overflow: hidden;
   cursor: pointer;
-}
-.term-card--working,
-.term-card--connecting {
-  --st: var(--led-working);
-}
-.term-card--waiting {
-  --st: var(--led-waiting);
-}
-.term-card--done {
-  --st: var(--led-done);
 }
 .term-card__screen {
   position: absolute;
@@ -5443,23 +5469,9 @@ button.web__tag:hover {
   gap: clamp(1px, 3cqh, 6px);
   padding: var(--pad);
   text-align: center;
-  color: var(--ink);
-  background: color-mix(in srgb, var(--st) 18%, var(--panel));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st) 42%, transparent);
-}
-.term-card--idle .term-card__lamp {
-  background: var(--panel-2);
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-.term-card--off .term-card__lamp {
-  background: var(--panel);
-  box-shadow: inset 0 0 0 1px var(--line-soft);
-  color: var(--ink-faint);
-}
-.term-card--waiting .term-card__lamp {
-  background: var(--led-waiting);
-  box-shadow: none;
-  color: var(--on-amber);
+  color: var(--lamp-ink);
+  background: var(--lamp);
+  box-shadow: inset 0 0 0 1px var(--lamp-edge);
 }
 /* the user's colour tag, as a stripe down the left edge */
 .term-card--tagged .term-card__lamp::before {
@@ -5477,14 +5489,22 @@ button.web__tag:hover {
   width: var(--gs);
   height: var(--gs);
 }
-.term-card--waiting .term-card__glyph .status-icon__fill {
+.term-card[data-st='kind'] .term-card__glyph {
+  place-items: center;
+  color: color-mix(in srgb, var(--k) 72%, var(--ink));
+}
+.term-card[data-st='kind'] .term-card__glyph > svg {
+  width: 100%;
+  height: 100%;
+}
+.term-card[data-st='waiting'] .term-card__glyph .status-icon__fill {
   fill: var(--on-amber);
 }
-.term-card--waiting .term-card__glyph .status-icon__halo {
+.term-card[data-st='waiting'] .term-card__glyph .status-icon__halo {
   stroke: var(--on-amber);
   stroke-opacity: 0.5;
 }
-.term-card--waiting .term-card__glyph::after {
+.term-card[data-st='waiting'] .term-card__glyph::after {
   border-color: var(--on-amber);
 }
 .term-card__name,
@@ -5495,16 +5515,33 @@ button.web__tag:hover {
   max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
+/* The name is never cut short with an ellipsis: it takes one, two or three
+   lines, whichever lets it be largest in the room it has (the width, about
+   half an em per character in this face, and about two fifths of the
+   height), between 10px and the tier's cap. Lines after the first lose a
+   little to word breaks, hence the slack. */
 .term-card__name {
   --cap: 14px;
+  --nw: calc(100cqw - 2 * var(--pad));
+  --nh: 42cqh;
+  --cw: calc(var(--chars) * 0.54);
   font-family: var(--font-label);
   font-weight: 700;
   line-height: 1.15;
-  /* as large as the width allows for the name's length (about half an em per
-     character in this face), between 11px and the tier's cap */
-  font-size: clamp(11px, calc((100cqw - 2 * var(--pad)) / (var(--chars) * 0.52)), var(--cap));
+  font-size: clamp(
+    10px,
+    max(
+      min(var(--nw) / var(--cw), var(--nh) / 1.15),
+      min(var(--nw) * 1.7 / var(--cw), var(--nh) / 2.3),
+      min(var(--nw) * 2.4 / var(--cw), var(--nh) / 3.45)
+    ),
+    var(--cap)
+  );
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+  max-height: calc(3 * 1.15em);
 }
 .term-card__status {
   font: 500 11px/1.2 var(--font-mono);
@@ -5518,13 +5555,12 @@ button.web__tag:hover {
 }
 .term-card__folder {
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 .term-card__ctx--hot {
   color: var(--accent);
   opacity: 1;
 }
-.term-card--waiting .term-card__ctx--hot {
+.term-card[data-st='waiting'] .term-card__ctx--hot {
   color: inherit;
 }
 @container tcard (min-width: 24px) and (min-height: 16px) {
