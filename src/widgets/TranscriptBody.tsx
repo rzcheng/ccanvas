@@ -1,5 +1,6 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { WidgetElement } from '../lib/types'
+import { livePlace } from '../lib/view'
 import { useStore, selectActive } from '../store/workspace'
 import {
   transcriptPathFor,
@@ -775,11 +776,13 @@ function FilesPop({
   const spawnWidget = useStore((s) => s.spawnWidget)
   const open = (path: string) => {
     onClose()
-    spawnWidget(widgetKindForFile(path), el.x + el.w + 340, el.y + 220, { path, cwd, title: baseName(path) })
+    const at = livePlace(el)
+    spawnWidget(widgetKindForFile(path), at.x + at.w + 340, at.y + 220, { path, cwd, title: baseName(path) })
   }
   const openGit = () => {
     onClose()
-    spawnWidget('diff', el.x + el.w + 340, el.y + 220, { path: cwd, cwd })
+    const at = livePlace(el)
+    spawnWidget('diff', at.x + at.w + 340, at.y + 220, { path: cwd, cwd })
   }
   return (
     <Pop onClose={onClose} className="tx__pop--files">

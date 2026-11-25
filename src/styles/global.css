@@ -5399,6 +5399,10 @@ button.web__tag:hover {
      + folder and context
    The name is fitted gently: as large as the width allows for its length,
    between a floor and the tier's cap, so it never spills. */
+/* the card is opaque: skip painting the session underneath (it keeps running) */
+.widget__body--carded > :not(.term-card):not(.widget__shield):not(.widget__spread-hit) {
+  visibility: hidden;
+}
 .term-card {
   --st: var(--led-idle);
   --on-amber: #2b1f0a;

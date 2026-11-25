@@ -55,6 +55,29 @@ export function stacksOf(elements: CanvasElement[]): Map<string, Stack> {
   return out
 }
 
+/** `next`, keeping each stack object from `prev` whose members, front and
+ *  title are unchanged. The canvas rebuilds its stacks on every frame of a
+ *  pan, zoom or drag; a fresh object each time re-rendered every stacked
+ *  widget along with it. */
+export function reuseStacks(
+  prev: Map<string, Stack> | undefined,
+  next: Map<string, Stack>,
+): Map<string, Stack> {
+  if (!prev) return next
+  for (const [id, s] of next) {
+    const p = prev.get(id)
+    if (
+      p &&
+      p.front === s.front &&
+      p.title === s.title &&
+      p.members.length === s.members.length &&
+      p.members.every((m, i) => m === s.members[i])
+    )
+      next.set(id, p)
+  }
+  return next
+}
+
 /** The stack a widget belongs to, if it is in a real (2+) stack. */
 export function stackOfId(elements: CanvasElement[], id: string): Stack | null {
   const el = elements.find((e) => e.id === id)

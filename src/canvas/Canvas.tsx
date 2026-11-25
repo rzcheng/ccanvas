@@ -63,6 +63,7 @@ import {
   isHiddenMember,
   spreadCols,
   spreadRects,
+  reuseStacks,
   stacksOf,
   stackOfId,
   withStackSiblings,
@@ -312,7 +313,17 @@ export function Canvas() {
   const els = activeLayerElements(ws)
   const layered = hasLayers(ws)
   const curLayer = activeLayerId(ws)
-  const stacks = stacksOf(ws.elements)
+  // per tab: the stacks of its elements, reused while those elements are
+  // unchanged, so memoised widgets see the same stack object frame to frame
+  const stackCache = useRef(new Map<string, { elements: CanvasElement[]; stacks: Map<string, Stack> }>())
+  const stacksFor = (tabId: string, elements: CanvasElement[]) => {
+    const hit = stackCache.current.get(tabId)
+    if (hit?.elements === elements) return hit.stacks
+    const stacks = reuseStacks(hit?.stacks, stacksOf(elements))
+    stackCache.current.set(tabId, { elements, stacks })
+    return stacks
+  }
+  const stacks = stacksFor(ws.id, ws.elements)
 
   const getPt = (e: { clientX: number; clientY: number }): Point => {
     const r = rootRef.current!.getBoundingClientRect()
@@ -1496,7 +1507,7 @@ export function Canvas() {
         // kept in creation order and stacked with z-index (WidgetFrame), not
         // sorted by z: re-sorting would move a clicked widget's DOM node to the
         // end, which resets every scroll position inside it and reloads iframes
-        const tabStacks = isActiveTab ? stacks : stacksOf(tab.elements)
+        const tabStacks = isActiveTab ? stacks : stacksFor(tab.id, tab.elements)
         const tabWidgets = tab.elements.filter((e): e is WidgetElement => e.type === 'widget')
         if (!tabWidgets.length) return null
         const tabLayer = activeLayerId(tab)

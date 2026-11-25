@@ -7,8 +7,15 @@ import { clamp } from './geometry'
 import type { CanvasElement, WidgetElement } from './types'
 import { activeLayerElements, activeLayerId, hasLayers, layerOf } from './layers'
 
-/** Below this zoom, terminals render as readable summary cards. */
+/** Below this zoom, terminals and chats render as readable status cards. */
 export const FAR_ZOOM = 0.5
+
+/** A widget as it is now. Widget bodies are not re-rendered when only their
+ *  position changes, so a handler placing something beside one reads it here. */
+export function livePlace(el: WidgetElement): WidgetElement {
+  const cur = selectActive(useStore.getState()).elements.find((e) => e.id === el.id)
+  return cur && cur.type === 'widget' ? cur : el
+}
 
 /** Size of the canvas area in px (the window minus the slim top bar). */
 export function viewport(): { vw: number; vh: number } {

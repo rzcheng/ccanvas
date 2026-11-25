@@ -118,6 +118,9 @@ export const WidgetFrame = memo(function WidgetFrame({
     el.color ?? (el.kind === 'terminal' || el.kind === 'agent' ? 'var(--accent)' : WIDGET_ACCENT[el.kind])
   // terminals/agents are live: drag the block, click to enter (see pressBlock)
   const isTerminal = el.kind === 'terminal' || el.kind === 'agent'
+  // sessions with a status (terminals, agents, chat transcripts) become a
+  // status card when zoomed far out
+  const hasCard = isTerminal || el.kind === 'transcript'
   // a user-chosen colour tints the whole faceplate so it reads when zoomed out
   const tagged = isTerminal && !!el.color
   // app-like panels work the same way, without a shield over their content
@@ -222,8 +225,8 @@ export const WidgetFrame = memo(function WidgetFrame({
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
       if (moved || ev.type !== 'pointerup') return
-      // from far out, a click on a terminal flies in to it instead of typing blind
-      if (isTerminal && selectActive(useStore.getState()).camera.zoom < FAR_ZOOM) focusWidget(el.id)
+      // from far out, a click on a status card flies in to it instead of typing blind
+      if (hasCard && selectActive(useStore.getState()).camera.zoom < FAR_ZOOM) focusWidget(el.id)
       else onLiveBodyCapture()
     }
     window.addEventListener('pointermove', onMove)
@@ -410,6 +413,8 @@ export const WidgetFrame = memo(function WidgetFrame({
   const focusRole = useStore((s) =>
     s.focus?.id === el.id ? 'on' : s.focus?.returning.includes(el.id) ? 'back' : null,
   )
+  // far out, a status card stands in for the session's content
+  const carded = hasCard && far && visible && !focusRole
   const focusBoxNow = useStore((s) => (focusRole ? s.focus?.box ?? null : null))
   const focusCam = useStore((s) => (focusRole ? selectActive(s).camera : null))
   const nodeRef = useRef<HTMLDivElement>(null)
@@ -689,7 +694,7 @@ export const WidgetFrame = memo(function WidgetFrame({
       {labeling && <LabelPopover el={el} onClose={() => setLabelingWidget(null)} />}
 
       <div
-        className="widget__body"
+        className={`widget__body${carded ? ' widget__body--carded' : ''}`}
         data-wheel="auto"
         data-wheel-lock={!active || handleBody ? '' : undefined}
         style={
@@ -705,32 +710,8 @@ export const WidgetFrame = memo(function WidgetFrame({
         onDrop={isTerminal ? onBodyDrop : undefined}
       >
         <WidgetErrorBoundary>
-          {el.kind === 'note' && <NoteBody el={el} active={active} />}
-          {el.kind === 'web' && <WebBody el={el} active={active} />}
-          {el.kind === 'video' && <VideoBody el={el} active={active} />}
-          {el.kind === 'mediainfo' && <MediaInfoBody el={el} />}
-          {el.kind === 'claude' && <ClaudeBody el={el} />}
-          {el.kind === 'nowplaying' && (
-            <NowPlayingBody el={el} visible={visible} active={active} />
-          )}
-          {isTerminal && (
-            <TerminalBody el={el} active={active} visible={visible} tabShown={tabShown} hidden={stackHidden} />
-          )}
-          {isTerminal && far && visible && !focusRole && <TermCard el={el} />}
-          {el.kind === 'files' && <FilesBody el={el} />}
-          {el.kind === 'diff' && <DiffBody el={el} />}
-          {el.kind === 'editor' && <EditorBody el={el} active={active} />}
-          {el.kind === 'vscode' && <VsCodeBody el={el} active={active} />}
-          {el.kind === 'doc' && <DocBody el={el} />}
-          {el.kind === 'log' && <LogBody el={el} />}
-          {el.kind === 'pr' && <PrBody el={el} />}
-          {el.kind === 'issues' && <IssuesBody el={el} />}
-          {el.kind === 'runs' && <RunsBody el={el} />}
-          {el.kind === 'runner' && <RunnerBody el={el} />}
-          {el.kind === 'sql' && <SqlBody el={el} active={active} />}
-          {el.kind === 'data' && <DataBody el={el} />}
-          {el.kind === 'plot' && <PlotBody el={el} />}
-          {el.kind === 'transcript' && <TranscriptBody el={el} />}
+          <WidgetBody el={el} active={active} visible={visible} tabShown={tabShown} hidden={stackHidden} />
+          {carded && <TermCard el={el} />}
         </WidgetErrorBoundary>
 
         {spreadCard && (
@@ -889,7 +870,58 @@ function LabelPopover({ el, onClose }: { el: WidgetElement; onClose: () => void 
   )
 }
 
-// Zoomed-out summary of a terminal/agent: name, colour, status, context use and
+// The widget's content. Memoised apart from the frame, and blind to where the
+// widget sits: dragging or stacking moves a widget every frame, and that
+// re-rendered a whole transcript or terminal each time for nothing.
+type BodyProps = { el: WidgetElement; active: boolean; visible: boolean; tabShown: boolean; hidden: boolean }
+const PLACE_KEYS = new Set(['x', 'y', 'z'])
+function sameBesidesPlace(a: WidgetElement, b: WidgetElement) {
+  if (a === b) return true
+  const ka = Object.keys(a) as (keyof WidgetElement)[]
+  if (ka.length !== Object.keys(b).length) return false
+  return ka.every((k) => PLACE_KEYS.has(k) || a[k] === b[k])
+}
+const WidgetBody = memo(
+  function WidgetBody({ el, active, visible, tabShown, hidden }: BodyProps) {
+    return (
+      <>
+      {el.kind === 'note' && <NoteBody el={el} active={active} />}
+      {el.kind === 'web' && <WebBody el={el} active={active} />}
+      {el.kind === 'video' && <VideoBody el={el} active={active} />}
+      {el.kind === 'mediainfo' && <MediaInfoBody el={el} />}
+      {el.kind === 'claude' && <ClaudeBody el={el} />}
+      {el.kind === 'nowplaying' && (
+        <NowPlayingBody el={el} visible={visible} active={active} />
+      )}
+      {(el.kind === 'terminal' || el.kind === 'agent') && (
+        <TerminalBody el={el} active={active} visible={visible} tabShown={tabShown} hidden={hidden} />
+      )}
+      {el.kind === 'files' && <FilesBody el={el} />}
+      {el.kind === 'diff' && <DiffBody el={el} />}
+      {el.kind === 'editor' && <EditorBody el={el} active={active} />}
+      {el.kind === 'vscode' && <VsCodeBody el={el} active={active} />}
+      {el.kind === 'doc' && <DocBody el={el} />}
+      {el.kind === 'log' && <LogBody el={el} />}
+      {el.kind === 'pr' && <PrBody el={el} />}
+      {el.kind === 'issues' && <IssuesBody el={el} />}
+      {el.kind === 'runs' && <RunsBody el={el} />}
+      {el.kind === 'runner' && <RunnerBody el={el} />}
+      {el.kind === 'sql' && <SqlBody el={el} active={active} />}
+      {el.kind === 'data' && <DataBody el={el} />}
+      {el.kind === 'plot' && <PlotBody el={el} />}
+      {el.kind === 'transcript' && <TranscriptBody el={el} />}
+      </>
+    )
+  },
+  (a, b) =>
+    a.active === b.active &&
+    a.visible === b.visible &&
+    a.tabShown === b.tabShown &&
+    a.hidden === b.hidden &&
+    sameBesidesPlace(a.el, b.el),
+)
+
+// Zoomed-out summary of a terminal, agent or chat transcript: name, colour, status, context use and
 // the latest line of output, sized in screen pixels (via its --z) so it
 // stays readable however far out you are. Sits over the live terminal, which
 // keeps running underneath.
@@ -920,7 +952,7 @@ function TermCard({ el }: { el: WidgetElement }) {
           <div className="term-card__status">{STATUS_LABEL[status] ?? status}</div>
           <div className="term-card__sub">
             {folder && <span className="term-card__folder">{folder}</span>}
-            {el.kind === 'agent' && <CardContext el={el} />}
+            {(el.kind === 'agent' || el.mirrorOf === 'desktop') && <CardContext el={el} />}
           </div>
         </div>
       </div>
