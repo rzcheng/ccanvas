@@ -6,6 +6,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { ImageAddon } from '@xterm/addon-image'
 import '@xterm/xterm/css/xterm.css'
 import { acquireGpu, fitsGpu, GPU_HIDDEN_KEEP, releaseGpu } from '../lib/termGpu'
+import { guardAtlasSlots } from '../lib/atlasSlots'
 import type { WidgetElement } from '../lib/types'
 import { claudeColorName } from '../lib/types'
 import { connectPty, type Term } from '../lib/terminal'
@@ -277,6 +278,7 @@ export function TerminalBody({
         return
       }
       gpu = g
+      guardAtlasSlots(g)
       g.onContextLoss(() => {
         gpuFailures++
         dropGpu()
