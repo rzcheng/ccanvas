@@ -143,8 +143,11 @@ function WidgetTile({
   const icon = <WidgetGlyph el={el} status={live ? st! : undefined} glyph={glyphFor(el)} className="pt__ic" />
   // a widget moved here from another project keeps its folder: say so
   const guest = home && el.cwd && !pathWithin(home, el.cwd) ? baseName(el.cwd) : null
-  // under the name, as on the canvas's far card: the status, or what it is
-  const meta = (live ? STATUS_WORD[st!] || '' : widgetType(el)) + (guest ? ` · ↗ ${guest}` : '')
+  // under the name, as on the canvas's far card: the status, or what it is,
+  // then the folder it came from (cut short with an ellipsis, never the status)
+  const metaWord = live ? STATUS_WORD[st!] || '' : widgetType(el)
+  // the line is sized to fit the status and about a dozen characters of folder
+  const metaChars = Math.max(6, metaWord.length + (guest ? 3 + Math.min(guest.length, 12) : 0))
   // V (detail) adds a few lines of what it shows
   const lines =
     mode !== 'detail'
@@ -174,6 +177,7 @@ function WidgetTile({
         ['--th' as string]: el.minimized ? 32 : el.h,
         ['--chars' as string]: Math.max(6, el.title.length),
         ['--lw' as string]: longestWord(el.title),
+        ['--mchars' as string]: metaChars,
       }}
     >
       <div className="pt__fill" />
@@ -192,7 +196,10 @@ function WidgetTile({
             </span>
           </div>
           <span className="pt__tm">
-            <i>{meta}</i>
+            <i>
+              {metaWord && <b className="pt__tmw">{metaWord}</b>}
+              {guest && <b className="pt__tmf">↗ {guest}</b>}
+            </i>
           </span>
           <span className="pt__tls">
             {lines.map((l, i) => (

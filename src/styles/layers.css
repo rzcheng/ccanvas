@@ -322,31 +322,32 @@
 /* the name, fitted like the far card's (global.css): one line while that is
    readable, else two or three, as large as the tile allows; never cut short
    with an ellipsis, and never broken inside a word */
-.pt__tt {
+.pt__txt {
   --nw: calc(var(--tw) * 1px - min(20px / var(--fs, 1), var(--tw) * 0.16px));
   --nh: calc(var(--th) * 0.42px);
   --cw: calc(var(--chars) * 0.54);
+  /* the name's size, also the meta line's ceiling */
+  --name-fs: clamp(
+    8px * var(--ts) / var(--fs, 1),
+    min(
+      max(
+        min(var(--nw) / (var(--chars) * 0.56), var(--nh) / 1.15),
+        min(
+          max(min(var(--nw) * 1.7 / var(--cw), var(--nh) / 2.3), min(var(--nw) * 2.4 / var(--cw), var(--nh) / 3.45)),
+          16px * var(--ts) / var(--fs, 1)
+        )
+      ),
+      var(--nw) / (var(--lw, 8) * 0.58)
+    ),
+    24px * var(--ts) / var(--fs, 1)
+  );
+}
+.pt__tt {
   position: relative;
   min-width: 0;
   max-width: 100%;
   font-family: var(--font-label);
-  font-size: calc(
-    var(--on) *
-      clamp(
-        8px * var(--ts) / var(--fs, 1),
-        min(
-          max(
-            min(var(--nw) / (var(--chars) * 0.56), var(--nh) / 1.15),
-            min(
-              max(min(var(--nw) * 1.7 / var(--cw), var(--nh) / 2.3), min(var(--nw) * 2.4 / var(--cw), var(--nh) / 3.45)),
-              16px * var(--ts) / var(--fs, 1)
-            )
-          ),
-          var(--nw) / (var(--lw, 8) * 0.58)
-        ),
-        24px * var(--ts) / var(--fs, 1)
-      )
-  );
+  font-size: calc(var(--on) * var(--name-fs));
   font-weight: 700;
   line-height: 1.15;
   overflow: hidden;
@@ -370,6 +371,18 @@
   opacity: clamp(0, 1 - var(--m) * 1.6, 1);
 }
 .pt__tm {
+  /* the status and folder: the usual small mono line, but never wider than
+     the tile (sized for the status and about a dozen characters of folder)
+     nor more than three quarters of the name, in world units like the name,
+     so it keeps its proportion however the sheet is scaled */
+  font-size: calc(
+    var(--on) *
+      min(
+        11.5px * var(--ts) / 1.1 / var(--fs, 1),
+        var(--name-fs) * 0.75,
+        var(--nw) / (var(--mchars, 12) * 0.62)
+      )
+  );
   color: color-mix(in srgb, var(--lamp-ink) 80%, transparent);
 }
 .pt__tls {
@@ -392,6 +405,27 @@
 .pt__tl > i {
   display: block;
   overflow: hidden;
+}
+/* status, then the folder; only the folder gives way, with an ellipsis */
+.pt__tm > i {
+  display: flex;
+  justify-content: center;
+  gap: 0.7em;
+  min-width: 0;
+}
+.pt__tmw,
+.pt__tmf {
+  font-weight: inherit;
+  white-space: nowrap;
+}
+.pt__tmw {
+  flex: none;
+}
+.pt__tmf {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.85;
 }
 
 /* The wash (--w, 0 → 1, one value per tile, staggered in reading order by
