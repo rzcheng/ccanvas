@@ -6,7 +6,6 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { ImageAddon } from '@xterm/addon-image'
 import '@xterm/xterm/css/xterm.css'
 import { acquireGpu, fitsGpu, GPU_HIDDEN_KEEP, releaseGpu } from '../lib/termGpu'
-import { guardAtlasSlots } from '../lib/atlasSlots'
 import type { WidgetElement } from '../lib/types'
 import { claudeColorName } from '../lib/types'
 import { connectPty, type Term } from '../lib/terminal'
@@ -43,9 +42,12 @@ type Mode = 'connecting' | 'pty' | 'local'
 // mouse reporting alike.
 type Pt = { clientX: number; clientY: number }
 function patchMouseScale(term: Terminal) {
+  // (the service is `_mouseCoordsService` from xterm 6.1, `_mouseService` before)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ms = (term as any)._core?._mouseService
+  const core = (term as any)._core
+  const ms = core?._mouseCoordsService ?? core?._mouseService
   if (!ms || ms.__scalePatched) return
+  if (typeof ms.getCoords !== 'function' || typeof ms.getMouseReportCoords !== 'function') return
   const unscale = <E extends Pt>(ev: E, element: HTMLElement): E => {
     const r = element.getBoundingClientRect()
     const sx = element.offsetWidth ? r.width / element.offsetWidth : 1
@@ -197,10 +199,10 @@ export function TerminalBody({
     // table, closer to what programs measure, so a TUI's columns line up
     term.loadAddon(new Unicode11Addon())
     term.unicode.activeVersion = '11'
-    // sixel and iTerm2 inline images (imgcat, chafa, timg …). It also answers
-    // the cell/window size queries (CSI 14/16/18 t). The kitty graphics
-    // protocol has no xterm.js support, so programs that probe for it fall
-    // back to text, as they should.
+    // sixel, iTerm2 inline images and kitty graphics (imgcat, chafa, timg,
+    // kitten icat …). It also answers the cell/window size queries
+    // (CSI 14/16/18 t). Kitty images must be sent inline (t=d): a page can't
+    // read shared memory or files, and a query for those media says so.
     try {
       term.loadAddon(new ImageAddon({ storageLimit: 32 }))
     } catch {
@@ -278,7 +280,6 @@ export function TerminalBody({
         return
       }
       gpu = g
-      guardAtlasSlots(g)
       g.onContextLoss(() => {
         gpuFailures++
         dropGpu()
