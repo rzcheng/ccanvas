@@ -629,14 +629,14 @@ export const WidgetFrame = memo(function WidgetFrame({
           <IconMinus />
         </button>
       )}
-      {/* X leaves where you've zoomed in to: a split pane closes, focus
-          returns to the canvas */}
-      {focusRole === 'on' && (
+      {/* X closes a split pane. Focus with one pane has none: the focus
+          bar's own X already goes back to the canvas */}
+      {focusRole === 'on' && split && (
         <button
           className="widget__btn"
-          title={split ? 'Close this pane' : 'Back to canvas (Esc)'}
+          title="Close this pane"
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => (split ? useStore.getState().closePane(el.id) : useStore.getState().exitFocus())}
+          onClick={() => useStore.getState().closePane(el.id)}
         >
           <IconClose />
         </button>
